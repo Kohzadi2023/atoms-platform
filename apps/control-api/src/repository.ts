@@ -26,6 +26,18 @@ export type PutProjectFileResult =
       readonly actualVersion: number | null;
     };
 
+export type CreateRunWithIdempotencyResult =
+  | {
+      readonly kind: "ok";
+      readonly run: RunRecord;
+      readonly replayed: boolean;
+    }
+  | { readonly kind: "project_not_found" }
+  | {
+      readonly kind: "idempotency_conflict";
+      readonly run: RunRecord;
+    };
+
 export interface ControlRepository {
   createProject(input: CreateProjectInput): Promise<ProjectRecord>;
   getProject(projectId: string): Promise<ProjectRecord | null>;
@@ -34,6 +46,12 @@ export interface ControlRepository {
     prompt: string,
     attachmentIds?: readonly string[],
   ): Promise<RunRecord | null>;
+  createRunWithIdempotency(
+    projectId: string,
+    prompt: string,
+    idempotencyKey: string,
+    attachmentIds?: readonly string[],
+  ): Promise<CreateRunWithIdempotencyResult>;
   getRun(runId: string): Promise<RunRecord | null>;
   transitionRun(
     runId: string,
@@ -105,63 +123,134 @@ export class PrismaControlRepository implements ControlRepository {
     prompt: string,
     attachmentIds: readonly string[] = [],
   ): Promise<RunRecord | null> {
-    return this.#prisma.$transaction(async (transaction) => {
-      const project = await transaction.project.findFirst({
-        where: { id: projectId, archivedAt: null },
-        select: { id: true, workspaceId: true },
+    const result = await this.createRunWithIdempotency(
+      projectId,
+      prompt,
+      `legacy-${cryptoRandomKey()}`,
+      attachmentIds,
+    );
+    if (result.kind === "project_not_found") return null;
+    if (result.kind === "idempotency_conflict") return result.run;
+    return result.run;
+  }
+
+  async createRunWithIdempotency(
+    projectId: string,
+    prompt: string,
+    idempotencyKey: string,
+    attachmentIds: readonly string[] = [],
+  ): Promise<CreateRunWithIdempotencyResult> {
+    try {
+      return await this.#prisma.$transaction(async (transaction) => {
+        const project = await transaction.project.findFirst({
+          where: { id: projectId, archivedAt: null },
+          select: { id: true, workspaceId: true },
+        });
+        if (project === null) {
+          return { kind: "project_not_found" };
+        }
+
+        const existing = await transaction.agentRun.findFirst({
+          where: { projectId: project.id, idempotencyKey },
+          include: {
+            attachments: {
+              select: { attachmentId: true },
+              orderBy: { attachmentId: "asc" },
+            },
+          },
+        });
+        if (existing !== null) {
+          const existingAttachmentIds = existing.attachments.map(
+            (attachment) => attachment.attachmentId,
+          );
+          if (
+            existing.prompt !== prompt ||
+            !sameAttachmentIds(existingAttachmentIds, attachmentIds)
+          ) {
+            return {
+              kind: "idempotency_conflict",
+              run: toRunRecord(existing),
+            };
+          }
+          return { kind: "ok", run: toRunRecord(existing), replayed: true };
+        }
+
+        const attachments =
+          attachmentIds.length === 0
+            ? []
+            : await transaction.projectAttachment.findMany({
+                where: {
+                  id: { in: [...attachmentIds] },
+                  projectId: project.id,
+                  workspaceId: project.workspaceId,
+                  status: "CLEAN",
+                },
+              });
+        const validIds = new Set(attachments.map((attachment) => attachment.id));
+        const invalidIds = attachmentIds.filter((id) => !validIds.has(id));
+        if (invalidIds.length > 0) {
+          throw new RepositoryAttachmentError(invalidIds);
+        }
+
+        const run = await transaction.agentRun.create({
+          data: {
+            projectId: project.id,
+            workspaceId: project.workspaceId,
+            prompt,
+            idempotencyKey,
+          },
+        });
+        if (attachments.length > 0) {
+          await transaction.agentRunAttachment.createMany({
+            data: attachments.map((attachment) => {
+              if (
+                attachment.detectedContentType === null ||
+                attachment.sha256 === null ||
+                attachment.cleanObjectKey === null
+              ) {
+                throw new RepositoryAttachmentError([attachment.id]);
+              }
+              return {
+                runId: run.id,
+                attachmentId: attachment.id,
+                fileName: attachment.fileName,
+                contentType: attachment.detectedContentType,
+                sizeBytes: attachment.sizeBytes,
+                sha256: attachment.sha256,
+                objectKey: attachment.cleanObjectKey,
+              };
+            }),
+          });
+        }
+        return { kind: "ok", run: toRunRecord(run), replayed: false };
       });
-      if (project === null) {
-        return null;
+    } catch (error) {
+      if (prismaErrorCode(error) !== "P2002") {
+        throw error;
       }
-
-      const attachments =
-        attachmentIds.length === 0
-          ? []
-          : await transaction.projectAttachment.findMany({
-              where: {
-                id: { in: [...attachmentIds] },
-                projectId: project.id,
-                workspaceId: project.workspaceId,
-                status: "CLEAN",
-              },
-            });
-      const validIds = new Set(attachments.map((attachment) => attachment.id));
-      const invalidIds = attachmentIds.filter((id) => !validIds.has(id));
-      if (invalidIds.length > 0) {
-        throw new RepositoryAttachmentError(invalidIds);
-      }
-
-      const run = await transaction.agentRun.create({
-        data: {
-          projectId: project.id,
-          workspaceId: project.workspaceId,
-          prompt,
+      const existing = await this.#prisma.agentRun.findFirst({
+        where: { projectId, idempotencyKey },
+        include: {
+          attachments: {
+            select: { attachmentId: true },
+            orderBy: { attachmentId: "asc" },
+          },
         },
       });
-      if (attachments.length > 0) {
-        await transaction.agentRunAttachment.createMany({
-          data: attachments.map((attachment) => {
-            if (
-              attachment.detectedContentType === null ||
-              attachment.sha256 === null ||
-              attachment.cleanObjectKey === null
-            ) {
-              throw new RepositoryAttachmentError([attachment.id]);
-            }
-            return {
-              runId: run.id,
-              attachmentId: attachment.id,
-              fileName: attachment.fileName,
-              contentType: attachment.detectedContentType,
-              sizeBytes: attachment.sizeBytes,
-              sha256: attachment.sha256,
-              objectKey: attachment.cleanObjectKey,
-            };
-          }),
-        });
+      if (existing === null) {
+        throw error;
       }
-      return toRunRecord(run);
-    });
+      const existingAttachmentIds = existing.attachments.map(
+        (attachment) => attachment.attachmentId,
+      );
+      if (
+        existing.prompt !== prompt ||
+        !sameAttachmentIds(existingAttachmentIds, attachmentIds)
+      ) {
+        return { kind: "idempotency_conflict", run: toRunRecord(existing) };
+      }
+      return { kind: "ok", run: toRunRecord(existing), replayed: true };
+    }
   }
 
   async getRun(runId: string): Promise<RunRecord | null> {
@@ -377,4 +466,18 @@ function toPrismaNullableJson(
   value: JsonValue | null,
 ): Prisma.InputJsonValue | typeof Prisma.DbNull {
   return value === null ? Prisma.DbNull : (value as Prisma.InputJsonValue);
+}
+
+function sameAttachmentIds(
+  left: readonly string[],
+  right: readonly string[],
+): boolean {
+  if (left.length !== right.length) return false;
+  const sortedLeft = [...left].sort();
+  const sortedRight = [...right].sort();
+  return sortedLeft.every((value, index) => value === sortedRight[index]);
+}
+
+function cryptoRandomKey(): string {
+  return `${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 12)}`;
 }

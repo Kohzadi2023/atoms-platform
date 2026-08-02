@@ -22,6 +22,7 @@ import type {
   DestroyDatabaseOperationResult,
 } from "./database-repository.js";
 import type { ControlRepository, PutProjectFileResult } from "./repository.js";
+import type { CreateRunWithIdempotencyResult } from "./repository.js";
 import type { RunQueue } from "./run-queue.js";
 
 const PROJECT_ID = "00000000-0000-4000-8000-000000000001";
@@ -79,6 +80,9 @@ class NoopControlRepository implements ControlRepository {
   }
   async createRun(): Promise<null> {
     return null;
+  }
+  async createRunWithIdempotency(): Promise<CreateRunWithIdempotencyResult> {
+    return { kind: "project_not_found" };
   }
   async getRun(): Promise<null> {
     return null;

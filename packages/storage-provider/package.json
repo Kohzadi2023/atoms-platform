@@ -13,6 +13,7 @@
   "scripts": {
     "build": "tsc -p tsconfig.json",
     "test": "pnpm build && node --test dist/*.test.js",
+    "test:storage-integration:built": "node --test dist/storage.integration.test.js",
     "typecheck": "tsc -p tsconfig.json --noEmit"
   },
   "dependencies": {

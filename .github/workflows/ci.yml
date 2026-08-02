@@ -104,3 +104,54 @@ jobs:
           RUN_ATTACHMENT_INTEGRATION_TESTS: "true"
           ATTACHMENT_INTEGRATION_CONFIRMATION: DEDICATED_EPHEMERAL_DATABASE
         run: pnpm staging:attachments:durability
+
+  attachment-storage-integration:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 11.7.0
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
+      - name: Start disposable MinIO and ClamAV
+        run: |
+          docker compose up -d minio clamav
+          for attempt in {1..60}; do
+            if curl --fail --silent http://127.0.0.1:9000/minio/health/ready > /dev/null; then
+              break
+            fi
+            if [ "$attempt" -eq 60 ]; then exit 1; fi
+            sleep 2
+          done
+          docker compose run --rm minio-init
+          for attempt in {1..60}; do
+            if docker compose exec -T clamav clamdscan --ping 1; then
+              break
+            fi
+            if [ "$attempt" -eq 60 ]; then exit 1; fi
+            sleep 5
+          done
+      - name: Exercise signed storage, CORS, encryption, and malware scanning
+        env:
+          RUN_STORAGE_INTEGRATION_TESTS: "true"
+          STORAGE_INTEGRATION_CONFIRMATION: DEDICATED_EPHEMERAL_STORAGE
+          S3_BUCKET: atoms-attachments
+          S3_REGION: us-east-1
+          S3_ENDPOINT: http://127.0.0.1:9000
+          S3_ACCESS_KEY_ID: atoms-local
+          S3_SECRET_ACCESS_KEY: atoms-local-password
+          S3_KMS_KEY_ID: local-dev-key
+          CLAMAV_HOST: 127.0.0.1
+          CLAMAV_PORT: "3310"
+        run: pnpm staging:attachments:storage
+      - name: Report attachment service logs on failure
+        if: failure()
+        run: docker compose logs --no-color minio minio-init clamav
+      - name: Remove disposable attachment services
+        if: always()
+        run: docker compose down --volumes --remove-orphans

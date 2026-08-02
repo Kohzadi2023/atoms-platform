@@ -63,3 +63,10 @@ credentials, a managed KMS key, exact browser CORS origins, audit logging, and a
 bucket lifecycle rule that expires abandoned quarantine objects. ClamAV must
 have no public ingress. The Control API and worker receive storage credentials
 only through their private runtime environments.
+
+## Deterministic integration gate
+
+CI starts the pinned MinIO and ClamAV containers and proves the real signed
+PUT/CORS/encryption, quarantine read, MIME/hash inspection, clean and EICAR scan,
+hash-addressed copy/delete, and signed GET lifecycle. The test is fail-closed and
+requires the exact `DEDICATED_EPHEMERAL_STORAGE` confirmation value.

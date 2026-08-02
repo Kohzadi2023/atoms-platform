@@ -65,8 +65,10 @@ export class PrismaAttachmentRepository implements AttachmentRepository {
 
       // Serialize quota checks per project so concurrent upload intents cannot
       // both observe the same remaining slot.
+      // Prisma cannot deserialize PostgreSQL's `void` pseudo-type, so cast the
+      // lock result while retaining transaction-scoped advisory-lock semantics.
       await transaction.$queryRaw`
-        SELECT pg_advisory_xact_lock(hashtextextended(${project.id}, 0))
+        SELECT pg_advisory_xact_lock(hashtextextended(${project.id}, 0))::text
       `;
 
       const count = await transaction.projectAttachment.count({

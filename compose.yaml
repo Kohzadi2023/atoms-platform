@@ -47,14 +47,14 @@ services:
     depends_on:
       - minio
     volumes:
-      - ./infra/minio/cors.json:/config/cors.json:ro
+      - ./infra/minio/cors.xml:/config/cors.xml:ro
     entrypoint: ["/bin/sh", "-c"]
     command:
       - >-
         until mc alias set local http://minio:9000 atoms-local atoms-local-password;
         do sleep 1; done;
         mc mb --ignore-existing local/atoms-attachments;
-        mc cors set local/atoms-attachments /config/cors.json
+        mc cors set local/atoms-attachments /config/cors.xml
 
   clamav:
     image: clamav/clamav:1.5.3

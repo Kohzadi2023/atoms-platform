@@ -75,7 +75,7 @@ test(
         headers: upload.headers,
         body: Buffer.from(cleanBytes),
       });
-      assert.equal(uploaded.status, 200, await uploaded.text());
+      await assertResponseStatus(uploaded, 200);
 
       const metadata = await provider.headObject(quarantineKey);
       assert.ok(metadata);
@@ -119,7 +119,7 @@ test(
         expiresInSeconds: 60,
       });
       const downloaded = await fetch(download.url, { method: download.method });
-      assert.equal(downloaded.status, 200, await downloaded.text());
+      await assertResponseStatus(downloaded, 200);
       assert.deepEqual(
         new Uint8Array(await downloaded.arrayBuffer()),
         cleanBytes,
@@ -137,4 +137,14 @@ function requireEnvironment(name: string): string {
     throw new Error(`${name} is required`);
   }
   return value;
+}
+
+async function assertResponseStatus(
+  response: Response,
+  expectedStatus: number,
+): Promise<void> {
+  if (response.status === expectedStatus) return;
+  assert.fail(
+    `Expected HTTP ${String(expectedStatus)}, received ${String(response.status)}: ${await response.text()}`,
+  );
 }

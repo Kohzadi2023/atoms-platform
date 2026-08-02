@@ -88,6 +88,63 @@ test("fast policy routes to GPT-4o-mini", () => {
   assert.equal(gateway.resolveModel("fast"), "gpt-4o-mini");
 });
 
+test("reference inputs map to provider-native file and image content without persistence", async () => {
+  const requests: unknown[] = [];
+  const client = {
+    responses: {
+      create: async (request: unknown) => {
+        requests.push(request);
+        return responseFixture("gpt-4o");
+      },
+    },
+  } as unknown as OpenAIClient;
+  const gateway = new OpenAIModelGateway({ client });
+
+  await gateway.generate({
+    policy: "balanced",
+    input: "Extract requirements",
+    references: [
+      {
+        kind: "file",
+        fileName: "brief.pdf",
+        mimeType: "application/pdf",
+        dataBase64: "JVBERg==",
+      },
+      {
+        kind: "image",
+        fileName: "reference.png",
+        mimeType: "image/png",
+        dataBase64: "iVBORw==",
+      },
+    ],
+  });
+
+  assert.deepEqual(requests, [
+    {
+      model: "gpt-4o",
+      input: [
+        {
+          role: "user",
+          content: [
+            { type: "input_text", text: "Extract requirements" },
+            {
+              type: "input_file",
+              filename: "brief.pdf",
+              file_data: "data:application/pdf;base64,JVBERg==",
+            },
+            {
+              type: "input_image",
+              image_url: "data:image/png;base64,iVBORw==",
+              detail: "auto",
+            },
+          ],
+        },
+      ],
+      store: false,
+    },
+  ]);
+});
+
 test("stream normalizes Responses API deltas and completion metadata", async () => {
   const completedResponse = responseFixture("gpt-4o-mini");
   const client = {
@@ -135,4 +192,3 @@ test("cost calculation clamps invalid cached-token counts", () => {
     30,
   );
 });
-

@@ -13,7 +13,10 @@ import type {
   RunRecord,
   RunStatusPatch,
 } from "./domain.js";
-import { RepositoryConflictError } from "./errors.js";
+import {
+  RepositoryAttachmentError,
+  RepositoryConflictError,
+} from "./errors.js";
 
 export type PutProjectFileResult =
   | { readonly kind: "ok"; readonly file: ProjectFileRecord }
@@ -26,7 +29,11 @@ export type PutProjectFileResult =
 export interface ControlRepository {
   createProject(input: CreateProjectInput): Promise<ProjectRecord>;
   getProject(projectId: string): Promise<ProjectRecord | null>;
-  createRun(projectId: string, prompt: string): Promise<RunRecord | null>;
+  createRun(
+    projectId: string,
+    prompt: string,
+    attachmentIds?: readonly string[],
+  ): Promise<RunRecord | null>;
   getRun(runId: string): Promise<RunRecord | null>;
   transitionRun(
     runId: string,
@@ -93,7 +100,11 @@ export class PrismaControlRepository implements ControlRepository {
     });
   }
 
-  async createRun(projectId: string, prompt: string): Promise<RunRecord | null> {
+  async createRun(
+    projectId: string,
+    prompt: string,
+    attachmentIds: readonly string[] = [],
+  ): Promise<RunRecord | null> {
     return this.#prisma.$transaction(async (transaction) => {
       const project = await transaction.project.findFirst({
         where: { id: projectId, archivedAt: null },
@@ -103,6 +114,23 @@ export class PrismaControlRepository implements ControlRepository {
         return null;
       }
 
+      const attachments =
+        attachmentIds.length === 0
+          ? []
+          : await transaction.projectAttachment.findMany({
+              where: {
+                id: { in: [...attachmentIds] },
+                projectId: project.id,
+                workspaceId: project.workspaceId,
+                status: "CLEAN",
+              },
+            });
+      const validIds = new Set(attachments.map((attachment) => attachment.id));
+      const invalidIds = attachmentIds.filter((id) => !validIds.has(id));
+      if (invalidIds.length > 0) {
+        throw new RepositoryAttachmentError(invalidIds);
+      }
+
       const run = await transaction.agentRun.create({
         data: {
           projectId: project.id,
@@ -110,6 +138,28 @@ export class PrismaControlRepository implements ControlRepository {
           prompt,
         },
       });
+      if (attachments.length > 0) {
+        await transaction.agentRunAttachment.createMany({
+          data: attachments.map((attachment) => {
+            if (
+              attachment.detectedContentType === null ||
+              attachment.sha256 === null ||
+              attachment.cleanObjectKey === null
+            ) {
+              throw new RepositoryAttachmentError([attachment.id]);
+            }
+            return {
+              runId: run.id,
+              attachmentId: attachment.id,
+              fileName: attachment.fileName,
+              contentType: attachment.detectedContentType,
+              sizeBytes: attachment.sizeBytes,
+              sha256: attachment.sha256,
+              objectKey: attachment.cleanObjectKey,
+            };
+          }),
+        });
+      }
       return toRunRecord(run);
     });
   }

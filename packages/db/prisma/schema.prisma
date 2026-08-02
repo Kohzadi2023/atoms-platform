@@ -76,6 +76,16 @@ enum PreviewSessionStatus {
   ERROR
 }
 
+enum ProjectAttachmentStatus {
+  AWAITING_UPLOAD
+  QUARANTINED
+  SCANNING
+  CLEAN
+  REJECTED
+  FAILED
+  EXPIRED
+}
+
 enum BillingProvider {
   STRIPE
 }
@@ -224,6 +234,7 @@ model Project {
   description            String?                 @db.Text
   workspace              Workspace               @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
   files                  ProjectFile[]
+  attachments            ProjectAttachment[]
   runs                   AgentRun[]
   sandboxSessions        SandboxSession[]
   previewSessions        PreviewSession[]
@@ -258,32 +269,78 @@ model ProjectFile {
 }
 
 model AgentRun {
-  id                 String              @id @default(uuid()) @db.Uuid
-  workspaceId        String              @map("workspace_id") @db.Uuid
-  projectId          String              @map("project_id") @db.Uuid
-  status             AgentRunStatus      @default(PENDING)
-  prompt             String              @db.Text
+  id                 String               @id @default(uuid()) @db.Uuid
+  workspaceId        String               @map("workspace_id") @db.Uuid
+  projectId          String               @map("project_id") @db.Uuid
+  status             AgentRunStatus       @default(PENDING)
+  prompt             String               @db.Text
   checkpoint         Json?
   error              Json?
-  eventSequence      Int                 @default(0) @map("event_sequence")
-  controlVersion     Int                 @default(0) @map("control_version")
-  project            Project             @relation(fields: [projectId, workspaceId], references: [id, workspaceId], onDelete: Cascade)
+  eventSequence      Int                  @default(0) @map("event_sequence")
+  controlVersion     Int                  @default(0) @map("control_version")
+  project            Project              @relation(fields: [projectId, workspaceId], references: [id, workspaceId], onDelete: Cascade)
   tasks              AgentTask[]
   events             RunEvent[]
   sandboxSessions    SandboxSession[]
   previewSessions    PreviewSession[]
   migrationArtifacts MigrationArtifact[]
-  createdAt          DateTime            @default(now()) @map("created_at") @db.Timestamptz(3)
-  updatedAt          DateTime            @updatedAt @map("updated_at") @db.Timestamptz(3)
-  startedAt          DateTime?           @map("started_at") @db.Timestamptz(3)
-  pausedAt           DateTime?           @map("paused_at") @db.Timestamptz(3)
-  completedAt        DateTime?           @map("completed_at") @db.Timestamptz(3)
-  cancelledAt        DateTime?           @map("cancelled_at") @db.Timestamptz(3)
-  lastHeartbeatAt    DateTime?           @map("last_heartbeat_at") @db.Timestamptz(3)
+  attachments        AgentRunAttachment[]
+  createdAt          DateTime             @default(now()) @map("created_at") @db.Timestamptz(3)
+  updatedAt          DateTime             @updatedAt @map("updated_at") @db.Timestamptz(3)
+  startedAt          DateTime?            @map("started_at") @db.Timestamptz(3)
+  pausedAt           DateTime?            @map("paused_at") @db.Timestamptz(3)
+  completedAt        DateTime?            @map("completed_at") @db.Timestamptz(3)
+  cancelledAt        DateTime?            @map("cancelled_at") @db.Timestamptz(3)
+  lastHeartbeatAt    DateTime?            @map("last_heartbeat_at") @db.Timestamptz(3)
 
   @@index([workspaceId, status, createdAt])
   @@index([projectId, createdAt])
   @@map("agent_runs")
+}
+
+model ProjectAttachment {
+  id                  String                  @id @default(uuid()) @db.Uuid
+  workspaceId         String                  @map("workspace_id") @db.Uuid
+  projectId           String                  @map("project_id") @db.Uuid
+  fileName            String                  @map("file_name") @db.VarChar(255)
+  declaredContentType String                  @map("declared_content_type") @db.VarChar(100)
+  detectedContentType String?                 @map("detected_content_type") @db.VarChar(100)
+  sizeBytes           Int                     @map("size_bytes")
+  quarantineObjectKey String                  @unique @map("quarantine_object_key") @db.VarChar(1024)
+  cleanObjectKey      String?                 @unique @map("clean_object_key") @db.VarChar(1024)
+  etag                String?                 @db.VarChar(512)
+  sha256              String?                 @db.Char(64)
+  status              ProjectAttachmentStatus @default(AWAITING_UPLOAD)
+  scanVersion         Int                     @default(0) @map("scan_version")
+  failureCode         String?                 @map("failure_code") @db.VarChar(100)
+  scanMetadata        Json?                   @map("scan_metadata")
+  uploadExpiresAt     DateTime                @map("upload_expires_at") @db.Timestamptz(3)
+  scannedAt           DateTime?               @map("scanned_at") @db.Timestamptz(3)
+  project             Project                 @relation(fields: [projectId, workspaceId], references: [id, workspaceId], onDelete: Cascade)
+  runs                AgentRunAttachment[]
+  createdAt           DateTime                @default(now()) @map("created_at") @db.Timestamptz(3)
+  updatedAt           DateTime                @updatedAt @map("updated_at") @db.Timestamptz(3)
+
+  @@index([projectId, status, createdAt])
+  @@index([workspaceId, status, uploadExpiresAt])
+  @@map("project_attachments")
+}
+
+model AgentRunAttachment {
+  runId        String            @map("run_id") @db.Uuid
+  attachmentId String            @map("attachment_id") @db.Uuid
+  fileName     String            @map("file_name") @db.VarChar(255)
+  contentType  String            @map("content_type") @db.VarChar(100)
+  sizeBytes    Int               @map("size_bytes")
+  sha256       String            @db.Char(64)
+  objectKey    String            @map("object_key") @db.VarChar(1024)
+  run          AgentRun          @relation(fields: [runId], references: [id], onDelete: Cascade)
+  attachment   ProjectAttachment @relation(fields: [attachmentId], references: [id], onDelete: Restrict)
+  createdAt    DateTime          @default(now()) @map("created_at") @db.Timestamptz(3)
+
+  @@id([runId, attachmentId])
+  @@index([attachmentId])
+  @@map("agent_run_attachments")
 }
 
 model AgentTask {

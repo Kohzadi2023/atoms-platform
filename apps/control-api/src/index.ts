@@ -1,4 +1,8 @@
 export { buildControlApi, type BuildControlApiOptions } from "./app.js";
+export * from "./attachment-domain.js";
+export * from "./attachment-queue.js";
+export * from "./attachment-repository.js";
+export * from "./attachment-routes.js";
 export * from "./database-domain.js";
 export * from "./database-operation-queue.js";
 export * from "./database-repository.js";

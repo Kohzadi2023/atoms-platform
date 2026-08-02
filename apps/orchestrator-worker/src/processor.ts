@@ -10,6 +10,7 @@ import {
 } from "./errors.js";
 import { buildRunGraph } from "./graph.js";
 import type { RunValidationLease, RunValidator } from "./validation.js";
+import type { RunAttachmentLoader } from "./attachment-loader.js";
 
 export interface RunAttempt {
   readonly attempt: number;
@@ -27,6 +28,7 @@ export interface RunProcessorOptions {
   readonly agents: AgentRuntime;
   readonly checkpointer?: BaseCheckpointSaver;
   readonly validator?: RunValidator;
+  readonly attachmentLoader?: RunAttachmentLoader;
   readonly now?: () => Date;
 }
 

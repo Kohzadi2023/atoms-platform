@@ -83,12 +83,29 @@ test("ModelBackedAgentRuntime sends scoped metadata and validates Alex output", 
     prompt: "Build a customer portal",
     upstreamOutputs: {},
     currentFiles: [],
+    referenceAttachments: [
+      {
+        id: "00000000-0000-4000-8000-000000000002",
+        kind: "image",
+        fileName: "reference.png",
+        mimeType: "image/png",
+        dataBase64: "iVBORw==",
+      },
+    ],
   });
 
   assert.deepEqual(output, AlexOutputSchema.parse(JSON.parse(gateway.outputText)));
   assert.equal(gateway.requests[0]?.metadata?.agent, "Alex");
   assert.equal(gateway.requests[0]?.metadata?.run_id, RUN_ID);
   assert.equal(gateway.requests[0]?.policy, "flagship");
+  assert.deepEqual(gateway.requests[0]?.references, [
+    {
+      kind: "image",
+      fileName: "reference.png",
+      mimeType: "image/png",
+      dataBase64: "iVBORw==",
+    },
+  ]);
 });
 
 test("ModelBackedAgentRuntime rejects prose that does not contain schema-valid JSON", async () => {

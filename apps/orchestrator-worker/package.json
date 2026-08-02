@@ -21,6 +21,7 @@
     "@atoms/model-gateway": "workspace:*",
     "@atoms/preview": "workspace:*",
     "@atoms/sandbox-provider": "workspace:*",
+    "@atoms/storage-provider": "workspace:*",
     "@langchain/core": "catalog:",
     "@langchain/langgraph": "catalog:",
     "@langchain/langgraph-checkpoint": "catalog:",

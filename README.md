@@ -5,7 +5,9 @@ the multi-agent coding platform. The Control API, provider-neutral OpenAI/E2B
 adapters, durable Mike -> Emma -> Bob -> approval -> Alex -> David worker flow,
 deterministic E2B validation, origin-isolated preview gateway, and confirmed
 Supabase provisioning/migration lifecycle, fenced stale-operation recovery, and
-approval-gated orphan reconciliation are implemented.
+approval-gated orphan reconciliation are implemented. The browser-to-agent
+attachment slice adds encrypted S3-compatible quarantine, ClamAV inspection,
+immutable run snapshots, and provider-neutral OpenAI file/image inputs.
 The protected Phase 3 staging workflow applies both migration paths to
 PostgreSQL 17, exercises the real BullMQ scheduler against Redis, and can run
 the explicitly approved Supabase -> Vault -> E2B -> approval-gated orphan
@@ -15,7 +17,7 @@ cleanup exit while emitting credential-free evidence artifacts.
 
 - Node.js 24+
 - pnpm 11+
-- Docker with Compose, or compatible PostgreSQL and Redis services
+- Docker with Compose, or compatible PostgreSQL, Redis, S3, and ClamAV services
 
 ## Bootstrap
 
@@ -24,7 +26,7 @@ cp .env.example .env
 docker compose up -d
 pnpm install
 pnpm db:validate
-pnpm db:migrate:dev --name contract_sprint_init
+pnpm db:migrate:deploy
 pnpm db:seed:local
 pnpm verify
 ```
@@ -43,6 +45,8 @@ schema at `packages/db/prisma/schema.prisma`.
 - `packages/model-gateway`: provider-neutral LLM routing
 - `packages/sandbox-provider`: provider-neutral isolated execution
 - `packages/preview`: HMAC preview tickets and expiring Redis target records
+- `packages/storage-provider`: S3-compatible encrypted objects, MIME/hash
+  inspection, and ClamAV adapter
 - `packages/database-provider`: Supabase Management API, Vault KV v2, database
   migration runner, and provider-neutral contracts
 - `packages/agents`: versioned Mike, Emma, Bob, Alex, and David manifests, schemas, and
@@ -56,6 +60,11 @@ schema at `packages/db/prisma/schema.prisma`.
   side effects idempotent across queue redelivery.
 - Completed tasks are restored from their schema-validated outputs instead of
   being billed twice.
+- Browser attachments upload to tenant-scoped quarantine keys with signed URLs.
+  A fenced BullMQ worker validates exact size, detected MIME, SHA-256, and
+  ClamAV status before exposing an immutable clean snapshot to a run.
+- Only Emma receives clean file/image inputs. Bob, Alex, and David consume the
+  structured PRD, avoiding repeated file-token cost across the graph.
 - If Mike requires plan approval, the worker pauses after Bob. An `approve`
   action resumes at Alex without repeating completed model calls.
 - Alex writes files with expected-version compare-and-swap. A manual edit wins
@@ -78,7 +87,8 @@ schema at `packages/db/prisma/schema.prisma`.
 
 ## Phase 2 services
 
-Configure `.env` with OpenAI, E2B, PostgreSQL, Redis, and preview values. Point a
+Configure `.env` with OpenAI, E2B, PostgreSQL, Redis, S3-compatible storage,
+ClamAV, and preview values. Point a
 wildcard DNS record for `*.PREVIEW_BASE_DOMAIN` at the preview gateway. For local
 development, a wildcard-loopback domain such as `preview.localhost` can be used
 where the browser resolves its subdomains to `127.0.0.1`.
@@ -106,7 +116,8 @@ docker build -f apps/preview-gateway/Dockerfile -t atoms-preview-gateway .
 ```
 
 See `docs/phase-2-validation-preview.md` for the lifecycle and security boundary,
-and `docs/event-catalogue.md` for replayable Phase 2 event payloads.
+`docs/secure-attachments.md` for the upload/scan/model-input boundary, and
+`docs/event-catalogue.md` for replayable Phase 2 event payloads.
 
 ## Phase 3 generated database
 

@@ -15,6 +15,7 @@ import type {
   RunJob,
 } from "@atoms/contracts";
 import { MemorySaver } from "@langchain/langgraph";
+import type { RunAttachmentLoader } from "./attachment-loader.js";
 
 import type {
   CompleteTaskInput,
@@ -300,6 +301,7 @@ class RetryableTestError extends Error {
 
 class ScriptedAgentRuntime implements AgentRuntime {
   readonly calls: ActiveMvpAgentName[] = [];
+  readonly requests: AgentExecutionRequest[] = [];
   readonly #outputs: AgentOutputByName;
   failAlexOnce = false;
   #alexFailed = false;
@@ -312,6 +314,7 @@ class ScriptedAgentRuntime implements AgentRuntime {
     request: AgentExecutionRequest<Name>,
   ): Promise<AgentOutputByName[Name]> {
     this.calls.push(request.agentName);
+    this.requests.push(request);
     if (request.agentName === "Alex" && this.failAlexOnce && !this.#alexFailed) {
       this.#alexFailed = true;
       throw new RetryableTestError("Transient model failure");
@@ -457,6 +460,51 @@ test("worker executes Mike, Emma, Bob, Alex, and David once and commits ordered 
     { outcome: "skipped", reason: "stale" },
   );
   assert.deepEqual(agents.calls, ["Mike", "Emma", "Bob", "Alex", "David"]);
+});
+
+test("worker loads clean references once and sends them only to Emma", async () => {
+  const repository = new MemoryRepository();
+  const agents = new ScriptedAgentRuntime(outputs());
+  let loads = 0;
+  const attachmentLoader: RunAttachmentLoader = {
+    load: async (runId) => {
+      loads += 1;
+      assert.equal(runId, RUN_ID);
+      return [
+        {
+          id: "00000000-0000-4000-8000-000000000010",
+          kind: "file",
+          fileName: "brief.txt",
+          mimeType: "text/plain",
+          dataBase64: "YnJpZWY=",
+        },
+      ];
+    },
+  };
+  const runProcessor = new RunProcessor({
+    repository,
+    agents,
+    attachmentLoader,
+    checkpointer: new MemorySaver(),
+    now: () => FIXED_NOW,
+  });
+
+  assert.deepEqual(
+    await runProcessor.process(startJob(), { attempt: 1, maxAttempts: 3 }),
+    { outcome: "completed" },
+  );
+  assert.equal(loads, 1);
+  assert.equal(
+    agents.requests.find((request) => request.agentName === "Emma")
+      ?.referenceAttachments?.[0]?.fileName,
+    "brief.txt",
+  );
+  assert.equal(
+    agents.requests
+      .filter((request) => request.agentName !== "Emma")
+      .some((request) => request.referenceAttachments !== undefined),
+    false,
+  );
 });
 
 test("worker runs validation after David and before completing the durable run", async () => {

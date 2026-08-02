@@ -277,6 +277,22 @@ export interface AgentProjectFile {
   readonly version: number;
 }
 
+export type AgentReferenceAttachment =
+  | {
+      readonly id: string;
+      readonly kind: "file";
+      readonly fileName: string;
+      readonly mimeType: "application/pdf" | "text/plain";
+      readonly dataBase64: string;
+    }
+  | {
+      readonly id: string;
+      readonly kind: "image";
+      readonly fileName: string;
+      readonly mimeType: "image/png" | "image/jpeg" | "image/webp";
+      readonly dataBase64: string;
+    };
+
 export type AgentUpstreamOutputs = Partial<{
   readonly [Name in ActiveAgentName]: AgentOutputByName[Name];
 }>;
@@ -289,6 +305,8 @@ export interface AgentExecutionRequest<
   readonly prompt: string;
   readonly upstreamOutputs: AgentUpstreamOutputs;
   readonly currentFiles: readonly AgentProjectFile[];
+  /** Clean, immutable reference inputs. The orchestrator sends them only to Emma. */
+  readonly referenceAttachments?: readonly AgentReferenceAttachment[];
 }
 
 export interface AgentRuntime {

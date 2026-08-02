@@ -28,3 +28,13 @@ export class RepositoryConflictError extends Error {
     this.constraint = constraint;
   }
 }
+
+export class RepositoryAttachmentError extends Error {
+  override readonly name = "RepositoryAttachmentError";
+  readonly attachmentIds: readonly string[];
+
+  constructor(attachmentIds: readonly string[]) {
+    super("Every run attachment must be clean and belong to the project");
+    this.attachmentIds = attachmentIds;
+  }
+}

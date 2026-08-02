@@ -4,6 +4,12 @@ All events are persisted with a monotonically increasing per-run `sequence` and
 delivered over SSE. Reconnect with `Last-Event-ID`; the Control API replays only
 events whose sequence is greater than that value.
 
+Attachment quarantine occurs before a run exists, so its finite lifecycle is
+read through `GET /v1/projects/{projectId}/attachments` rather than being mixed
+into the run SSE sequence. Once a run is created, its immutable attachment
+snapshot cannot change and every orchestration event keeps the same ordering
+semantics described here.
+
 ## Phase 2 payloads
 
 ### `sandbox.ready`

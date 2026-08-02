@@ -17,7 +17,10 @@ import type {
   RunRecord,
   RunStatusPatch,
 } from "./domain.js";
-import { RepositoryConflictError } from "./errors.js";
+import {
+  RepositoryAttachmentError,
+  RepositoryConflictError,
+} from "./errors.js";
 import type {
   ControlRepository,
   PutProjectFileResult,
@@ -34,6 +37,8 @@ class MemoryRepository implements ControlRepository {
   readonly runs = new Map<string, RunRecord>();
   readonly events: RunEventRecord[] = [];
   readonly files: ProjectFileRecord[] = [];
+  lastRunAttachmentIds: readonly string[] = [];
+  rejectRunAttachments = false;
   #projectCounter = 0;
   #runCounter = 0;
   #fileCounter = 0;
@@ -66,7 +71,15 @@ class MemoryRepository implements ControlRepository {
     return project === undefined || project.archivedAt !== null ? null : project;
   }
 
-  async createRun(projectId: string, prompt: string): Promise<RunRecord | null> {
+  async createRun(
+    projectId: string,
+    prompt: string,
+    attachmentIds: readonly string[] = [],
+  ): Promise<RunRecord | null> {
+    this.lastRunAttachmentIds = attachmentIds;
+    if (this.rejectRunAttachments) {
+      throw new RepositoryAttachmentError(attachmentIds);
+    }
     const project = this.projects.get(projectId);
     if (project === undefined || project.archivedAt !== null) return null;
     this.#runCounter += 1;
@@ -334,6 +347,38 @@ test("POST /v1/projects/:id/runs persists and enqueues an idempotent run command
     assert.deepEqual(queue.jobs, [
       { runId: RUN_ID, command: "start", controlVersion: 0 },
     ]);
+  } finally {
+    await app.close();
+  }
+});
+
+test("run creation snapshots only repository-approved clean attachments", async () => {
+  const { app, repository, queue } = await fixture();
+  const attachmentId = "00000000-0000-4000-8000-000000000094";
+  try {
+    await repository.createProject({
+      workspaceId: WORKSPACE_ID,
+      name: "Atoms",
+      slug: "atoms",
+    });
+    const accepted = await app.inject({
+      method: "POST",
+      url: `/v1/projects/${PROJECT_ID}/runs`,
+      payload: { prompt: "Build a CRM", attachmentIds: [attachmentId] },
+    });
+    assert.equal(accepted.statusCode, 201);
+    assert.deepEqual(repository.lastRunAttachmentIds, [attachmentId]);
+    assert.equal(queue.jobs.length, 1);
+
+    repository.rejectRunAttachments = true;
+    const rejected = await app.inject({
+      method: "POST",
+      url: `/v1/projects/${PROJECT_ID}/runs`,
+      payload: { prompt: "Build again", attachmentIds: [attachmentId] },
+    });
+    assert.equal(rejected.statusCode, 409);
+    assert.equal(rejected.json().error.code, "RUN_ATTACHMENTS_NOT_READY");
+    assert.equal(queue.jobs.length, 1);
   } finally {
     await app.close();
   }

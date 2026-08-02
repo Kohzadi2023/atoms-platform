@@ -3,7 +3,11 @@ import test from "node:test";
 
 import {
   ApproveOrphanCleanupInputSchema,
+  AttachmentScanJobSchema,
+  CreateAttachmentUploadIntentInputSchema,
   CreateProjectInputSchema,
+  CreateRunInputSchema,
+  MAX_ATTACHMENT_BYTES,
   DatabaseOperationJobSchema,
   DatabaseReconciliationSummarySchema,
   DatabaseStatusChangedEventPayloadV1Schema,
@@ -57,6 +61,53 @@ test("RunActionInput constrains commands and concurrency tokens", () => {
     },
   );
   assert.throws(() => RunActionInputSchema.parse({ action: "delete" }));
+});
+
+test("attachment contracts enforce fixed MIME, size, count, and queue fencing", () => {
+  assert.deepEqual(
+    CreateAttachmentUploadIntentInputSchema.parse({
+      fileName: "brief.pdf",
+      contentType: "application/pdf",
+      sizeBytes: MAX_ATTACHMENT_BYTES,
+    }),
+    {
+      fileName: "brief.pdf",
+      contentType: "application/pdf",
+      sizeBytes: MAX_ATTACHMENT_BYTES,
+    },
+  );
+  assert.throws(() =>
+    CreateAttachmentUploadIntentInputSchema.parse({
+      fileName: "../secret.txt",
+      contentType: "text/plain",
+      sizeBytes: 10,
+    }),
+  );
+  assert.throws(() =>
+    CreateAttachmentUploadIntentInputSchema.parse({
+      fileName: "archive.zip",
+      contentType: "application/zip",
+      sizeBytes: 10,
+    }),
+  );
+  assert.equal(
+    AttachmentScanJobSchema.parse({
+      attachmentId: "00000000-0000-4000-8000-000000000099",
+      scanVersion: 2,
+    }).scanVersion,
+    2,
+  );
+});
+
+test("CreateRunInput snapshots at most five unique attachment IDs", () => {
+  assert.deepEqual(CreateRunInputSchema.parse({ prompt: "Build it" }), {
+    prompt: "Build it",
+    attachmentIds: [],
+  });
+  const id = "00000000-0000-4000-8000-000000000099";
+  assert.throws(() =>
+    CreateRunInputSchema.parse({ prompt: "Build it", attachmentIds: [id, id] }),
+  );
 });
 
 test("FileContentInput rejects traversal and stale-version shapes", () => {

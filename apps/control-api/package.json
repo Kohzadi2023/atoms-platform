@@ -8,6 +8,7 @@
     "dev": "tsx watch src/main.ts",
     "start": "node dist/main.js",
     "test": "pnpm build && node --test dist/*.test.js",
+    "test:attachments-durability:built": "node --test dist/attachment.integration.test.js",
     "typecheck": "tsc -p tsconfig.json --noEmit"
   },
   "dependencies": {
@@ -15,6 +16,7 @@
     "@atoms/db": "workspace:*",
     "@atoms/model-gateway": "workspace:*",
     "@atoms/sandbox-provider": "workspace:*",
+    "@atoms/storage-provider": "workspace:*",
     "@fastify/cors": "catalog:",
     "@fastify/swagger": "catalog:",
     "@fastify/swagger-ui": "catalog:",

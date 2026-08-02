@@ -1,13 +1,20 @@
 import {
+  AttachmentListResponseSchema,
+  AttachmentUploadIntentResponseSchema,
   FileContentResponseSchema,
+  ProjectAttachmentSchema,
   ProjectFileListResponseSchema,
   ProjectResponseSchema,
   RunEventEnvelopeSchema,
   RunResponseSchema,
   type CreateProjectInput,
+  type AttachmentListResponse,
+  type AttachmentUploadIntentResponse,
+  type CreateAttachmentUploadIntentInput,
   type FileContentResponse,
   type ProjectFileListResponse,
   type ProjectResponse,
+  type ProjectAttachment,
   type RunAction,
   type RunEventEnvelope,
   type RunResponse,
@@ -54,14 +61,51 @@ export class ControlApiClient {
     );
   }
 
-  createRun(projectId: string, prompt: string): Promise<RunResponse> {
+  createRun(
+    projectId: string,
+    prompt: string,
+    attachmentIds: readonly string[] = [],
+  ): Promise<RunResponse> {
     return this.#request(
       `/v1/projects/${encodeURIComponent(projectId)}/runs`,
       RunResponseSchema,
       {
         method: "POST",
-        body: JSON.stringify({ prompt }),
+        body: JSON.stringify({ prompt, attachmentIds }),
       },
+    );
+  }
+
+  createAttachmentUploadIntent(
+    projectId: string,
+    input: CreateAttachmentUploadIntentInput,
+  ): Promise<AttachmentUploadIntentResponse> {
+    return this.#request(
+      `/v1/projects/${encodeURIComponent(projectId)}/attachments/upload-intents`,
+      AttachmentUploadIntentResponseSchema,
+      { method: "POST", body: JSON.stringify(input) },
+    );
+  }
+
+  completeAttachmentUpload(
+    projectId: string,
+    attachmentId: string,
+    etag?: string,
+  ): Promise<ProjectAttachment> {
+    return this.#request(
+      `/v1/projects/${encodeURIComponent(projectId)}/attachments/${encodeURIComponent(attachmentId)}/complete`,
+      ProjectAttachmentSchema,
+      {
+        method: "POST",
+        body: JSON.stringify(etag === undefined ? {} : { etag }),
+      },
+    );
+  }
+
+  listProjectAttachments(projectId: string): Promise<AttachmentListResponse> {
+    return this.#request(
+      `/v1/projects/${encodeURIComponent(projectId)}/attachments`,
+      AttachmentListResponseSchema,
     );
   }
 

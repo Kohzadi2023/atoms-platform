@@ -16,6 +16,8 @@ overrides:
 
 catalog:
   "@monaco-editor/react": 4.7.0
+  "@aws-sdk/client-s3": 3.1101.0
+  "@aws-sdk/s3-request-presigner": 3.1101.0
   "@asteasolutions/zod-to-openapi": 9.1.0
   "@e2b/code-interpreter": 2.7.0
   "@fastify/cors": 11.3.0

@@ -144,7 +144,30 @@ export class OpenAIModelGateway implements ModelGateway {
   ): ResponseCreateParamsNonStreaming {
     return {
       model,
-      input: request.input,
+      input:
+        request.references === undefined || request.references.length === 0
+          ? request.input
+          : [
+              {
+                role: "user",
+                content: [
+                  { type: "input_text", text: request.input },
+                  ...request.references.map((reference) =>
+                    reference.kind === "image"
+                      ? {
+                          type: "input_image" as const,
+                          image_url: `data:${reference.mimeType};base64,${reference.dataBase64}`,
+                          detail: reference.detail ?? "auto",
+                        }
+                      : {
+                          type: "input_file" as const,
+                          filename: reference.fileName,
+                          file_data: `data:${reference.mimeType};base64,${reference.dataBase64}`,
+                        },
+                  ),
+                ],
+              },
+            ],
       store: false,
       ...(request.instructions === undefined
         ? {}
@@ -240,4 +263,3 @@ export function calculateCostUsdMicros(
     ),
   );
 }
-

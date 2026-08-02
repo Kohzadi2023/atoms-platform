@@ -28,6 +28,26 @@ export class ModelBackedAgentRuntime implements AgentRuntime {
         upstreamOutputs: request.upstreamOutputs,
         currentFiles: request.currentFiles,
       }),
+      ...(request.referenceAttachments === undefined ||
+      request.referenceAttachments.length === 0
+        ? {}
+        : {
+            references: request.referenceAttachments.map((attachment) =>
+              attachment.kind === "file"
+                ? {
+                    kind: "file" as const,
+                    fileName: attachment.fileName,
+                    mimeType: attachment.mimeType,
+                    dataBase64: attachment.dataBase64,
+                  }
+                : {
+                    kind: "image" as const,
+                    fileName: attachment.fileName,
+                    mimeType: attachment.mimeType,
+                    dataBase64: attachment.dataBase64,
+                  },
+            ),
+          }),
       maxOutputTokens: manifest.maxOutputTokens,
       metadata: {
         run_id: request.runId,

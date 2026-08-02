@@ -25,6 +25,7 @@ docker compose up -d
 pnpm install
 pnpm db:validate
 pnpm db:migrate:dev --name contract_sprint_init
+pnpm db:seed:local
 pnpm verify
 ```
 
@@ -34,6 +35,7 @@ schema at `packages/db/prisma/schema.prisma`.
 ## Workspace
 
 - `apps/control-api`: Fastify control plane API
+- `apps/web`: responsive Next.js Agent Hub and project workspace
 - `apps/orchestrator-worker`: LangGraph.js and BullMQ worker
 - `apps/preview-gateway`: signed HTTP/WebSocket reverse proxy for iframe previews
 - `packages/contracts`: Zod, OpenAPI, and SSE contracts
@@ -81,13 +83,19 @@ wildcard DNS record for `*.PREVIEW_BASE_DOMAIN` at the preview gateway. For loca
 development, a wildcard-loopback domain such as `preview.localhost` can be used
 where the browser resolves its subdomains to `127.0.0.1`.
 
-Run the three processes separately:
+Run the four processes separately:
 
 ```bash
 pnpm --filter @atoms/control-api dev
 pnpm --filter @atoms/orchestrator-worker dev
 pnpm --filter @atoms/preview-gateway dev
+pnpm --filter @atoms/web dev
 ```
+
+The web workspace calls only the configured Control API origin, reconnects SSE
+with `Last-Event-ID`, embeds previews only on the configured signed preview
+domain, and appends manual file edits with expected-version compare-and-swap.
+Set `CONTROL_API_CORS_ORIGINS` to the exact web origins; wildcards are not used.
 
 Container images use the repository root as build context:
 

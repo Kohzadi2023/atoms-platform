@@ -61,6 +61,11 @@ class MemoryRepository implements ControlRepository {
     return project;
   }
 
+  async getProject(projectId: string): Promise<ProjectRecord | null> {
+    const project = this.projects.get(projectId);
+    return project === undefined || project.archivedAt !== null ? null : project;
+  }
+
   async createRun(projectId: string, prompt: string): Promise<RunRecord | null> {
     const project = this.projects.get(projectId);
     if (project === undefined || project.archivedAt !== null) return null;
@@ -153,6 +158,23 @@ class MemoryRepository implements ControlRepository {
       .slice(0, limit);
   }
 
+  async listProjectFiles(
+    projectId: string,
+  ): Promise<readonly ProjectFileRecord[] | null> {
+    if (!this.projects.has(projectId)) return null;
+    const latestByPath = new Map<string, ProjectFileRecord>();
+    for (const file of this.files) {
+      if (file.projectId !== projectId) continue;
+      const current = latestByPath.get(file.filePath);
+      if (current === undefined || current.version < file.version) {
+        latestByPath.set(file.filePath, file);
+      }
+    }
+    return [...latestByPath.values()].sort((left, right) =>
+      left.filePath.localeCompare(right.filePath),
+    );
+  }
+
   async getProjectFile(
     projectId: string,
     filePath: string,
@@ -218,7 +240,7 @@ class MemoryRunQueue implements RunQueue {
   async close(): Promise<void> {}
 }
 
-async function fixture(): Promise<{
+async function fixture(corsOrigins: readonly string[] = []): Promise<{
   readonly repository: MemoryRepository;
   readonly queue: MemoryRunQueue;
   readonly app: Awaited<ReturnType<typeof buildControlApi>>;
@@ -232,6 +254,7 @@ async function fixture(): Promise<{
     ssePollIntervalMs: 1,
     sseHeartbeatMs: 10,
     sseMaxConnectionMs: 100,
+    corsOrigins,
   });
   return { repository, queue, app };
 }
@@ -276,6 +299,13 @@ test("POST /v1/projects validates and creates a normalized project", async () =>
     });
     assert.equal(invalid.statusCode, 400);
     assert.equal(invalid.json().error.code, "VALIDATION_ERROR");
+
+    const restored = await app.inject({
+      method: "GET",
+      url: `/v1/projects/${PROJECT_ID}`,
+    });
+    assert.equal(restored.statusCode, 200);
+    assert.equal(restored.json().slug, "customer-portal");
   } finally {
     await app.close();
   }
@@ -304,6 +334,60 @@ test("POST /v1/projects/:id/runs persists and enqueues an idempotent run command
     assert.deepEqual(queue.jobs, [
       { runId: RUN_ID, command: "start", controlVersion: 0 },
     ]);
+  } finally {
+    await app.close();
+  }
+});
+
+test("GET /v1/runs/:runId restores the latest resumable run state", async () => {
+  const { app, repository } = await fixture();
+  try {
+    const run = await createProjectAndRun(repository);
+    repository.setRunStatus(run.id, "PAUSED");
+
+    const response = await app.inject({
+      method: "GET",
+      url: `/v1/runs/${run.id}`,
+    });
+    assert.equal(response.statusCode, 200);
+    assert.equal(response.json().status, "PAUSED");
+
+    const missing = await app.inject({
+      method: "GET",
+      url: `/v1/runs/${uuid(999)}`,
+    });
+    assert.equal(missing.statusCode, 404);
+  } finally {
+    await app.close();
+  }
+});
+
+test("CORS permits only an explicitly configured web origin", async () => {
+  const { app } = await fixture(["http://localhost:3000"]);
+  try {
+    const allowed = await app.inject({
+      method: "OPTIONS",
+      url: "/v1/projects",
+      headers: {
+        origin: "http://localhost:3000",
+        "access-control-request-method": "POST",
+      },
+    });
+    assert.equal(allowed.statusCode, 204);
+    assert.equal(
+      allowed.headers["access-control-allow-origin"],
+      "http://localhost:3000",
+    );
+
+    const denied = await app.inject({
+      method: "OPTIONS",
+      url: "/v1/projects",
+      headers: {
+        origin: "https://untrusted.example",
+        "access-control-request-method": "POST",
+      },
+    });
+    assert.equal(denied.headers["access-control-allow-origin"], undefined);
   } finally {
     await app.close();
   }
@@ -486,6 +570,22 @@ test("GET/PUT project file content appends revisions and rejects stale writes", 
     });
     assert.equal(updated.statusCode, 200);
     assert.equal(updated.json().version, 2);
+
+    const listed = await app.inject({
+      method: "GET",
+      url: `/v1/projects/${PROJECT_ID}/files`,
+    });
+    assert.equal(listed.statusCode, 200);
+    assert.deepEqual(listed.json().items, [
+      {
+        id: updated.json().id,
+        projectId: PROJECT_ID,
+        filePath: "app/page.tsx",
+        version: 2,
+        createdAt: FIXED_NOW.toISOString(),
+        updatedAt: FIXED_NOW.toISOString(),
+      },
+    ]);
 
     const stale = await app.inject({
       method: "PUT",

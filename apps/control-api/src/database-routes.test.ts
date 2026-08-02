@@ -74,6 +74,9 @@ class NoopControlRepository implements ControlRepository {
   async createProject(_input: CreateProjectInput): Promise<never> {
     throw new Error("not used");
   }
+  async getProject(): Promise<null> {
+    return null;
+  }
   async createRun(): Promise<null> {
     return null;
   }
@@ -90,6 +93,9 @@ class NoopControlRepository implements ControlRepository {
   ): Promise<void> {}
   async listRunEventsAfter(): Promise<[]> {
     return [];
+  }
+  async listProjectFiles(): Promise<null> {
+    return null;
   }
   async getProjectFile(): Promise<null> {
     return null;

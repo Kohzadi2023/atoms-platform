@@ -25,6 +25,7 @@ export type PutProjectFileResult =
 
 export interface ControlRepository {
   createProject(input: CreateProjectInput): Promise<ProjectRecord>;
+  getProject(projectId: string): Promise<ProjectRecord | null>;
   createRun(projectId: string, prompt: string): Promise<RunRecord | null>;
   getRun(runId: string): Promise<RunRecord | null>;
   transitionRun(
@@ -43,6 +44,9 @@ export interface ControlRepository {
     sequence: number,
     limit: number,
   ): Promise<readonly RunEventRecord[]>;
+  listProjectFiles(
+    projectId: string,
+  ): Promise<readonly ProjectFileRecord[] | null>;
   getProjectFile(
     projectId: string,
     filePath: string,
@@ -81,6 +85,12 @@ export class PrismaControlRepository implements ControlRepository {
       }
       throw error;
     }
+  }
+
+  async getProject(projectId: string): Promise<ProjectRecord | null> {
+    return this.#prisma.project.findFirst({
+      where: { id: projectId, archivedAt: null },
+    });
   }
 
   async createRun(projectId: string, prompt: string): Promise<RunRecord | null> {
@@ -182,6 +192,22 @@ export class PrismaControlRepository implements ControlRepository {
       take: limit,
     });
     return events.map(toRunEventRecord);
+  }
+
+  async listProjectFiles(
+    projectId: string,
+  ): Promise<readonly ProjectFileRecord[] | null> {
+    const project = await this.#prisma.project.findFirst({
+      where: { id: projectId, archivedAt: null },
+      select: { id: true },
+    });
+    if (project === null) return null;
+
+    return this.#prisma.projectFile.findMany({
+      where: { projectId },
+      orderBy: [{ filePath: "asc" }, { version: "desc" }],
+      distinct: ["filePath"],
+    });
   }
 
   getProjectFile(

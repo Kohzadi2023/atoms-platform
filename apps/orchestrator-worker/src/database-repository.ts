@@ -420,6 +420,7 @@ async function appendStatusEvent(
         integration: "generated-database",
         databaseInstanceId: database.id,
         operationId: database.operationId,
+        operationVersion: database.operationVersion,
         provider: "SUPABASE",
         status,
         message,

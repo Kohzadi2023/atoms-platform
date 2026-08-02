@@ -16,7 +16,7 @@ services:
       - atoms_postgres_data:/var/lib/postgresql/data
 
   redis:
-    image: redis:7.4-alpine
+    image: redis:8-alpine
     command: ["redis-server", "--appendonly", "yes"]
     ports:
       - "6379:6379"

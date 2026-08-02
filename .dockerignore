@@ -4,6 +4,10 @@ dist
 **/dist
 .turbo
 **/.turbo
+.next
+**/.next
+dist-test
+**/dist-test
 .git
 .env
 .env.*

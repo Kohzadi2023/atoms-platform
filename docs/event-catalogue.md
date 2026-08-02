@@ -59,6 +59,7 @@ Schema: `DatabaseStatusChangedEventPayloadV1Schema`
   "integration": "generated-database",
   "databaseInstanceId": "00000000-0000-4000-8000-000000000010",
   "operationId": "00000000-0000-4000-8000-000000000011",
+  "operationVersion": 1,
   "provider": "SUPABASE",
   "status": "MIGRATING",
   "message": "Applying forward-only migrations and idempotent seed data in E2B"
@@ -70,8 +71,9 @@ MIGRATING -> READY`. Failures use `FAILED`; confirmed teardown uses `DELETING ->
 DELETED`. The payload never contains a provider token, database password,
 connection URL, Vault path value, or E2B environment variable.
 
-Reconciliation reuses this payload without changing its version. Recovery
-dispatch, recovery exhaustion, and confirmed provider-resource loss are
-communicated through the existing `status` and bounded `message` fields. The
-internal fencing version and orphan-finding identifiers remain private
+Reconciliation reuses this payload without changing its version. The monotonic
+`operationVersion` lets clients discard stale status updates without revealing
+provider state. Recovery dispatch, recovery exhaustion, and confirmed
+provider-resource loss are communicated through the existing `status` and
+bounded `message` fields. Orphan-finding identifiers remain private
 control-plane data.

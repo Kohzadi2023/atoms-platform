@@ -55,11 +55,17 @@ description is `docs/attachments-openapi.yaml`.
 `docker compose up -d` starts PostgreSQL, Redis, a pinned MinIO server, a
 one-shot bucket/CORS initializer, and a pinned ClamAV daemon. MinIO uses a
 static test-only KMS key so the same SSE-S3 headers required in production work
-locally. The browser origin in `infra/minio/cors.json` must match the local web
-origin.
+locally. `MINIO_API_CORS_ALLOW_ORIGIN` must match the exact local web origin.
 
 Production deployments must use private service networking, scoped workload
 credentials, a managed KMS key, exact browser CORS origins, audit logging, and a
 bucket lifecycle rule that expires abandoned quarantine objects. ClamAV must
 have no public ingress. The Control API and worker receive storage credentials
 only through their private runtime environments.
+
+## Deterministic integration gate
+
+CI starts the pinned MinIO and ClamAV containers and proves the real signed
+PUT/CORS/encryption, quarantine read, MIME/hash inspection, clean and EICAR scan,
+hash-addressed copy/delete, and signed GET lifecycle. The test is fail-closed and
+requires the exact `DEDICATED_EPHEMERAL_STORAGE` confirmation value.

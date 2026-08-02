@@ -655,6 +655,7 @@ async function appendIntegrationEvent(
         integration: "generated-database",
         databaseInstanceId: input.databaseInstanceId,
         operationId: input.operationId,
+        operationVersion: input.operationVersion,
         provider: "SUPABASE",
         status: input.status,
         message: input.message,

@@ -190,8 +190,11 @@ test(
         where: { runId: fixture.runId, eventType: "integration.status_changed" },
         orderBy: { sequence: "desc" },
       });
+      assert.equal(
+        (event.payload as { operationVersion?: unknown }).operationVersion,
+        1,
+      );
       const serializedEvent = JSON.stringify(event.payload);
-      assert.ok(serializedEvent.includes("operationVersion"));
       assert.ok(!/postgres(?:ql)?:\/\//iu.test(serializedEvent));
     } finally {
       await worker?.close().catch(() => undefined);

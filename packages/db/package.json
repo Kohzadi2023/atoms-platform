@@ -18,7 +18,7 @@
     "prisma:generate": "prisma --config ../../prisma.config.ts generate",
     "prisma:validate": "prisma --config ../../prisma.config.ts validate",
     "prisma:format": "prisma --config ../../prisma.config.ts format",
-    "seed:local": "tsx src/seed-local.ts"
+    "seed:local": "pnpm prisma:generate && node --import tsx src/seed-local.ts"
   },
   "dependencies": {
     "@prisma/adapter-pg": "catalog:",

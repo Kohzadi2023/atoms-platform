@@ -1,0 +1,138 @@
+openapi: 3.1.0
+info:
+  title: Atoms Generated Database API
+  version: 1.0.0-phase3
+paths:
+  /v1/projects/{projectId}/migration-artifacts/latest:
+    get:
+      operationId: getLatestMigrationArtifact
+      summary: Read the latest validated David migration artifact
+      parameters:
+        - in: path
+          name: projectId
+          required: true
+          schema: { type: string, format: uuid }
+      responses:
+        '200':
+          description: Latest validated immutable migration artifact
+  /v1/projects/{projectId}/databases:
+    post:
+      operationId: provisionProjectDatabase
+      summary: Queue confirmed Supabase provisioning and migration
+      parameters:
+        - in: path
+          name: projectId
+          required: true
+          schema: { type: string, format: uuid }
+        - in: header
+          name: Idempotency-Key
+          required: true
+          schema: { type: string, minLength: 8, maxLength: 128 }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/ProvisionDatabaseInput'
+      responses:
+        '202':
+          description: Durable operation accepted or replayed
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/DatabaseInstance' }
+        '409':
+          description: Destructive approval or idempotency conflict
+  /v1/projects/{projectId}/databases/{databaseId}:
+    get:
+      operationId: getProjectDatabase
+      parameters:
+        - in: path
+          name: projectId
+          required: true
+          schema: { type: string, format: uuid }
+        - in: path
+          name: databaseId
+          required: true
+          schema: { type: string, format: uuid }
+      responses:
+        '200':
+          description: Current lifecycle state
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/DatabaseInstance' }
+  /v1/projects/{projectId}/databases/{databaseId}/actions:
+    post:
+      operationId: controlProjectDatabase
+      summary: Queue explicitly confirmed database destruction
+      parameters:
+        - in: path
+          name: projectId
+          required: true
+          schema: { type: string, format: uuid }
+        - in: path
+          name: databaseId
+          required: true
+          schema: { type: string, format: uuid }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: false
+              required: [action, confirmation]
+              properties:
+                action: { const: destroy }
+                confirmation: { const: DESTROY_DATABASE }
+      responses:
+        '202':
+          description: Teardown accepted
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/DatabaseInstance' }
+components:
+  schemas:
+    ProvisionDatabaseInput:
+      type: object
+      additionalProperties: false
+      required: [provider, region, migrationArtifactId, confirmation]
+      properties:
+        provider: { const: SUPABASE }
+        region: { type: string, enum: [americas, emea, apac] }
+        migrationArtifactId: { type: string, format: uuid }
+        approveDestructiveChanges: { type: boolean, default: false }
+        confirmation: { const: PROVISION_DATABASE }
+    DatabaseInstance:
+      type: object
+      required:
+        - id
+        - operationId
+        - workspaceId
+        - projectId
+        - migrationArtifactId
+        - provider
+        - displayName
+        - region
+        - status
+        - attempt
+        - createdAt
+        - updatedAt
+      properties:
+        id: { type: string, format: uuid }
+        operationId: { type: string, format: uuid }
+        workspaceId: { type: string, format: uuid }
+        projectId: { type: string, format: uuid }
+        migrationArtifactId: { type: string, format: uuid }
+        provider: { const: SUPABASE }
+        externalId: { type: [string, 'null'] }
+        displayName: { type: string }
+        databaseName: { type: [string, 'null'] }
+        region: { type: string }
+        status:
+          enum: [QUEUED, PROVISIONING, HEALTH_CHECK, MIGRATING, READY, SUSPENDED, FAILED, DELETING, DELETED]
+        attempt: { type: integer, minimum: 0 }
+        error: {}
+        createdAt: { type: string, format: date-time }
+        updatedAt: { type: string, format: date-time }
+        readyAt: { type: [string, 'null'], format: date-time }
+        deletedAt: { type: [string, 'null'], format: date-time }

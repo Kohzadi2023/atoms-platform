@@ -1,0 +1,12 @@
+node_modules/
+.pnpm-store/
+.turbo/
+dist/
+coverage/
+*.log
+
+.env
+.env.*
+!.env.example
+
+packages/db/src/generated/

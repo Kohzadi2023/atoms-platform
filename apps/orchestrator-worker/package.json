@@ -1,0 +1,39 @@
+{
+  "name": "@atoms/orchestrator-worker",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "approve:orphan-cleanup": "tsx src/approve-orphan-cleanup.ts",
+    "build": "tsc -p tsconfig.json",
+    "dev": "tsx watch src/main.ts",
+    "start": "node dist/main.js",
+    "test": "pnpm build && node --test dist/*.test.js",
+    "test:phase3-durability:built": "node --test dist/database-reconciliation.integration.test.js",
+    "test:phase3-provider-exit:built": "node --test dist/phase3-provider-staging.live.test.js",
+    "typecheck": "tsc -p tsconfig.json --noEmit"
+  },
+  "dependencies": {
+    "@atoms/agents": "workspace:*",
+    "@atoms/contracts": "workspace:*",
+    "@atoms/database-provider": "workspace:*",
+    "@atoms/db": "workspace:*",
+    "@atoms/model-gateway": "workspace:*",
+    "@atoms/preview": "workspace:*",
+    "@atoms/sandbox-provider": "workspace:*",
+    "@langchain/core": "catalog:",
+    "@langchain/langgraph": "catalog:",
+    "@langchain/langgraph-checkpoint": "catalog:",
+    "@langchain/langgraph-checkpoint-postgres": "catalog:",
+    "bullmq": "catalog:",
+    "ioredis": "catalog:",
+    "pg": "catalog:",
+    "zod": "catalog:"
+  },
+  "devDependencies": {
+    "@types/node": "catalog:",
+    "@types/pg": "catalog:",
+    "tsx": "catalog:",
+    "typescript": "catalog:"
+  }
+}

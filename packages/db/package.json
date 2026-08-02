@@ -1,0 +1,33 @@
+{
+  "name": "@atoms/db",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js",
+      "default": "./dist/index.js"
+    }
+  },
+  "files": ["dist", "prisma"],
+  "scripts": {
+    "build": "pnpm prisma:generate && tsc -p tsconfig.json",
+    "typecheck": "pnpm prisma:generate && tsc -p tsconfig.json --noEmit",
+    "prisma": "prisma --config ../../prisma.config.ts",
+    "prisma:generate": "prisma --config ../../prisma.config.ts generate",
+    "prisma:validate": "prisma --config ../../prisma.config.ts validate",
+    "prisma:format": "prisma --config ../../prisma.config.ts format"
+  },
+  "dependencies": {
+    "@prisma/adapter-pg": "catalog:",
+    "@prisma/client": "catalog:",
+    "pg": "catalog:"
+  },
+  "devDependencies": {
+    "@types/node": "catalog:",
+    "@types/pg": "catalog:",
+    "prisma": "catalog:",
+    "typescript": "catalog:"
+  }
+}

@@ -24,6 +24,7 @@
     "sql:lint": "node scripts/lint-sql.mjs",
     "staging:phase3:durability": "pnpm build && pnpm --filter @atoms/orchestrator-worker test:phase3-durability:built",
     "staging:phase3:provider": "pnpm build && pnpm --filter @atoms/orchestrator-worker test:phase3-provider-exit:built",
+    "staging:attachments:durability": "pnpm build && pnpm --filter @atoms/control-api test:attachments-durability:built",
     "db:generate": "pnpm prisma generate",
     "db:validate": "pnpm prisma validate",
     "db:format": "pnpm prisma format",

@@ -19,6 +19,7 @@ import {
 } from "@langchain/langgraph";
 
 import type { WorkerRepository } from "./domain.js";
+import type { RunAttachmentLoader } from "./attachment-loader.js";
 import {
   GeneratedFileConflictError,
   RunStoppedError,
@@ -44,6 +45,7 @@ export interface BuildRunGraphOptions {
   readonly repository: WorkerRepository;
   readonly agents: AgentRuntime;
   readonly checkpointer?: BaseCheckpointSaver;
+  readonly attachmentLoader?: RunAttachmentLoader;
   readonly now?: () => Date;
 }
 
@@ -111,12 +113,20 @@ export function buildRunGraph(options: BuildRunGraphOptions) {
           agentName === "Alex" || agentName === "David"
             ? await options.repository.listProjectFiles(state.projectId)
             : [];
+        const referenceAttachments =
+          agentName === "Emma"
+            ? await options.attachmentLoader?.load(state.runId)
+            : undefined;
         const output = await options.agents.execute({
           agentName,
           runId: state.runId,
           prompt: state.prompt,
           upstreamOutputs,
           currentFiles,
+          ...(referenceAttachments === undefined ||
+          referenceAttachments.length === 0
+            ? {}
+            : { referenceAttachments }),
         });
         const normalizedOutput = JsonValueSchema.parse(output);
         const generatedFiles =

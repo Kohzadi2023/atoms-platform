@@ -1,9 +1,11 @@
 node_modules/
 .pnpm-store/
 .turbo/
+.next/
 dist/
 dist-test/
 coverage/
+*.tsbuildinfo
 *.log
 
 .env

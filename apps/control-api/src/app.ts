@@ -35,8 +35,13 @@ import {
   registerDatabaseRoutes,
   type DatabaseRoutesOptions,
 } from "./database-routes.js";
+import {
+  registerAttachmentRoutes,
+  type AttachmentRoutesOptions,
+} from "./attachment-routes.js";
 import type { ControlRepository } from "./repository.js";
 import type { RunQueue } from "./run-queue.js";
+import { RepositoryAttachmentError } from "./errors.js";
 
 const ProjectIdParamsSchema = z
   .object({ id: z.string().uuid() })
@@ -86,6 +91,7 @@ export interface BuildControlApiOptions {
   readonly now?: () => Date;
   readonly corsOrigins?: readonly string[];
   readonly databaseOperations?: DatabaseRoutesOptions;
+  readonly attachmentOperations?: AttachmentRoutesOptions;
 }
 
 export async function buildControlApi(
@@ -107,6 +113,12 @@ export async function buildControlApi(
   if (options.databaseOperations !== undefined) {
     registerDatabaseRoutes(api, {
       ...options.databaseOperations,
+      now,
+    });
+  }
+  if (options.attachmentOperations !== undefined) {
+    registerAttachmentRoutes(api, {
+      ...options.attachmentOperations,
       now,
     });
   }
@@ -164,10 +176,24 @@ export async function buildControlApi(
       },
     },
     async (request, reply) => {
-      const run = await options.repository.createRun(
-        request.params.id,
-        request.body.prompt,
-      );
+      let run: RunRecord | null;
+      try {
+        run = await options.repository.createRun(
+          request.params.id,
+          request.body.prompt,
+          request.body.attachmentIds,
+        );
+      } catch (error) {
+        if (error instanceof RepositoryAttachmentError) {
+          throw new ApiError(
+            409,
+            "RUN_ATTACHMENTS_NOT_READY",
+            "Every run attachment must be clean and belong to the project",
+            { attachmentIds: [...error.attachmentIds] },
+          );
+        }
+        throw error;
+      }
       if (run === null) {
         throw new ApiError(404, "PROJECT_NOT_FOUND", "Project not found");
       }
@@ -475,6 +501,8 @@ export async function buildControlApi(
   if (options.closeDependencies ?? false) {
     app.addHook("onClose", async () => {
       await options.databaseOperations?.queue.close();
+      await options.attachmentOperations?.queue.close();
+      await options.attachmentOperations?.repository.close();
       await options.runQueue.close();
       await options.repository.close();
     });

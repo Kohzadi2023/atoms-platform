@@ -2,12 +2,19 @@
 
 import type {
   AgentRunStatus,
+  AttachmentUploadIntentResponse,
   FileContentResponse,
   ProjectFileSummary,
   ProjectResponse,
+  ProjectAttachment,
   RunAction,
   RunEventEnvelope,
   RunResponse,
+} from "@atoms/contracts";
+import {
+  ALLOWED_ATTACHMENT_MIME_TYPES,
+  MAX_ATTACHMENT_BYTES,
+  MAX_PROJECT_ATTACHMENTS,
 } from "@atoms/contracts";
 import {
   Activity,
@@ -68,16 +75,10 @@ const DEFAULT_WORKSPACE_ID =
   "00000000-0000-4000-8000-000000000001";
 const PREVIEW_BASE_DOMAIN =
   process.env.NEXT_PUBLIC_PREVIEW_BASE_DOMAIN ?? "preview.localhost";
-const MAX_ATTACHMENT_BYTES = 10 * 1024 * 1024;
-const MAX_ATTACHMENTS = 5;
 const ACTIVE_RUN_STORAGE_KEY = "atoms.active-run.v1";
-const ALLOWED_ATTACHMENT_TYPES = new Set([
-  "application/pdf",
-  "text/plain",
-  "image/png",
-  "image/jpeg",
-  "image/webp",
-]);
+const ALLOWED_ATTACHMENT_TYPES = new Set<string>(
+  ALLOWED_ATTACHMENT_MIME_TYPES,
+);
 
 const WORKSPACE_TABS = [
   { id: "preview", label: "Preview", icon: MonitorPlay },
@@ -105,6 +106,9 @@ export function WorkspaceShell() {
     "Build a responsive customer operations portal with account summaries, support requests, role-based navigation, Prisma models, API routes, and deterministic tests.",
   );
   const [attachments, setAttachments] = useState<readonly File[]>([]);
+  const [attachmentRecords, setAttachmentRecords] = useState<
+    readonly ProjectAttachment[]
+  >([]);
   const [project, setProject] = useState<ProjectResponse | undefined>();
   const [run, setRun] = useState<RunResponse | undefined>();
   const [projection, setProjection] = useState(createWorkspaceProjection);
@@ -123,6 +127,9 @@ export function WorkspaceShell() {
   const [editorValue, setEditorValue] = useState("");
   const [saving, setSaving] = useState(false);
   const lastSequenceRef = useRef(0);
+  const uploadIntentsRef = useRef(
+    new Map<string, AttachmentUploadIntentResponse>(),
+  );
 
   const effectiveStatus = projection.inferredRunStatus ?? run?.status;
   const terminal =
@@ -224,27 +231,94 @@ export function WorkspaceShell() {
     event.preventDefault();
     setError(undefined);
     setNotice(undefined);
-    if (attachments.length > 0) {
-      setError(
-        "Attachment validation passed locally, but the quarantined object-storage upload route is not implemented yet. Remove attachments to run the live prompt-only slice.",
-      );
-      return;
-    }
     setBusy(true);
     try {
-      const createdProject = await api.createProject({
-        workspaceId,
-        name: projectName,
-        slug: projectSlug,
-        description: "Created from the Atoms developer workspace",
-      });
-      const createdRun = await api.createRun(createdProject.id, prompt);
+      const createdProject =
+        project ??
+        (await api.createProject({
+          workspaceId,
+          name: projectName,
+          slug: projectSlug,
+          description: "Created from the Atoms developer workspace",
+        }));
+      setProject(createdProject);
+      const attachmentIds: string[] = [];
+      for (const [index, file] of attachments.entries()) {
+        const existing = attachmentRecords.find(
+          (attachment) =>
+            attachment.fileName === file.name &&
+            attachment.sizeBytes === file.size &&
+            ["QUARANTINED", "SCANNING", "CLEAN"].includes(
+              attachment.status,
+            ),
+        );
+        if (existing !== undefined) {
+          attachmentIds.push(existing.id);
+          continue;
+        }
+        setNotice(
+          `Uploading reference ${String(index + 1)} of ${String(attachments.length)} to quarantine…`,
+        );
+        const identity = attachmentIdentity(file);
+        const intent =
+          uploadIntentsRef.current.get(identity) ??
+          (await api.createAttachmentUploadIntent(createdProject.id, {
+            fileName: file.name,
+            contentType:
+              file.type as (typeof ALLOWED_ATTACHMENT_MIME_TYPES)[number],
+            sizeBytes: file.size,
+          }));
+        uploadIntentsRef.current.set(identity, intent);
+        setAttachmentRecords((current) =>
+          current.some((item) => item.id === intent.attachment.id)
+            ? current
+            : [...current, intent.attachment],
+        );
+        const upload = await fetch(intent.upload.url, {
+          method: intent.upload.method,
+          headers: intent.upload.headers,
+          body: file,
+          credentials: "omit",
+        });
+        if (!upload.ok) {
+          throw new Error(
+            `Object storage rejected ${file.name} (${String(upload.status)}).`,
+          );
+        }
+        const completed = await api.completeAttachmentUpload(
+          createdProject.id,
+          intent.attachment.id,
+          upload.headers.get("etag") ?? undefined,
+        );
+        setAttachmentRecords((current) =>
+          current.map((item) =>
+            item.id === completed.id ? completed : item,
+          ),
+        );
+        uploadIntentsRef.current.delete(identity);
+        attachmentIds.push(completed.id);
+      }
+
+      if (attachmentIds.length > 0) {
+        setNotice("References uploaded. Waiting for malware and file-type scans…");
+        const clean = await waitForCleanAttachments(
+          api,
+          createdProject.id,
+          attachmentIds,
+          setAttachmentRecords,
+        );
+        setAttachmentRecords(clean);
+      }
+      const createdRun = await api.createRun(
+        createdProject.id,
+        prompt,
+        attachmentIds,
+      );
       lastSequenceRef.current = 0;
       setProjection(createWorkspaceProjection());
       setFiles([]);
       setSelectedFile(undefined);
       setPreviousContent(undefined);
-      setProject(createdProject);
       setRun(createdRun);
       globalThis.localStorage.setItem(
         ACTIVE_RUN_STORAGE_KEY,
@@ -252,7 +326,11 @@ export function WorkspaceShell() {
       );
       setNow(Date.now());
       setMobilePane("project");
-      setNotice("Durable run created. Listening for ordered events…");
+      setNotice(
+        attachmentIds.length === 0
+          ? "Durable run created. Listening for ordered events…"
+          : "References passed quarantine. Durable run created and listening for ordered events…",
+      );
     } catch (caught) {
       setError(toMessage(caught));
     } finally {
@@ -262,8 +340,10 @@ export function WorkspaceShell() {
 
   function selectAttachments(event: ChangeEvent<HTMLInputElement>) {
     const selected = [...(event.target.files ?? [])];
-    if (selected.length > MAX_ATTACHMENTS) {
-      setError(`Choose at most ${String(MAX_ATTACHMENTS)} attachments.`);
+    if (selected.length > MAX_PROJECT_ATTACHMENTS) {
+      setError(
+        `Choose at most ${String(MAX_PROJECT_ATTACHMENTS)} attachments.`,
+      );
       event.target.value = "";
       return;
     }
@@ -280,6 +360,8 @@ export function WorkspaceShell() {
       return;
     }
     setError(undefined);
+    uploadIntentsRef.current.clear();
+    setAttachmentRecords([]);
     setAttachments(selected);
   }
 
@@ -513,8 +595,8 @@ export function WorkspaceShell() {
                   />
                 </label>
                 <p className="mt-2 text-xs leading-5 text-[#7f8b9d]">
-                  Up to five files, 10 MB each. Files are validated locally; the
-                  quarantined upload route is the next storage slice.
+                  Up to five files, 10 MB each. Files are uploaded directly to
+                  encrypted quarantine storage and scanned before agents can use them.
                 </p>
                 {attachments.length > 0 ? (
                   <>
@@ -526,13 +608,29 @@ export function WorkspaceShell() {
                         >
                           <span className="truncate text-[#cbd5e1]">{file.name}</span>
                           <span className="text-[#7f8b9d]">{formatBytes(file.size)}</span>
+                          {attachmentRecords.find(
+                            (attachment) => attachment.fileName === file.name,
+                          )?.status !== undefined ? (
+                            <span className="text-[#78e6bd]">
+                              {
+                                attachmentRecords.find(
+                                  (attachment) =>
+                                    attachment.fileName === file.name,
+                                )?.status
+                              }
+                            </span>
+                          ) : null}
                         </li>
                       ))}
                     </ul>
                     <button
                       type="button"
                       className="mt-2 text-xs font-semibold text-[#9fc5ff] hover:text-[#c3d9ff]"
-                      onClick={() => setAttachments([])}
+                      onClick={() => {
+                        setAttachments([]);
+                        uploadIntentsRef.current.clear();
+                        setAttachmentRecords([]);
+                      }}
                     >
                       Clear attachments
                     </button>
@@ -1106,6 +1204,37 @@ function Feedback({ kind, message, onClose }: { readonly kind: "error" | "notice
 
 const inputClass = "w-full rounded-xl border border-[#2a3442] bg-[#090d13] px-3 py-2.5 text-sm text-[#e5ebf2] placeholder:text-[#5f6d80] focus:border-[#4c8e77]";
 
+async function waitForCleanAttachments(
+  api: ControlApiClient,
+  projectId: string,
+  attachmentIds: readonly string[],
+  onUpdate: (attachments: readonly ProjectAttachment[]) => void,
+): Promise<readonly ProjectAttachment[]> {
+  const expected = new Set(attachmentIds);
+  const deadline = Date.now() + 120_000;
+  while (Date.now() < deadline) {
+    const response = await api.listProjectAttachments(projectId);
+    const selected = response.items.filter((item) => expected.has(item.id));
+    onUpdate(selected);
+    const failed = selected.find((item) =>
+      ["REJECTED", "FAILED", "EXPIRED"].includes(item.status),
+    );
+    if (failed !== undefined) {
+      throw new Error(
+        `${failed.fileName} did not pass quarantine (${failed.failureCode ?? failed.status}).`,
+      );
+    }
+    if (
+      selected.length === attachmentIds.length &&
+      selected.every((item) => item.status === "CLEAN")
+    ) {
+      return selected;
+    }
+    await new Promise((resolve) => globalThis.setTimeout(resolve, 750));
+  }
+  throw new Error("Attachment scanning did not finish within two minutes.");
+}
+
 function toMessage(error: unknown): string {
   if (error instanceof ControlApiError) return `${error.code}: ${error.message}`;
   return error instanceof Error ? error.message : "An unexpected error occurred.";
@@ -1121,6 +1250,10 @@ function capitalize(value: string): string {
 
 function formatBytes(value: number): string {
   return value < 1024 * 1024 ? `${(value / 1024).toFixed(1)} KB` : `${(value / 1024 / 1024).toFixed(1)} MB`;
+}
+
+function attachmentIdentity(file: File): string {
+  return `${file.name}:${String(file.size)}:${String(file.lastModified)}`;
 }
 
 function formatDuration(value: number): string {

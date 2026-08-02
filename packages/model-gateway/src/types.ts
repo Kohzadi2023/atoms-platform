@@ -7,9 +7,25 @@ export const MODEL_POLICIES = [
 
 export type ModelPolicy = (typeof MODEL_POLICIES)[number];
 
+export type ModelReference =
+  | {
+      readonly kind: "file";
+      readonly fileName: string;
+      readonly mimeType: "application/pdf" | "text/plain";
+      readonly dataBase64: string;
+    }
+  | {
+      readonly kind: "image";
+      readonly fileName: string;
+      readonly mimeType: "image/png" | "image/jpeg" | "image/webp";
+      readonly dataBase64: string;
+      readonly detail?: "auto" | "low" | "high";
+    };
+
 export interface ModelRequest {
   readonly policy: ModelPolicy;
   readonly input: string;
+  readonly references?: readonly ModelReference[];
   readonly instructions?: string;
   readonly maxOutputTokens?: number;
   readonly metadata?: Readonly<Record<string, string>>;
@@ -71,4 +87,3 @@ export interface ModelGateway {
   generate(request: ModelRequest): Promise<ModelResponse>;
   stream(request: ModelRequest): AsyncIterable<ModelStreamEvent>;
 }
-

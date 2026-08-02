@@ -14,6 +14,10 @@ import {
   E2BSandboxAdapter,
   ProjectValidationRunner,
 } from "@atoms/sandbox-provider";
+import {
+  ClamAvScanner,
+  S3ObjectStorageProvider,
+} from "@atoms/storage-provider";
 import { PostgresSaver } from "@langchain/langgraph-checkpoint-postgres";
 import { z } from "zod";
 
@@ -28,6 +32,10 @@ import { PrismaDatabaseOperationRepository } from "./database-repository.js";
 import { RunProcessor } from "./processor.js";
 import { PrismaWorkerRepository } from "./repository.js";
 import { Phase2RunValidator } from "./validation.js";
+import { BullMqAttachmentWorker } from "./attachment-bullmq-worker.js";
+import { AttachmentProcessor } from "./attachment-processor.js";
+import { PrismaAttachmentScanRepository } from "./attachment-repository.js";
+import { PrismaRunAttachmentLoader } from "./attachment-loader.js";
 
 const EnvironmentSchema = z
   .object({
@@ -50,6 +58,30 @@ const EnvironmentSchema = z
     PREVIEW_PUBLIC_PROTOCOL: z.enum(["http", "https"]).default("https"),
     RUN_QUEUE_PREFIX: z.string().trim().min(1).optional(),
     ORCHESTRATOR_CONCURRENCY: z.coerce.number().int().min(1).max(32).default(2),
+    ATTACHMENT_SCAN_CONCURRENCY: z.coerce
+      .number()
+      .int()
+      .min(1)
+      .max(16)
+      .default(2),
+    S3_BUCKET: z.string().trim().min(3).default("atoms-attachments"),
+    S3_REGION: z.string().trim().min(1).default("us-east-1"),
+    S3_ENDPOINT: z.string().url().optional(),
+    S3_FORCE_PATH_STYLE: z
+      .enum(["true", "false"])
+      .default("false")
+      .transform((value) => value === "true"),
+    S3_ACCESS_KEY_ID: z.string().min(1).optional(),
+    S3_SECRET_ACCESS_KEY: z.string().min(1).optional(),
+    S3_KMS_KEY_ID: z.string().min(1).optional(),
+    CLAMAV_HOST: z.string().trim().min(1).default("127.0.0.1"),
+    CLAMAV_PORT: z.coerce.number().int().min(1).max(65_535).default(3_310),
+    CLAMAV_TIMEOUT_MS: z.coerce
+      .number()
+      .int()
+      .min(1_000)
+      .max(120_000)
+      .default(30_000),
     DATABASE_OPERATION_CONCURRENCY: z.coerce
       .number()
       .int()
@@ -123,12 +155,23 @@ const EnvironmentSchema = z
           "Phase 3 requires SUPABASE_ACCESS_TOKEN, SUPABASE_ORGANIZATION_SLUG, VAULT_ADDR, and VAULT_TOKEN together",
       });
     }
+    if (
+      (environment.S3_ACCESS_KEY_ID === undefined) !==
+      (environment.S3_SECRET_ACCESS_KEY === undefined)
+    ) {
+      context.addIssue({
+        code: "custom",
+        message:
+          "S3_ACCESS_KEY_ID and S3_SECRET_ACCESS_KEY must be configured together",
+      });
+    }
   });
 
 async function main(): Promise<void> {
   const environment = EnvironmentSchema.parse(process.env);
   const prisma = createPrismaClient(environment.DATABASE_URL);
   const repository = new PrismaWorkerRepository(prisma);
+  const attachmentRepository = new PrismaAttachmentScanRepository(prisma);
   const checkpointer = PostgresSaver.fromConnString(environment.DATABASE_URL);
   await checkpointer.setup();
 
@@ -161,11 +204,30 @@ async function main(): Promise<void> {
     previewStore,
     previewSigner,
   });
+  const attachmentStorage = new S3ObjectStorageProvider({
+    bucket: environment.S3_BUCKET,
+    region: environment.S3_REGION,
+    forcePathStyle: environment.S3_FORCE_PATH_STYLE,
+    ...(environment.S3_ENDPOINT === undefined
+      ? {}
+      : { endpoint: environment.S3_ENDPOINT }),
+    ...(environment.S3_ACCESS_KEY_ID === undefined ||
+    environment.S3_SECRET_ACCESS_KEY === undefined
+      ? {}
+      : {
+          accessKeyId: environment.S3_ACCESS_KEY_ID,
+          secretAccessKey: environment.S3_SECRET_ACCESS_KEY,
+        }),
+    ...(environment.S3_KMS_KEY_ID === undefined
+      ? {}
+      : { kmsKeyId: environment.S3_KMS_KEY_ID }),
+  });
   const processor = new RunProcessor({
     repository,
     agents,
     checkpointer,
     validator,
+    attachmentLoader: new PrismaRunAttachmentLoader(prisma, attachmentStorage),
   });
   const worker = new BullMqOrchestratorWorker({
     redisUrl: environment.REDIS_URL,
@@ -175,6 +237,29 @@ async function main(): Promise<void> {
       ? {}
       : { prefix: environment.RUN_QUEUE_PREFIX }),
   });
+  const attachmentProcessor = new AttachmentProcessor({
+    repository: attachmentRepository,
+    storage: attachmentStorage,
+    scanner: new ClamAvScanner({
+      host: environment.CLAMAV_HOST,
+      port: environment.CLAMAV_PORT,
+      timeoutMs: environment.CLAMAV_TIMEOUT_MS,
+    }),
+  });
+  const attachmentWorker = new BullMqAttachmentWorker({
+    redisUrl: environment.REDIS_URL,
+    processor: attachmentProcessor,
+    concurrency: environment.ATTACHMENT_SCAN_CONCURRENCY,
+    ...(environment.RUN_QUEUE_PREFIX === undefined
+      ? {}
+      : { prefix: environment.RUN_QUEUE_PREFIX }),
+  });
+  attachmentWorker.onError((error) =>
+    console.error("Attachment worker error", error),
+  );
+  attachmentWorker.onFailed((jobId, error) =>
+    console.error("Attachment scan job failed", { jobId, error }),
+  );
 
   const phase3Enabled = environment.SUPABASE_ACCESS_TOKEN !== undefined;
   let databaseWorker: BullMqDatabaseOperationWorker | undefined;
@@ -279,6 +364,7 @@ async function main(): Promise<void> {
     await databaseReconciliationWorker?.close();
     await databaseRecoveryQueue?.close();
     await databaseWorker?.close();
+    await attachmentWorker.close();
     await worker.close();
     await previewStore.close();
     await checkpointer.end();

@@ -68,9 +68,11 @@ jobs:
         run: |
           mv packages/db/prisma/migrations/20260801190000_phase3_david_database_provisioning /tmp/phase3-migration
           mv packages/db/prisma/migrations/20260801220000_phase3_database_reconciliation /tmp/phase3-reconciliation-migration
+          mv packages/db/prisma/migrations/20260802070000_secure_project_attachments /tmp/secure-attachments-migration
           pnpm db:migrate:deploy
           mv /tmp/phase3-migration packages/db/prisma/migrations/20260801190000_phase3_david_database_provisioning
           mv /tmp/phase3-reconciliation-migration packages/db/prisma/migrations/20260801220000_phase3_database_reconciliation
+          mv /tmp/secure-attachments-migration packages/db/prisma/migrations/20260802070000_secure_project_attachments
           pnpm db:migrate:deploy
           pnpm prisma migrate status
       - name: Install the full migration pack from empty
@@ -95,3 +97,10 @@ jobs:
           RUN_PHASE3_DURABILITY_INTEGRATION_TESTS: "true"
           PHASE3_INTEGRATION_DATABASE_CONFIRMATION: DEDICATED_EPHEMERAL_DATABASE
         run: pnpm staging:phase3:durability
+      - name: Exercise attachment quota, clean snapshots, and deterministic scan jobs
+        env:
+          DATABASE_URL: postgresql://atoms:atoms@localhost:5432/atoms_upgrade
+          REDIS_URL: redis://localhost:6379
+          RUN_ATTACHMENT_INTEGRATION_TESTS: "true"
+          ATTACHMENT_INTEGRATION_CONFIRMATION: DEDICATED_EPHEMERAL_DATABASE
+        run: pnpm staging:attachments:durability

@@ -1,6 +1,7 @@
 import { z } from "zod";
 
 import { JsonValueSchema } from "./json.js";
+import { MAX_PROJECT_ATTACHMENTS } from "./attachments.js";
 
 const IsoTimestampSchema = z.string().datetime({ offset: true });
 
@@ -55,6 +56,13 @@ export type ProjectResponse = z.infer<typeof ProjectResponseSchema>;
 export const CreateRunInputSchema = z
   .object({
     prompt: z.string().trim().min(1).max(100_000),
+    attachmentIds: z
+      .array(z.string().uuid())
+      .max(MAX_PROJECT_ATTACHMENTS)
+      .refine((values) => new Set(values).size === values.length, {
+        message: "attachmentIds must be unique",
+      })
+      .default([]),
   })
   .strict();
 

@@ -1,0 +1,542 @@
+import assert from "node:assert/strict";
+import test from "node:test";
+
+import type {
+  AgentRunStatus,
+  CreateProjectInput,
+  FileContentInput,
+  JsonValue,
+} from "@atoms/contracts";
+
+import { buildControlApi } from "./app.js";
+import type {
+  ProjectFileRecord,
+  ProjectRecord,
+  RunEventRecord,
+  RunJob,
+  RunRecord,
+  RunStatusPatch,
+} from "./domain.js";
+import { RepositoryConflictError } from "./errors.js";
+import type {
+  ControlRepository,
+  PutProjectFileResult,
+} from "./repository.js";
+import type { RunQueue } from "./run-queue.js";
+
+const WORKSPACE_ID = "00000000-0000-4000-8000-000000000001";
+const PROJECT_ID = "00000000-0000-4000-8000-000000000002";
+const RUN_ID = "00000000-0000-4000-8000-000000000003";
+const FIXED_NOW = new Date("2026-07-31T20:00:00.000Z");
+
+class MemoryRepository implements ControlRepository {
+  readonly projects = new Map<string, ProjectRecord>();
+  readonly runs = new Map<string, RunRecord>();
+  readonly events: RunEventRecord[] = [];
+  readonly files: ProjectFileRecord[] = [];
+  #projectCounter = 0;
+  #runCounter = 0;
+  #fileCounter = 0;
+
+  async createProject(input: CreateProjectInput): Promise<ProjectRecord> {
+    const duplicate = [...this.projects.values()].some(
+      (project) =>
+        project.workspaceId === input.workspaceId && project.slug === input.slug,
+    );
+    if (duplicate) {
+      throw new RepositoryConflictError("Duplicate project slug", "test_unique");
+    }
+    this.#projectCounter += 1;
+    const project: ProjectRecord = {
+      id: this.#projectCounter === 1 ? PROJECT_ID : uuid(this.#projectCounter + 10),
+      workspaceId: input.workspaceId,
+      name: input.name,
+      slug: input.slug,
+      description: input.description ?? null,
+      createdAt: FIXED_NOW,
+      updatedAt: FIXED_NOW,
+      archivedAt: null,
+    };
+    this.projects.set(project.id, project);
+    return project;
+  }
+
+  async createRun(projectId: string, prompt: string): Promise<RunRecord | null> {
+    const project = this.projects.get(projectId);
+    if (project === undefined || project.archivedAt !== null) return null;
+    this.#runCounter += 1;
+    const run: RunRecord = {
+      id: this.#runCounter === 1 ? RUN_ID : uuid(this.#runCounter + 20),
+      workspaceId: project.workspaceId,
+      projectId,
+      status: "PENDING",
+      prompt,
+      eventSequence: 0,
+      controlVersion: 0,
+      error: null,
+      createdAt: FIXED_NOW,
+      updatedAt: FIXED_NOW,
+      startedAt: null,
+      pausedAt: null,
+      completedAt: null,
+      cancelledAt: null,
+    };
+    this.runs.set(run.id, run);
+    return run;
+  }
+
+  async getRun(runId: string): Promise<RunRecord | null> {
+    return this.runs.get(runId) ?? null;
+  }
+
+  async transitionRun(
+    runId: string,
+    expectedStatus: AgentRunStatus,
+    expectedControlVersion: number,
+    patch: RunStatusPatch,
+  ): Promise<RunRecord | null> {
+    const current = this.runs.get(runId);
+    if (
+      current === undefined ||
+      current.status !== expectedStatus ||
+      current.controlVersion !== expectedControlVersion
+    ) {
+      return null;
+    }
+    const updated: RunRecord = {
+      ...current,
+      status: patch.status,
+      controlVersion: current.controlVersion + 1,
+      updatedAt: FIXED_NOW,
+      ...(patch.pausedAt === undefined ? {} : { pausedAt: patch.pausedAt }),
+      ...(patch.completedAt === undefined
+        ? {}
+        : { completedAt: patch.completedAt }),
+      ...(patch.cancelledAt === undefined
+        ? {}
+        : { cancelledAt: patch.cancelledAt }),
+      ...(patch.startedAt === undefined ? {} : { startedAt: patch.startedAt }),
+      ...(patch.error === undefined ? {} : { error: patch.error }),
+    };
+    this.runs.set(runId, updated);
+    return updated;
+  }
+
+  async markRunFailed(
+    runId: string,
+    expectedControlVersion: number,
+    error: JsonValue,
+  ): Promise<void> {
+    const current = this.runs.get(runId);
+    if (
+      current !== undefined &&
+      current.status === "PENDING" &&
+      current.controlVersion === expectedControlVersion
+    ) {
+      this.runs.set(runId, {
+        ...current,
+        status: "FAILED",
+        completedAt: FIXED_NOW,
+        error,
+      });
+    }
+  }
+
+  async listRunEventsAfter(
+    runId: string,
+    sequence: number,
+    limit: number,
+  ): Promise<readonly RunEventRecord[]> {
+    return this.events
+      .filter((event) => event.runId === runId && event.sequence > sequence)
+      .sort((left, right) => left.sequence - right.sequence)
+      .slice(0, limit);
+  }
+
+  async getProjectFile(
+    projectId: string,
+    filePath: string,
+    version?: number,
+  ): Promise<ProjectFileRecord | null> {
+    return (
+      this.files
+        .filter(
+          (file) =>
+            file.projectId === projectId &&
+            file.filePath === filePath &&
+            (version === undefined || file.version === version),
+        )
+        .sort((left, right) => right.version - left.version)[0] ?? null
+    );
+  }
+
+  async putProjectFile(
+    projectId: string,
+    input: FileContentInput,
+  ): Promise<PutProjectFileResult> {
+    if (!this.projects.has(projectId)) return { kind: "project_not_found" };
+    const latest = await this.getProjectFile(projectId, input.filePath);
+    const actualVersion = latest?.version ?? null;
+    if (
+      (input.expectedVersion === 0 && latest !== null) ||
+      (input.expectedVersion !== 0 && input.expectedVersion !== actualVersion)
+    ) {
+      return { kind: "version_conflict", actualVersion };
+    }
+    this.#fileCounter += 1;
+    const file: ProjectFileRecord = {
+      id: uuid(this.#fileCounter + 100),
+      projectId,
+      filePath: input.filePath,
+      content: input.content,
+      version: (actualVersion ?? 0) + 1,
+      createdAt: FIXED_NOW,
+      updatedAt: FIXED_NOW,
+    };
+    this.files.push(file);
+    return { kind: "ok", file };
+  }
+
+  async close(): Promise<void> {}
+
+  setRunStatus(runId: string, status: AgentRunStatus): void {
+    const run = this.runs.get(runId);
+    if (run === undefined) throw new Error("Run fixture not found");
+    this.runs.set(runId, { ...run, status });
+  }
+}
+
+class MemoryRunQueue implements RunQueue {
+  readonly jobs: RunJob[] = [];
+  fail = false;
+
+  async enqueue(job: RunJob): Promise<void> {
+    if (this.fail) throw new Error("Redis unavailable");
+    this.jobs.push(job);
+  }
+
+  async close(): Promise<void> {}
+}
+
+async function fixture(): Promise<{
+  readonly repository: MemoryRepository;
+  readonly queue: MemoryRunQueue;
+  readonly app: Awaited<ReturnType<typeof buildControlApi>>;
+}> {
+  const repository = new MemoryRepository();
+  const queue = new MemoryRunQueue();
+  const app = await buildControlApi({
+    repository,
+    runQueue: queue,
+    now: () => FIXED_NOW,
+    ssePollIntervalMs: 1,
+    sseHeartbeatMs: 10,
+    sseMaxConnectionMs: 100,
+  });
+  return { repository, queue, app };
+}
+
+async function createProjectAndRun(
+  repository: MemoryRepository,
+): Promise<RunRecord> {
+  await repository.createProject({
+    workspaceId: WORKSPACE_ID,
+    name: "Atoms",
+    slug: "atoms",
+  });
+  const run = await repository.createRun(PROJECT_ID, "Build a CRM");
+  if (run === null) throw new Error("Run fixture was not created");
+  return run;
+}
+
+test("POST /v1/projects validates and creates a normalized project", async () => {
+  const { app } = await fixture();
+  try {
+    const response = await app.inject({
+      method: "POST",
+      url: "/v1/projects",
+      payload: {
+        workspaceId: WORKSPACE_ID,
+        name: "  Customer Portal  ",
+        slug: "customer-portal",
+      },
+    });
+    assert.equal(response.statusCode, 201);
+    assert.equal(response.json().name, "Customer Portal");
+
+    const invalid = await app.inject({
+      method: "POST",
+      url: "/v1/projects",
+      payload: {
+        workspaceId: WORKSPACE_ID,
+        name: "Portal",
+        slug: "Customer_Portal",
+        unexpected: true,
+      },
+    });
+    assert.equal(invalid.statusCode, 400);
+    assert.equal(invalid.json().error.code, "VALIDATION_ERROR");
+  } finally {
+    await app.close();
+  }
+});
+
+test("POST /v1/projects/:id/runs persists and enqueues an idempotent run command", async () => {
+  const { app, queue } = await fixture();
+  try {
+    await app.inject({
+      method: "POST",
+      url: "/v1/projects",
+      payload: {
+        workspaceId: WORKSPACE_ID,
+        name: "Atoms",
+        slug: "atoms",
+      },
+    });
+    const response = await app.inject({
+      method: "POST",
+      url: `/v1/projects/${PROJECT_ID}/runs`,
+      payload: { prompt: "  Build a CRM  " },
+    });
+
+    assert.equal(response.statusCode, 201);
+    assert.equal(response.json().prompt, "Build a CRM");
+    assert.deepEqual(queue.jobs, [
+      { runId: RUN_ID, command: "start", controlVersion: 0 },
+    ]);
+  } finally {
+    await app.close();
+  }
+});
+
+test("GET /v1/runs/:runId/events replays only events after Last-Event-ID in order", async () => {
+  const { app, repository } = await fixture();
+  try {
+    await createProjectAndRun(repository);
+    repository.events.push(
+      event(1, "task_started"),
+      event(2, "code_generated"),
+      event(3, "approval_required"),
+    );
+    repository.setRunStatus(RUN_ID, "COMPLETED");
+
+    const response = await app.inject({
+      method: "GET",
+      url: `/v1/runs/${RUN_ID}/events`,
+      headers: { "last-event-id": "1" },
+    });
+
+    assert.equal(response.statusCode, 200);
+    assert.match(response.headers["content-type"] ?? "", /^text\/event-stream/);
+    assert.doesNotMatch(response.body, /id: 1\n/);
+    assert.match(response.body, /id: 2\nevent: code_generated/);
+    assert.match(response.body, /id: 3\nevent: approval_required/);
+    assert.ok(response.body.indexOf("id: 2") < response.body.indexOf("id: 3"));
+  } finally {
+    await app.close();
+  }
+});
+
+test("POST /v1/runs/:runId/actions enforces status/version CAS and queues resume", async () => {
+  const { app, repository, queue } = await fixture();
+  try {
+    await createProjectAndRun(repository);
+    const paused = await app.inject({
+      method: "POST",
+      url: `/v1/runs/${RUN_ID}/actions`,
+      payload: {
+        action: "pause",
+        expectedStatus: "PENDING",
+        expectedControlVersion: 0,
+      },
+    });
+    assert.equal(paused.statusCode, 200);
+    assert.equal(paused.json().status, "PAUSED");
+    assert.equal(paused.json().controlVersion, 1);
+
+    const stale = await app.inject({
+      method: "POST",
+      url: `/v1/runs/${RUN_ID}/actions`,
+      payload: {
+        action: "resume",
+        expectedStatus: "PAUSED",
+        expectedControlVersion: 0,
+      },
+    });
+    assert.equal(stale.statusCode, 409);
+    assert.equal(stale.json().error.code, "RUN_CONCURRENCY_CONFLICT");
+
+    const resumed = await app.inject({
+      method: "POST",
+      url: `/v1/runs/${RUN_ID}/actions`,
+      payload: {
+        action: "resume",
+        expectedStatus: "PAUSED",
+        expectedControlVersion: 1,
+      },
+    });
+    assert.equal(resumed.statusCode, 200);
+    assert.equal(resumed.json().status, "PENDING");
+    assert.equal(resumed.json().controlVersion, 2);
+    assert.deepEqual(queue.jobs, [
+      { runId: RUN_ID, command: "resume", controlVersion: 2 },
+    ]);
+  } finally {
+    await app.close();
+  }
+});
+
+test("run action matrix supports approve, cancel, and retry transitions", async () => {
+  const { app, repository, queue } = await fixture();
+  try {
+    await createProjectAndRun(repository);
+    await app.inject({
+      method: "POST",
+      url: `/v1/runs/${RUN_ID}/actions`,
+      payload: { action: "pause", expectedControlVersion: 0 },
+    });
+    const approved = await app.inject({
+      method: "POST",
+      url: `/v1/runs/${RUN_ID}/actions`,
+      payload: {
+        action: "approve",
+        expectedStatus: "PAUSED",
+        expectedControlVersion: 1,
+        reason: "PRD approved",
+      },
+    });
+    assert.equal(approved.statusCode, 200);
+    assert.equal(approved.json().status, "PENDING");
+
+    repository.setRunStatus(RUN_ID, "RUNNING");
+    const cancelled = await app.inject({
+      method: "POST",
+      url: `/v1/runs/${RUN_ID}/actions`,
+      payload: {
+        action: "cancel",
+        expectedStatus: "RUNNING",
+        expectedControlVersion: 2,
+      },
+    });
+    assert.equal(cancelled.statusCode, 200);
+    assert.equal(cancelled.json().status, "CANCELLED");
+
+    repository.setRunStatus(RUN_ID, "FAILED");
+    const retried = await app.inject({
+      method: "POST",
+      url: `/v1/runs/${RUN_ID}/actions`,
+      payload: {
+        action: "retry",
+        expectedStatus: "FAILED",
+        expectedControlVersion: 3,
+      },
+    });
+    assert.equal(retried.statusCode, 200);
+    assert.equal(retried.json().status, "PENDING");
+    assert.equal(retried.json().controlVersion, 4);
+    assert.deepEqual(queue.jobs, [
+      {
+        runId: RUN_ID,
+        command: "approve",
+        controlVersion: 2,
+        reason: "PRD approved",
+      },
+      { runId: RUN_ID, command: "retry", controlVersion: 4 },
+    ]);
+  } finally {
+    await app.close();
+  }
+});
+
+test("GET/PUT project file content appends revisions and rejects stale writes", async () => {
+  const { app, repository } = await fixture();
+  try {
+    await repository.createProject({
+      workspaceId: WORKSPACE_ID,
+      name: "Atoms",
+      slug: "atoms",
+    });
+    const created = await app.inject({
+      method: "PUT",
+      url: `/v1/projects/${PROJECT_ID}/files/content`,
+      payload: {
+        filePath: "app/page.tsx",
+        content: "export default function Page() {}",
+        expectedVersion: 0,
+      },
+    });
+    assert.equal(created.statusCode, 201);
+    assert.equal(created.json().version, 1);
+
+    const read = await app.inject({
+      method: "GET",
+      url: `/v1/projects/${PROJECT_ID}/files/content?filePath=app%2Fpage.tsx`,
+    });
+    assert.equal(read.statusCode, 200);
+    assert.equal(read.json().version, 1);
+
+    const updated = await app.inject({
+      method: "PUT",
+      url: `/v1/projects/${PROJECT_ID}/files/content`,
+      payload: {
+        filePath: "app/page.tsx",
+        content: "export default function Page() { return null; }",
+        expectedVersion: 1,
+      },
+    });
+    assert.equal(updated.statusCode, 200);
+    assert.equal(updated.json().version, 2);
+
+    const stale = await app.inject({
+      method: "PUT",
+      url: `/v1/projects/${PROJECT_ID}/files/content`,
+      payload: {
+        filePath: "app/page.tsx",
+        content: "stale",
+        expectedVersion: 1,
+      },
+    });
+    assert.equal(stale.statusCode, 409);
+    assert.equal(stale.json().error.code, "PROJECT_FILE_VERSION_CONFLICT");
+    assert.equal(stale.json().error.details.actualVersion, 2);
+  } finally {
+    await app.close();
+  }
+});
+
+test("queue failure is compensated by marking a persisted run FAILED", async () => {
+  const { app, repository, queue } = await fixture();
+  try {
+    await repository.createProject({
+      workspaceId: WORKSPACE_ID,
+      name: "Atoms",
+      slug: "atoms",
+    });
+    queue.fail = true;
+    const response = await app.inject({
+      method: "POST",
+      url: `/v1/projects/${PROJECT_ID}/runs`,
+      payload: { prompt: "Build a CRM" },
+    });
+
+    assert.equal(response.statusCode, 503);
+    assert.equal(response.json().error.code, "RUN_QUEUE_UNAVAILABLE");
+    assert.equal((await repository.getRun(RUN_ID))?.status, "FAILED");
+  } finally {
+    await app.close();
+  }
+});
+
+function event(sequence: number, eventType: RunEventRecord["eventType"]): RunEventRecord {
+  return {
+    runId: RUN_ID,
+    sequence,
+    eventType,
+    payload: { sequence },
+    createdAt: new Date(FIXED_NOW.getTime() + sequence),
+  };
+}
+
+function uuid(value: number): string {
+  return `00000000-0000-4000-8000-${String(value).padStart(12, "0")}`;
+}

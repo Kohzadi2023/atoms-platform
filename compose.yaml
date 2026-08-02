@@ -1,0 +1,33 @@
+services:
+  postgres:
+    image: postgres:17-alpine
+    environment:
+      POSTGRES_DB: atoms
+      POSTGRES_USER: atoms
+      POSTGRES_PASSWORD: atoms
+    ports:
+      - "5432:5432"
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U atoms -d atoms"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+    volumes:
+      - atoms_postgres_data:/var/lib/postgresql/data
+
+  redis:
+    image: redis:7.4-alpine
+    command: ["redis-server", "--appendonly", "yes"]
+    ports:
+      - "6379:6379"
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+    volumes:
+      - atoms_redis_data:/data
+
+volumes:
+  atoms_postgres_data:
+  atoms_redis_data:

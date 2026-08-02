@@ -1,0 +1,624 @@
+generator client {
+  provider     = "prisma-client"
+  output       = "../src/generated/prisma"
+  moduleFormat = "esm"
+}
+
+datasource db {
+  provider = "postgresql"
+}
+
+enum MembershipRole {
+  OWNER
+  ADMIN
+  MEMBER
+}
+
+enum AgentName {
+  Mike
+  Emma
+  Bob
+  Alex
+  David
+}
+
+enum AgentRunStatus {
+  PENDING
+  RUNNING
+  PAUSED
+  COMPLETED
+  FAILED
+  CANCELLED
+}
+
+enum AgentTaskStatus {
+  PENDING
+  RUNNING
+  WAITING_FOR_APPROVAL
+  COMPLETED
+  FAILED
+  CANCELLED
+}
+
+enum SandboxProviderType {
+  E2B
+}
+
+enum SandboxSessionStatus {
+  PROVISIONING
+  VALIDATING
+  READY
+  FAILED
+  TERMINATED
+  EXPIRED
+}
+
+enum SandboxCommandName {
+  INSTALL
+  PRISMA_VALIDATE
+  LINT
+  TYPECHECK
+  TEST
+  BUILD
+  PREVIEW_START
+  PREVIEW_HEALTH
+}
+
+enum SandboxCommandStatus {
+  SUCCEEDED
+  FAILED
+}
+
+enum PreviewSessionStatus {
+  READY
+  STOPPED
+  EXPIRED
+  ERROR
+}
+
+enum BillingProvider {
+  STRIPE
+}
+
+enum SubscriptionStatus {
+  INCOMPLETE
+  TRIALING
+  ACTIVE
+  PAST_DUE
+  PAUSED
+  UNPAID
+  CANCELED
+}
+
+enum DatabaseProvider {
+  SUPABASE
+  NEON
+  EXTERNAL
+}
+
+enum DatabaseInstanceStatus {
+  QUEUED
+  PROVISIONING
+  HEALTH_CHECK
+  MIGRATING
+  READY
+  ACTIVE
+  SUSPENDED
+  FAILED
+  DELETING
+  DELETED
+}
+
+enum IntegrationProvider {
+  SUPABASE
+}
+
+enum IntegrationConnectionStatus {
+  CONNECTED
+  REVOKED
+  ERROR
+}
+
+enum SecretStoreProvider {
+  VAULT
+}
+
+enum SecretReferencePurpose {
+  PROVIDER_CREDENTIAL
+  DATABASE_RUNTIME
+  DATABASE_MIGRATION
+}
+
+enum SecretReferenceStatus {
+  ACTIVE
+  REVOKED
+  EXPIRED
+}
+
+enum MigrationArtifactStatus {
+  VALIDATED
+  SUPERSEDED
+}
+
+enum MigrationRunStatus {
+  QUEUED
+  RUNNING
+  SUCCEEDED
+  FAILED
+  BLOCKED
+}
+
+enum DatabaseReconciliationSweepStatus {
+  RUNNING
+  SUCCEEDED
+  FAILED
+}
+
+enum DatabaseReconciliationFindingKind {
+  PROVIDER_RESOURCE_MISSING
+  ORPHAN_PROVIDER_RESOURCE
+  RECOVERY_EXHAUSTED
+}
+
+enum DatabaseReconciliationFindingStatus {
+  OPEN
+  APPROVED
+  CLEANING
+  RESOLVED
+  IGNORED
+}
+
+enum DeploymentProvider {
+  VERCEL
+  EXTERNAL
+}
+
+enum DeploymentEnvironment {
+  PREVIEW
+  PRODUCTION
+}
+
+enum DeploymentStatus {
+  QUEUED
+  BUILDING
+  READY
+  ERROR
+  CANCELED
+}
+
+model Workspace {
+  id                     String                  @id @default(uuid()) @db.Uuid
+  name                   String                  @db.VarChar(160)
+  slug                   String                  @unique @db.VarChar(80)
+  memberships            Membership[]
+  projects               Project[]
+  subscriptions          Subscription[]
+  createdAt              DateTime                @default(now()) @map("created_at") @db.Timestamptz(3)
+  updatedAt              DateTime                @updatedAt @map("updated_at") @db.Timestamptz(3)
+  deletedAt              DateTime?               @map("deleted_at") @db.Timestamptz(3)
+  integrationConnections IntegrationConnection[]
+  secretReferences       SecretReference[]
+
+  @@map("workspaces")
+}
+
+model Membership {
+  id          String         @id @default(uuid()) @db.Uuid
+  workspaceId String         @map("workspace_id") @db.Uuid
+  userId      String         @map("user_id") @db.VarChar(191)
+  role        MembershipRole @default(MEMBER)
+  workspace   Workspace      @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+  createdAt   DateTime       @default(now()) @map("created_at") @db.Timestamptz(3)
+  updatedAt   DateTime       @updatedAt @map("updated_at") @db.Timestamptz(3)
+
+  @@unique([workspaceId, userId])
+  @@index([userId])
+  @@map("memberships")
+}
+
+model Project {
+  id                     String                  @id @default(uuid()) @db.Uuid
+  workspaceId            String                  @map("workspace_id") @db.Uuid
+  name                   String                  @db.VarChar(160)
+  slug                   String                  @db.VarChar(100)
+  description            String?                 @db.Text
+  workspace              Workspace               @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+  files                  ProjectFile[]
+  runs                   AgentRun[]
+  sandboxSessions        SandboxSession[]
+  previewSessions        PreviewSession[]
+  databaseInstances      DatabaseInstance[]
+  integrationConnections IntegrationConnection[]
+  secretReferences       SecretReference[]
+  migrationArtifacts     MigrationArtifact[]
+  deployments            Deployment[]
+  createdAt              DateTime                @default(now()) @map("created_at") @db.Timestamptz(3)
+  updatedAt              DateTime                @updatedAt @map("updated_at") @db.Timestamptz(3)
+  archivedAt             DateTime?               @map("archived_at") @db.Timestamptz(3)
+
+  @@unique([workspaceId, slug])
+  @@unique([id, workspaceId])
+  @@index([workspaceId, createdAt])
+  @@map("projects")
+}
+
+model ProjectFile {
+  id        String   @id @default(uuid()) @db.Uuid
+  projectId String   @map("project_id") @db.Uuid
+  filePath  String   @map("file_path") @db.VarChar(1024)
+  content   String   @db.Text
+  version   Int      @default(1)
+  project   Project  @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  createdAt DateTime @default(now()) @map("created_at") @db.Timestamptz(3)
+  updatedAt DateTime @updatedAt @map("updated_at") @db.Timestamptz(3)
+
+  @@unique([projectId, filePath, version])
+  @@index([projectId, filePath, createdAt])
+  @@map("project_files")
+}
+
+model AgentRun {
+  id                 String              @id @default(uuid()) @db.Uuid
+  workspaceId        String              @map("workspace_id") @db.Uuid
+  projectId          String              @map("project_id") @db.Uuid
+  status             AgentRunStatus      @default(PENDING)
+  prompt             String              @db.Text
+  checkpoint         Json?
+  error              Json?
+  eventSequence      Int                 @default(0) @map("event_sequence")
+  controlVersion     Int                 @default(0) @map("control_version")
+  project            Project             @relation(fields: [projectId, workspaceId], references: [id, workspaceId], onDelete: Cascade)
+  tasks              AgentTask[]
+  events             RunEvent[]
+  sandboxSessions    SandboxSession[]
+  previewSessions    PreviewSession[]
+  migrationArtifacts MigrationArtifact[]
+  createdAt          DateTime            @default(now()) @map("created_at") @db.Timestamptz(3)
+  updatedAt          DateTime            @updatedAt @map("updated_at") @db.Timestamptz(3)
+  startedAt          DateTime?           @map("started_at") @db.Timestamptz(3)
+  pausedAt           DateTime?           @map("paused_at") @db.Timestamptz(3)
+  completedAt        DateTime?           @map("completed_at") @db.Timestamptz(3)
+  cancelledAt        DateTime?           @map("cancelled_at") @db.Timestamptz(3)
+  lastHeartbeatAt    DateTime?           @map("last_heartbeat_at") @db.Timestamptz(3)
+
+  @@index([workspaceId, status, createdAt])
+  @@index([projectId, createdAt])
+  @@map("agent_runs")
+}
+
+model AgentTask {
+  id                String             @id @default(uuid()) @db.Uuid
+  runId             String             @map("run_id") @db.Uuid
+  agentName         AgentName          @map("agent_name")
+  description       String             @db.Text
+  status            AgentTaskStatus    @default(PENDING)
+  ordinal           Int
+  attempt           Int                @default(0)
+  input             Json?
+  output            Json?
+  error             Json?
+  run               AgentRun           @relation(fields: [runId], references: [id], onDelete: Cascade)
+  migrationArtifact MigrationArtifact?
+  createdAt         DateTime           @default(now()) @map("created_at") @db.Timestamptz(3)
+  updatedAt         DateTime           @updatedAt @map("updated_at") @db.Timestamptz(3)
+  startedAt         DateTime?          @map("started_at") @db.Timestamptz(3)
+  completedAt       DateTime?          @map("completed_at") @db.Timestamptz(3)
+
+  @@unique([runId, ordinal])
+  @@index([runId, status])
+  @@index([agentName, status])
+  @@map("agent_tasks")
+}
+
+model RunEvent {
+  id        String   @id @default(uuid()) @db.Uuid
+  runId     String   @map("run_id") @db.Uuid
+  sequence  Int
+  eventType String   @map("event_type") @db.VarChar(100)
+  payload   Json
+  run       AgentRun @relation(fields: [runId], references: [id], onDelete: Cascade)
+  createdAt DateTime @default(now()) @map("created_at") @db.Timestamptz(3)
+
+  @@unique([runId, sequence])
+  @@index([runId, createdAt])
+  @@map("run_events")
+}
+
+model SandboxSession {
+  id           String               @id @default(uuid()) @db.Uuid
+  workspaceId  String               @map("workspace_id") @db.Uuid
+  projectId    String               @map("project_id") @db.Uuid
+  runId        String               @map("run_id") @db.Uuid
+  provider     SandboxProviderType  @default(E2B)
+  externalId   String               @map("external_id") @db.VarChar(191)
+  attempt      Int
+  status       SandboxSessionStatus @default(PROVISIONING)
+  expiresAt    DateTime             @map("expires_at") @db.Timestamptz(3)
+  error        Json?
+  run          AgentRun             @relation(fields: [runId], references: [id], onDelete: Cascade)
+  project      Project              @relation(fields: [projectId, workspaceId], references: [id, workspaceId], onDelete: Cascade)
+  commands     SandboxCommand[]
+  preview      PreviewSession?
+  createdAt    DateTime             @default(now()) @map("created_at") @db.Timestamptz(3)
+  updatedAt    DateTime             @updatedAt @map("updated_at") @db.Timestamptz(3)
+  terminatedAt DateTime?            @map("terminated_at") @db.Timestamptz(3)
+
+  @@unique([runId, attempt])
+  @@unique([provider, externalId])
+  @@index([workspaceId, status, expiresAt])
+  @@index([projectId, createdAt])
+  @@map("sandbox_sessions")
+}
+
+model SandboxCommand {
+  id               String               @id @default(uuid()) @db.Uuid
+  sandboxSessionId String               @map("sandbox_session_id") @db.Uuid
+  ordinal          Int
+  name             SandboxCommandName
+  command          String               @db.VarChar(32768)
+  status           SandboxCommandStatus
+  exitCode         Int                  @map("exit_code")
+  stdout           String               @db.Text
+  stderr           String               @db.Text
+  durationMs       Int                  @map("duration_ms")
+  sandboxSession   SandboxSession       @relation(fields: [sandboxSessionId], references: [id], onDelete: Cascade)
+  startedAt        DateTime             @map("started_at") @db.Timestamptz(3)
+  completedAt      DateTime             @map("completed_at") @db.Timestamptz(3)
+  createdAt        DateTime             @default(now()) @map("created_at") @db.Timestamptz(3)
+
+  @@unique([sandboxSessionId, ordinal])
+  @@index([sandboxSessionId, status])
+  @@map("sandbox_commands")
+}
+
+model PreviewSession {
+  id               String               @id @db.Uuid
+  workspaceId      String               @map("workspace_id") @db.Uuid
+  projectId        String               @map("project_id") @db.Uuid
+  runId            String               @map("run_id") @db.Uuid
+  sandboxSessionId String               @unique @map("sandbox_session_id") @db.Uuid
+  status           PreviewSessionStatus @default(READY)
+  gatewayUrl       String               @map("gateway_url") @db.VarChar(2048)
+  processId        Int                  @map("process_id")
+  expiresAt        DateTime             @map("expires_at") @db.Timestamptz(3)
+  run              AgentRun             @relation(fields: [runId], references: [id], onDelete: Cascade)
+  project          Project              @relation(fields: [projectId, workspaceId], references: [id, workspaceId], onDelete: Cascade)
+  sandboxSession   SandboxSession       @relation(fields: [sandboxSessionId], references: [id], onDelete: Cascade)
+  createdAt        DateTime             @default(now()) @map("created_at") @db.Timestamptz(3)
+  updatedAt        DateTime             @updatedAt @map("updated_at") @db.Timestamptz(3)
+  readyAt          DateTime             @map("ready_at") @db.Timestamptz(3)
+  stoppedAt        DateTime?            @map("stopped_at") @db.Timestamptz(3)
+  error            Json?
+
+  @@index([workspaceId, status, expiresAt])
+  @@index([projectId, createdAt])
+  @@index([runId, createdAt])
+  @@map("preview_sessions")
+}
+
+model Subscription {
+  id                     String             @id @default(uuid()) @db.Uuid
+  workspaceId            String             @map("workspace_id") @db.Uuid
+  provider               BillingProvider    @default(STRIPE)
+  providerCustomerId     String             @map("provider_customer_id") @db.VarChar(191)
+  providerSubscriptionId String             @map("provider_subscription_id") @db.VarChar(191)
+  planKey                String             @map("plan_key") @db.VarChar(100)
+  status                 SubscriptionStatus @default(INCOMPLETE)
+  cancelAtPeriodEnd      Boolean            @default(false) @map("cancel_at_period_end")
+  currentPeriodStart     DateTime?          @map("current_period_start") @db.Timestamptz(3)
+  currentPeriodEnd       DateTime?          @map("current_period_end") @db.Timestamptz(3)
+  metadata               Json?
+  workspace              Workspace          @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+  createdAt              DateTime           @default(now()) @map("created_at") @db.Timestamptz(3)
+  updatedAt              DateTime           @updatedAt @map("updated_at") @db.Timestamptz(3)
+
+  @@unique([provider, providerSubscriptionId])
+  @@index([workspaceId, status])
+  @@index([provider, providerCustomerId])
+  @@map("subscriptions")
+}
+
+model DatabaseInstance {
+  id                        String                          @id @default(uuid()) @db.Uuid
+  operationId               String                          @unique @default(uuid()) @map("operation_id") @db.Uuid
+  workspaceId               String                          @map("workspace_id") @db.Uuid
+  projectId                 String                          @map("project_id") @db.Uuid
+  migrationArtifactId       String?                         @map("migration_artifact_id") @db.Uuid
+  integrationConnectionId   String?                         @map("integration_connection_id") @db.Uuid
+  provider                  DatabaseProvider
+  externalId                String?                         @map("external_id") @db.VarChar(191)
+  idempotencyKey            String                          @unique @map("idempotency_key") @db.VarChar(191)
+  displayName               String                          @map("display_name") @db.VarChar(160)
+  databaseName              String?                         @map("database_name") @db.VarChar(160)
+  region                    String?                         @db.VarChar(80)
+  connectionSecretRef       String?                         @unique @map("connection_secret_ref") @db.VarChar(512)
+  status                    DatabaseInstanceStatus          @default(QUEUED)
+  operationVersion          Int                             @default(0) @map("operation_version")
+  attempt                   Int                             @default(0)
+  recoveryCount             Int                             @default(0) @map("recovery_count")
+  error                     Json?
+  metadata                  Json?
+  providerOperationMetadata Json?                           @map("provider_operation_metadata")
+  project                   Project                         @relation(fields: [projectId, workspaceId], references: [id, workspaceId], onDelete: Cascade)
+  migrationArtifact         MigrationArtifact?              @relation(fields: [migrationArtifactId], references: [id], onDelete: Restrict)
+  integrationConnection     IntegrationConnection?          @relation(fields: [integrationConnectionId], references: [id], onDelete: SetNull)
+  connectionSecret          SecretReference?                @relation(fields: [connectionSecretRef], references: [reference], onDelete: SetNull)
+  migrationRuns             MigrationRun[]
+  reconciliationFindings    DatabaseReconciliationFinding[]
+  createdAt                 DateTime                        @default(now()) @map("created_at") @db.Timestamptz(3)
+  updatedAt                 DateTime                        @updatedAt @map("updated_at") @db.Timestamptz(3)
+  lastSyncedAt              DateTime?                       @map("last_synced_at") @db.Timestamptz(3)
+  lastHeartbeatAt           DateTime?                       @map("last_heartbeat_at") @db.Timestamptz(3)
+  lastReconciledAt          DateTime?                       @map("last_reconciled_at") @db.Timestamptz(3)
+  readyAt                   DateTime?                       @map("ready_at") @db.Timestamptz(3)
+  deletedAt                 DateTime?                       @map("deleted_at") @db.Timestamptz(3)
+
+  @@unique([provider, externalId])
+  @@index([workspaceId, status])
+  @@index([projectId, status])
+  @@index([status, lastHeartbeatAt])
+  @@map("database_instances")
+}
+
+model IntegrationConnection {
+  id                     String                      @id @default(uuid()) @db.Uuid
+  workspaceId            String                      @map("workspace_id") @db.Uuid
+  projectId              String                      @map("project_id") @db.Uuid
+  provider               IntegrationProvider
+  status                 IntegrationConnectionStatus @default(CONNECTED)
+  externalAccountId      String?                     @map("external_account_id") @db.VarChar(191)
+  externalOrganizationId String?                     @map("external_organization_id") @db.VarChar(191)
+  credentialSecretRef    String                      @map("credential_secret_ref") @db.VarChar(512)
+  metadata               Json?
+  workspace              Workspace                   @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+  project                Project                     @relation(fields: [projectId, workspaceId], references: [id, workspaceId], onDelete: Cascade)
+  databaseInstances      DatabaseInstance[]
+  createdAt              DateTime                    @default(now()) @map("created_at") @db.Timestamptz(3)
+  updatedAt              DateTime                    @updatedAt @map("updated_at") @db.Timestamptz(3)
+  revokedAt              DateTime?                   @map("revoked_at") @db.Timestamptz(3)
+
+  @@unique([projectId, provider])
+  @@index([workspaceId, provider, status])
+  @@map("integration_connections")
+}
+
+model SecretReference {
+  id               String                 @id @default(uuid()) @db.Uuid
+  workspaceId      String                 @map("workspace_id") @db.Uuid
+  projectId        String                 @map("project_id") @db.Uuid
+  provider         SecretStoreProvider
+  purpose          SecretReferencePurpose
+  status           SecretReferenceStatus  @default(ACTIVE)
+  reference        String                 @unique @db.VarChar(512)
+  expiresAt        DateTime?              @map("expires_at") @db.Timestamptz(3)
+  metadata         Json?
+  workspace        Workspace              @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+  project          Project                @relation(fields: [projectId, workspaceId], references: [id, workspaceId], onDelete: Cascade)
+  databaseInstance DatabaseInstance?
+  createdAt        DateTime               @default(now()) @map("created_at") @db.Timestamptz(3)
+  updatedAt        DateTime               @updatedAt @map("updated_at") @db.Timestamptz(3)
+  revokedAt        DateTime?              @map("revoked_at") @db.Timestamptz(3)
+
+  @@index([workspaceId, status, expiresAt])
+  @@index([projectId, purpose])
+  @@map("secret_references")
+}
+
+model MigrationArtifact {
+  id                String                  @id @default(uuid()) @db.Uuid
+  workspaceId       String                  @map("workspace_id") @db.Uuid
+  projectId         String                  @map("project_id") @db.Uuid
+  sourceRunId       String                  @map("source_run_id") @db.Uuid
+  agentTaskId       String                  @unique @map("agent_task_id") @db.Uuid
+  status            MigrationArtifactStatus @default(VALIDATED)
+  schemaPath        String                  @map("schema_path") @db.VarChar(1024)
+  schemaHash        String                  @map("schema_hash") @db.Char(64)
+  migrationPaths    Json                    @map("migration_paths")
+  seedPath          String                  @map("seed_path") @db.VarChar(1024)
+  destructive       Boolean                 @default(false)
+  policyReport      Json                    @map("policy_report")
+  project           Project                 @relation(fields: [projectId, workspaceId], references: [id, workspaceId], onDelete: Cascade)
+  sourceRun         AgentRun                @relation(fields: [sourceRunId], references: [id], onDelete: Cascade)
+  agentTask         AgentTask               @relation(fields: [agentTaskId], references: [id], onDelete: Cascade)
+  databaseInstances DatabaseInstance[]
+  migrationRuns     MigrationRun[]
+  createdAt         DateTime                @default(now()) @map("created_at") @db.Timestamptz(3)
+  updatedAt         DateTime                @updatedAt @map("updated_at") @db.Timestamptz(3)
+
+  @@index([projectId, status, createdAt])
+  @@index([sourceRunId])
+  @@map("migration_artifacts")
+}
+
+model MigrationRun {
+  id                  String             @id @default(uuid()) @db.Uuid
+  databaseInstanceId  String             @map("database_instance_id") @db.Uuid
+  migrationArtifactId String             @map("migration_artifact_id") @db.Uuid
+  status              MigrationRunStatus @default(QUEUED)
+  schemaHash          String             @map("schema_hash") @db.Char(64)
+  destructive         Boolean            @default(false)
+  commandResults      Json?              @map("command_results")
+  error               Json?
+  databaseInstance    DatabaseInstance   @relation(fields: [databaseInstanceId], references: [id], onDelete: Cascade)
+  migrationArtifact   MigrationArtifact  @relation(fields: [migrationArtifactId], references: [id], onDelete: Restrict)
+  createdAt           DateTime           @default(now()) @map("created_at") @db.Timestamptz(3)
+  updatedAt           DateTime           @updatedAt @map("updated_at") @db.Timestamptz(3)
+  startedAt           DateTime?          @map("started_at") @db.Timestamptz(3)
+  completedAt         DateTime?          @map("completed_at") @db.Timestamptz(3)
+
+  @@unique([databaseInstanceId, migrationArtifactId])
+  @@index([status, createdAt])
+  @@map("migration_runs")
+}
+
+model DatabaseReconciliationSweep {
+  id                String                            @id @default(uuid()) @db.Uuid
+  provider          DatabaseProvider
+  status            DatabaseReconciliationSweepStatus @default(RUNNING)
+  dryRun            Boolean                           @default(true) @map("dry_run")
+  staleBefore       DateTime                          @map("stale_before") @db.Timestamptz(3)
+  orphanGraceBefore DateTime                          @map("orphan_grace_before") @db.Timestamptz(3)
+  summary           Json?
+  error             Json?
+  findings          DatabaseReconciliationFinding[]
+  startedAt         DateTime                          @default(now()) @map("started_at") @db.Timestamptz(3)
+  completedAt       DateTime?                         @map("completed_at") @db.Timestamptz(3)
+
+  @@index([provider, status, startedAt])
+  @@map("database_reconciliation_sweeps")
+}
+
+model DatabaseReconciliationFinding {
+  id                 String                              @id @default(uuid()) @db.Uuid
+  fingerprint        String                              @unique @db.Char(64)
+  sweepId            String                              @map("sweep_id") @db.Uuid
+  provider           DatabaseProvider
+  kind               DatabaseReconciliationFindingKind
+  status             DatabaseReconciliationFindingStatus @default(OPEN)
+  databaseInstanceId String?                             @map("database_instance_id") @db.Uuid
+  externalId         String?                             @map("external_id") @db.VarChar(191)
+  resourceName       String?                             @map("resource_name") @db.VarChar(160)
+  details            Json
+  observationCount   Int                                 @default(1) @map("observation_count")
+  firstSeenAt        DateTime                            @map("first_seen_at") @db.Timestamptz(3)
+  lastSeenAt         DateTime                            @map("last_seen_at") @db.Timestamptz(3)
+  cleanupAfter       DateTime?                           @map("cleanup_after") @db.Timestamptz(3)
+  approvedBy         String?                             @map("approved_by") @db.VarChar(191)
+  approvedAt         DateTime?                           @map("approved_at") @db.Timestamptz(3)
+  resolvedAt         DateTime?                           @map("resolved_at") @db.Timestamptz(3)
+  resolution         String?                             @db.VarChar(100)
+  sweep              DatabaseReconciliationSweep         @relation(fields: [sweepId], references: [id], onDelete: Restrict)
+  databaseInstance   DatabaseInstance?                   @relation(fields: [databaseInstanceId], references: [id], onDelete: SetNull)
+  createdAt          DateTime                            @default(now()) @map("created_at") @db.Timestamptz(3)
+  updatedAt          DateTime                            @updatedAt @map("updated_at") @db.Timestamptz(3)
+
+  @@index([provider, kind, status, cleanupAfter])
+  @@index([databaseInstanceId, status])
+  @@index([sweepId])
+  @@map("database_reconciliation_findings")
+}
+
+model Deployment {
+  id                String                @id @default(uuid()) @db.Uuid
+  workspaceId       String                @map("workspace_id") @db.Uuid
+  projectId         String                @map("project_id") @db.Uuid
+  provider          DeploymentProvider    @default(VERCEL)
+  externalId        String                @map("external_id") @db.VarChar(191)
+  externalProjectId String?               @map("external_project_id") @db.VarChar(191)
+  providerTeamId    String?               @map("provider_team_id") @db.VarChar(191)
+  idempotencyKey    String                @unique @map("idempotency_key") @db.VarChar(191)
+  environment       DeploymentEnvironment
+  status            DeploymentStatus      @default(QUEUED)
+  url               String?               @db.VarChar(2048)
+  sourceRevision    String?               @map("source_revision") @db.VarChar(191)
+  metadata          Json?
+  project           Project               @relation(fields: [projectId, workspaceId], references: [id, workspaceId], onDelete: Cascade)
+  createdAt         DateTime              @default(now()) @map("created_at") @db.Timestamptz(3)
+  updatedAt         DateTime              @updatedAt @map("updated_at") @db.Timestamptz(3)
+  readyAt           DateTime?             @map("ready_at") @db.Timestamptz(3)
+
+  @@unique([provider, externalId])
+  @@index([workspaceId, environment, status])
+  @@index([projectId, createdAt])
+  @@map("deployments")
+}

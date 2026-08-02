@@ -1,0 +1,89 @@
+name: CI
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+permissions:
+  contents: read
+
+jobs:
+  verify:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 11.7.0
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm run ci:verify
+
+  migration-matrix:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    services:
+      postgres:
+        image: postgres:17-alpine
+        env:
+          POSTGRES_DB: atoms_upgrade
+          POSTGRES_USER: atoms
+          POSTGRES_PASSWORD: atoms
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U atoms -d atoms_upgrade"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+      redis:
+        image: redis:8-alpine
+        ports:
+          - 6379:6379
+        options: >-
+          --health-cmd "redis-cli ping"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+    env:
+      PGPASSWORD: atoms
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 11.7.0
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
+      - name: Upgrade from the Phase 2 schema
+        env:
+          DATABASE_URL: postgresql://atoms:atoms@localhost:5432/atoms_upgrade
+        run: |
+          mv packages/db/prisma/migrations/20260801190000_phase3_david_database_provisioning /tmp/phase3-migration
+          mv packages/db/prisma/migrations/20260801220000_phase3_database_reconciliation /tmp/phase3-reconciliation-migration
+          pnpm db:migrate:deploy
+          mv /tmp/phase3-migration packages/db/prisma/migrations/20260801190000_phase3_david_database_provisioning
+          mv /tmp/phase3-reconciliation-migration packages/db/prisma/migrations/20260801220000_phase3_database_reconciliation
+          pnpm db:migrate:deploy
+          pnpm prisma migrate status
+      - name: Install the full migration pack from empty
+        env:
+          DATABASE_URL: postgresql://atoms:atoms@localhost:5432/atoms_clean
+        run: |
+          psql -h localhost -U atoms -d postgres -c 'CREATE DATABASE atoms_clean'
+          pnpm db:migrate:deploy
+          pnpm prisma migrate status
+      - name: Exercise PostgreSQL CAS and the BullMQ reconciliation scheduler
+        env:
+          DATABASE_URL: postgresql://atoms:atoms@localhost:5432/atoms_upgrade
+          REDIS_URL: redis://localhost:6379
+          RUN_PHASE3_DURABILITY_INTEGRATION_TESTS: "true"
+          PHASE3_INTEGRATION_DATABASE_CONFIRMATION: DEDICATED_EPHEMERAL_DATABASE
+        run: pnpm staging:phase3:durability

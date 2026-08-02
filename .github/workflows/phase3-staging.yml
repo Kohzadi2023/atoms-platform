@@ -1,0 +1,201 @@
+name: Phase 3 staging evidence
+
+run-name: Phase 3 staging / ${{ inputs.change_ticket }}
+
+on:
+  workflow_dispatch:
+    inputs:
+      workflow_confirmation:
+        description: Type RUN_PHASE3_STAGING
+        required: true
+        type: string
+      change_ticket:
+        description: Approved staging change-ticket identifier
+        required: true
+        type: string
+      run_live_provider:
+        description: Run the billable Supabase + Vault + E2B provider exit
+        required: true
+        default: false
+        type: boolean
+      destructive_confirmation:
+        description: Type PROVISION_MIGRATE_AND_DESTROY_SUPABASE_STAGING_DATABASE for a live provider run
+        required: false
+        type: string
+      measured_variable_cost_cad:
+        description: Measured variable cost in CAD, with at most six decimals
+        required: true
+        type: string
+      database_region:
+        description: Generated-database region
+        required: true
+        default: americas
+        type: choice
+        options:
+          - americas
+          - emea
+          - apac
+
+permissions:
+  contents: read
+
+concurrency:
+  group: phase3-staging-evidence
+  cancel-in-progress: false
+
+jobs:
+  preflight:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+      - name: Validate explicit scope and confirmations
+        env:
+          PHASE3_WORKFLOW_CONFIRMATION: ${{ inputs.workflow_confirmation }}
+          PHASE3_RUN_LIVE_PROVIDER: ${{ inputs.run_live_provider }}
+          PHASE3_STAGING_CHANGE_TICKET: ${{ inputs.change_ticket }}
+          PHASE3_STAGING_MEASURED_COST_CAD: ${{ inputs.measured_variable_cost_cad }}
+          PHASE3_STAGING_DESTRUCTIVE_CONFIRMATION: ${{ inputs.destructive_confirmation }}
+        run: node scripts/validate-phase3-staging-inputs.mjs
+
+  migration-and-durability:
+    needs: preflight
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    services:
+      postgres:
+        image: postgres:17-alpine
+        env:
+          POSTGRES_DB: atoms_upgrade
+          POSTGRES_USER: atoms
+          POSTGRES_PASSWORD: atoms
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U atoms -d atoms_upgrade"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+      redis:
+        image: redis:8-alpine
+        ports:
+          - 6379:6379
+        options: >-
+          --health-cmd "redis-cli ping"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+    env:
+      PGPASSWORD: atoms
+      PHASE3_STAGING_CHANGE_TICKET: ${{ inputs.change_ticket }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 11.7.0
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
+      - name: Upgrade Phase 2 to the complete Phase 3 schema
+        env:
+          DATABASE_URL: postgresql://atoms:atoms@localhost:5432/atoms_upgrade
+        run: |
+          mv packages/db/prisma/migrations/20260801190000_phase3_david_database_provisioning /tmp/phase3-migration
+          mv packages/db/prisma/migrations/20260801220000_phase3_database_reconciliation /tmp/phase3-reconciliation-migration
+          pnpm db:migrate:deploy
+          mv /tmp/phase3-migration packages/db/prisma/migrations/20260801190000_phase3_david_database_provisioning
+          mv /tmp/phase3-reconciliation-migration packages/db/prisma/migrations/20260801220000_phase3_database_reconciliation
+          pnpm db:migrate:deploy
+          pnpm prisma migrate status
+      - name: Exercise durable reconciliation against PostgreSQL and Redis
+        env:
+          DATABASE_URL: postgresql://atoms:atoms@localhost:5432/atoms_upgrade
+          REDIS_URL: redis://localhost:6379
+          RUN_PHASE3_DURABILITY_INTEGRATION_TESTS: "true"
+          PHASE3_INTEGRATION_DATABASE_CONFIRMATION: DEDICATED_EPHEMERAL_DATABASE
+        run: pnpm staging:phase3:durability
+      - name: Apply the complete migration pack from empty
+        env:
+          DATABASE_URL: postgresql://atoms:atoms@localhost:5432/atoms_clean
+        run: |
+          psql -h localhost -U atoms -d postgres -c 'CREATE DATABASE atoms_clean'
+          pnpm db:migrate:deploy
+          pnpm prisma migrate status
+      - name: Write machine-readable durability evidence
+        env:
+          PHASE3_DURABILITY_EVIDENCE_PATH: artifacts/phase3-durability-evidence.json
+        run: node scripts/write-phase3-durability-evidence.mjs
+      - uses: actions/upload-artifact@v4
+        with:
+          name: phase3-durability-evidence
+          path: artifacts/phase3-durability-evidence.json
+          if-no-files-found: error
+          retention-days: 30
+
+  provider-exit:
+    if: inputs.run_live_provider
+    needs: migration-and-durability
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    environment:
+      name: phase3-staging
+    services:
+      postgres:
+        image: postgres:17-alpine
+        env:
+          POSTGRES_DB: atoms_provider_exit
+          POSTGRES_USER: atoms
+          POSTGRES_PASSWORD: atoms
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U atoms -d atoms_provider_exit"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 11.7.0
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
+      - name: Prepare the dedicated provider-exit audit database
+        env:
+          DATABASE_URL: postgresql://atoms:atoms@localhost:5432/atoms_provider_exit
+        run: pnpm db:migrate:deploy
+      - name: Provision, migrate, verify, and clean up the staging database
+        env:
+          RUN_LIVE_PHASE3_STAGING: "true"
+          PHASE3_STAGING_DESTRUCTIVE_CONFIRMATION: ${{ inputs.destructive_confirmation }}
+          PHASE3_STAGING_CHANGE_TICKET: ${{ inputs.change_ticket }}
+          PHASE3_STAGING_MEASURED_COST_CAD: ${{ inputs.measured_variable_cost_cad }}
+          PHASE3_STAGING_DATABASE_REGION: ${{ inputs.database_region }}
+          PHASE3_STAGING_EVIDENCE_PATH: artifacts/phase3-provider-evidence.json
+          PHASE3_INTEGRATION_DATABASE_CONFIRMATION: DEDICATED_EPHEMERAL_DATABASE
+          DATABASE_URL: postgresql://atoms:atoms@localhost:5432/atoms_provider_exit
+          SUPABASE_ACCESS_TOKEN: ${{ secrets.SUPABASE_ACCESS_TOKEN }}
+          SUPABASE_ORGANIZATION_SLUG: ${{ vars.SUPABASE_ORGANIZATION_SLUG }}
+          SUPABASE_MANAGEMENT_API_URL: ${{ vars.SUPABASE_MANAGEMENT_API_URL }}
+          VAULT_ADDR: ${{ secrets.VAULT_ADDR }}
+          VAULT_TOKEN: ${{ secrets.VAULT_TOKEN }}
+          VAULT_KV_MOUNT: ${{ vars.VAULT_KV_MOUNT }}
+          VAULT_NAMESPACE: ${{ vars.VAULT_NAMESPACE }}
+          E2B_API_KEY: ${{ secrets.E2B_API_KEY }}
+          E2B_TEMPLATE: ${{ vars.E2B_TEMPLATE }}
+          E2B_ALLOWED_HOSTS: registry.npmjs.org,binaries.prisma.sh
+          PHASE3_STAGING_MIN_OTHER_ORG_CONTROLS: ${{ vars.PHASE3_STAGING_MIN_OTHER_ORG_CONTROLS }}
+          PHASE3_STAGING_MIN_CUSTOMER_CONTROLS: ${{ vars.PHASE3_STAGING_MIN_CUSTOMER_CONTROLS }}
+        run: pnpm staging:phase3:provider
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: phase3-provider-evidence
+          path: artifacts/phase3-provider-evidence.json
+          if-no-files-found: warn
+          retention-days: 30

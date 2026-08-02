@@ -55,8 +55,7 @@ description is `docs/attachments-openapi.yaml`.
 `docker compose up -d` starts PostgreSQL, Redis, a pinned MinIO server, a
 one-shot bucket/CORS initializer, and a pinned ClamAV daemon. MinIO uses a
 static test-only KMS key so the same SSE-S3 headers required in production work
-locally. The browser origin in `infra/minio/cors.xml` must match the local web
-origin.
+locally. `MINIO_API_CORS_ALLOW_ORIGIN` must match the exact local web origin.
 
 Production deployments must use private service networking, scoped workload
 credentials, a managed KMS key, exact browser CORS origins, audit logging, and a

@@ -36,6 +36,7 @@ services:
       MINIO_ROOT_PASSWORD: atoms-local-password
       MINIO_KMS_SECRET_KEY: local-dev-key:MDEyMzQ1Njc4OWFiY2RlZjAxMjM0NTY3ODlhYmNkZWY=
       MINIO_KMS_AUTO_ENCRYPTION: "on"
+      MINIO_API_CORS_ALLOW_ORIGIN: http://localhost:3000
     ports:
       - "9000:9000"
       - "9001:9001"
@@ -46,15 +47,12 @@ services:
     image: minio/mc:RELEASE.2025-08-13T08-35-41Z
     depends_on:
       - minio
-    volumes:
-      - ./infra/minio/cors.xml:/config/cors.xml:ro
     entrypoint: ["/bin/sh", "-c"]
     command:
       - >-
         until mc alias set local http://minio:9000 atoms-local atoms-local-password;
         do sleep 1; done;
-        mc mb --ignore-existing local/atoms-attachments;
-        mc cors set local/atoms-attachments /config/cors.xml
+        mc mb --ignore-existing local/atoms-attachments
 
   clamav:
     image: clamav/clamav:1.5.3

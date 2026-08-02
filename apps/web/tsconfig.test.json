@@ -1,0 +1,14 @@
+{
+  "extends": "../../tsconfig.base.json",
+  "compilerOptions": {
+    "rootDir": "src",
+    "outDir": "dist-test",
+    "lib": ["ES2024", "DOM", "DOM.Iterable"],
+    "tsBuildInfoFile": "dist-test/.tsbuildinfo",
+    "declaration": false,
+    "declarationMap": false,
+    "sourceMap": false
+  },
+  "include": ["src/lib/**/*.ts"],
+  "exclude": ["node_modules"]
+}

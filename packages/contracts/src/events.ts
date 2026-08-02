@@ -87,6 +87,7 @@ export const DatabaseStatusChangedEventPayloadV1Schema = z
     integration: z.literal("generated-database"),
     databaseInstanceId: z.string().uuid(),
     operationId: z.string().uuid(),
+    operationVersion: z.number().int().nonnegative(),
     provider: z.literal("SUPABASE"),
     status: z.enum([
       "QUEUED",

@@ -80,6 +80,14 @@ jobs:
           psql -h localhost -U atoms -d postgres -c 'CREATE DATABASE atoms_clean'
           pnpm db:migrate:deploy
           pnpm prisma migrate status
+      - name: Seed the deterministic local workspace
+        env:
+          DATABASE_URL: postgresql://atoms:atoms@localhost:5432/atoms_clean
+        run: |
+          pnpm db:seed:local
+          psql -h localhost -U atoms -d atoms_clean -tAc \
+            "SELECT id FROM workspaces WHERE id = '00000000-0000-4000-8000-000000000001'" \
+            | grep -Fx '00000000-0000-4000-8000-000000000001'
       - name: Exercise PostgreSQL CAS and the BullMQ reconciliation scheduler
         env:
           DATABASE_URL: postgresql://atoms:atoms@localhost:5432/atoms_upgrade

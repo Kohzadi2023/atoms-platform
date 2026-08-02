@@ -28,7 +28,8 @@
     "db:validate": "pnpm prisma validate",
     "db:format": "pnpm prisma format",
     "db:migrate:dev": "pnpm prisma migrate dev",
-    "db:migrate:deploy": "pnpm prisma migrate deploy"
+    "db:migrate:deploy": "pnpm prisma migrate deploy",
+    "db:seed:local": "pnpm --filter @atoms/db seed:local"
   },
   "devDependencies": {
     "@types/node": "catalog:",

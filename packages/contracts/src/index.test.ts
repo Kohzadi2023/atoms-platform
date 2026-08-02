@@ -13,6 +13,7 @@ import {
   PHASE3_PROVIDER_STAGING_EVIDENCE_VERSION,
   PHASE3_VARIABLE_COST_TARGET_CAD_MICROS,
   ProvisionDatabaseInputSchema,
+  ProjectFileListResponseSchema,
   RunActionInputSchema,
   RunEventEnvelopeSchema,
   RunJobSchema,
@@ -72,6 +73,23 @@ test("FileContentInput rejects traversal and stale-version shapes", () => {
       filePath: "../secrets.env",
       content: "secret",
       expectedVersion: 0,
+    }),
+  );
+});
+
+test("ProjectFileListResponse exposes latest revision metadata without content", () => {
+  const item = {
+    id: "00000000-0000-4000-8000-000000000010",
+    projectId: "00000000-0000-4000-8000-000000000011",
+    filePath: "app/page.tsx",
+    version: 2,
+    createdAt: "2026-08-02T12:00:00.000Z",
+    updatedAt: "2026-08-02T12:01:00.000Z",
+  };
+  assert.equal(ProjectFileListResponseSchema.parse({ items: [item] }).items[0]?.version, 2);
+  assert.throws(() =>
+    ProjectFileListResponseSchema.parse({
+      items: [{ ...item, content: "must remain opt-in" }],
     }),
   );
 });
@@ -189,10 +207,11 @@ test("Phase 3 database contracts require approval and deterministic queue identi
       integration: "generated-database",
       databaseInstanceId,
       operationId,
+      operationVersion: 1,
       provider: "SUPABASE",
       status: "MIGRATING",
-    }).status,
-    "MIGRATING",
+    }).operationVersion,
+    1,
   );
 });
 

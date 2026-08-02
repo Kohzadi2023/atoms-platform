@@ -2,6 +2,7 @@ import {
   CreateProjectInputSchema,
   CreateRunInputSchema,
   FileContentInputSchema,
+  ProjectFileListResponseSchema,
   FileContentQuerySchema,
   FileContentResponseSchema,
   ProjectResponseSchema,
@@ -23,6 +24,7 @@ import { z } from "zod";
 
 import {
   toFileContentResponse,
+  toProjectFileSummary,
   toProjectResponse,
   toRunResponse,
   type RunRecord,
@@ -82,6 +84,7 @@ export interface BuildControlApiOptions {
   readonly sseHeartbeatMs?: number;
   readonly sseMaxConnectionMs?: number;
   readonly now?: () => Date;
+  readonly corsOrigins?: readonly string[];
   readonly databaseOperations?: DatabaseRoutesOptions;
 }
 
@@ -91,9 +94,10 @@ export async function buildControlApi(
   const app = Fastify({ logger: options.logger ?? false });
   app.setValidatorCompiler(validatorCompiler);
   app.setSerializerCompiler(serializerCompiler);
+  const corsOrigins = options.corsOrigins ?? [];
   await app.register(cors, {
-    origin: false,
-    methods: ["GET", "POST", "PUT"],
+    origin: corsOrigins.length === 0 ? false : [...corsOrigins],
+    methods: ["GET", "POST", "PUT", "OPTIONS"],
     allowedHeaders: ["content-type", "last-event-id"],
   });
 
@@ -128,6 +132,24 @@ export async function buildControlApi(
         }
         throw error;
       }
+    },
+  );
+
+  api.get(
+    "/v1/projects/:id",
+    {
+      schema: {
+        operationId: "getProject",
+        params: ProjectIdParamsSchema,
+        response: { 200: ProjectResponseSchema, ...errorResponses },
+      },
+    },
+    async (request, reply) => {
+      const project = await options.repository.getProject(request.params.id);
+      if (project === null) {
+        throw new ApiError(404, "PROJECT_NOT_FOUND", "Project not found");
+      }
+      return reply.code(200).send(toProjectResponse(project));
     },
   );
 
@@ -170,6 +192,24 @@ export async function buildControlApi(
       }
 
       return reply.code(201).send(toRunResponse(run));
+    },
+  );
+
+  api.get(
+    "/v1/runs/:runId",
+    {
+      schema: {
+        operationId: "getRun",
+        params: RunIdParamsSchema,
+        response: { 200: RunResponseSchema, ...errorResponses },
+      },
+    },
+    async (request, reply) => {
+      const run = await options.repository.getRun(request.params.runId);
+      if (run === null) {
+        throw new ApiError(404, "RUN_NOT_FOUND", "Run not found");
+      }
+      return reply.code(200).send(toRunResponse(run));
     },
   );
 
@@ -319,6 +359,26 @@ export async function buildControlApi(
       }
 
       return reply.code(200).send(toRunResponse(updated));
+    },
+  );
+
+  api.get(
+    "/v1/projects/:id/files",
+    {
+      schema: {
+        operationId: "listProjectFiles",
+        params: ProjectIdParamsSchema,
+        response: { 200: ProjectFileListResponseSchema, ...errorResponses },
+      },
+    },
+    async (request, reply) => {
+      const files = await options.repository.listProjectFiles(request.params.id);
+      if (files === null) {
+        throw new ApiError(404, "PROJECT_NOT_FOUND", "Project not found");
+      }
+      return reply.code(200).send({
+        items: files.map(toProjectFileSummary),
+      });
     },
   );
 

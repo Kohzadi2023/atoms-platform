@@ -13,6 +13,16 @@ const EnvironmentSchema = z
     REDIS_URL: z.string().url(),
     CONTROL_API_HOST: z.string().min(1).default("0.0.0.0"),
     CONTROL_API_PORT: z.coerce.number().int().min(1).max(65_535).default(3_001),
+    CONTROL_API_CORS_ORIGINS: z
+      .string()
+      .default("http://localhost:3000")
+      .transform((value) =>
+        value
+          .split(",")
+          .map((origin) => origin.trim())
+          .filter((origin) => origin.length > 0),
+      )
+      .pipe(z.array(z.string().url()).min(1).max(10)),
     SUPABASE_CREDENTIAL_SECRET_REF: z.string().trim().min(1).optional(),
   })
   .passthrough();
@@ -38,6 +48,7 @@ async function main(): Promise<void> {
     runQueue,
     logger: true,
     closeDependencies: true,
+    corsOrigins: environment.CONTROL_API_CORS_ORIGINS,
     databaseOperations: {
       repository: databaseRepository,
       queue: databaseQueue,

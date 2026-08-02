@@ -169,3 +169,19 @@ export const FileContentResponseSchema = z
   .strict();
 
 export type FileContentResponse = z.infer<typeof FileContentResponseSchema>;
+
+export const ProjectFileSummarySchema = FileContentResponseSchema.omit({
+  content: true,
+}).strict();
+
+export type ProjectFileSummary = z.infer<typeof ProjectFileSummarySchema>;
+
+export const ProjectFileListResponseSchema = z
+  .object({
+    items: z.array(ProjectFileSummarySchema).max(10_000),
+  })
+  .strict();
+
+export type ProjectFileListResponse = z.infer<
+  typeof ProjectFileListResponseSchema
+>;

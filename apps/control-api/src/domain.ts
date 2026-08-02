@@ -2,6 +2,7 @@ import type {
   AgentRunStatus,
   FileContentResponse,
   JsonValue,
+  ProjectFileSummary,
   ProjectResponse,
   RunResponse,
 } from "@atoms/contracts";
@@ -103,6 +104,19 @@ export function toFileContentResponse(
     projectId: record.projectId,
     filePath: record.filePath,
     content: record.content,
+    version: record.version,
+    createdAt: record.createdAt.toISOString(),
+    updatedAt: record.updatedAt.toISOString(),
+  };
+}
+
+export function toProjectFileSummary(
+  record: ProjectFileRecord,
+): ProjectFileSummary {
+  return {
+    id: record.id,
+    projectId: record.projectId,
+    filePath: record.filePath,
     version: record.version,
     createdAt: record.createdAt.toISOString(),
     updatedAt: record.updatedAt.toISOString(),

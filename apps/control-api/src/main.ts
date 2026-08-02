@@ -66,7 +66,12 @@ async function main(): Promise<void> {
             environment.SUPABASE_CREDENTIAL_SECRET_REF,
         }),
   });
-  const runQueue = new BullMqRunQueue({ redisUrl: environment.REDIS_URL });
+  const runQueue = new BullMqRunQueue({
+    redisUrl: environment.REDIS_URL,
+    ...(environment.RUN_QUEUE_PREFIX === undefined
+      ? {}
+      : { prefix: environment.RUN_QUEUE_PREFIX }),
+  });
   const attachmentQueue = new BullMqAttachmentScanQueue({
     redisUrl: environment.REDIS_URL,
     ...(environment.RUN_QUEUE_PREFIX === undefined

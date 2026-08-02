@@ -39,7 +39,10 @@ import {
   registerAttachmentRoutes,
   type AttachmentRoutesOptions,
 } from "./attachment-routes.js";
-import type { ControlRepository } from "./repository.js";
+import type {
+  ControlRepository,
+  CreateRunWithIdempotencyResult,
+} from "./repository.js";
 import type { RunQueue } from "./run-queue.js";
 import { RepositoryAttachmentError } from "./errors.js";
 
@@ -52,6 +55,16 @@ const RunIdParamsSchema = z
 const SseHeadersSchema = z
   .object({
     "last-event-id": z.string().trim().regex(/^\d+$/).optional(),
+  })
+  .passthrough();
+const IdempotencyHeadersSchema = z
+  .object({
+    "idempotency-key": z
+      .string()
+      .trim()
+      .min(8)
+      .max(128)
+      .regex(/^[a-zA-Z0-9._-]+$/),
   })
   .passthrough();
 const ErrorResponseSchema = z
@@ -104,7 +117,7 @@ export async function buildControlApi(
   await app.register(cors, {
     origin: corsOrigins.length === 0 ? false : [...corsOrigins],
     methods: ["GET", "POST", "PUT", "OPTIONS"],
-    allowedHeaders: ["content-type", "last-event-id"],
+    allowedHeaders: ["content-type", "last-event-id", "idempotency-key"],
   });
 
   const api = app.withTypeProvider<ZodTypeProvider>();
@@ -171,16 +184,18 @@ export async function buildControlApi(
       schema: {
         operationId: "createRun",
         params: ProjectIdParamsSchema,
+        headers: IdempotencyHeadersSchema,
         body: CreateRunInputSchema,
-        response: { 201: RunResponseSchema, ...errorResponses },
+        response: { 200: RunResponseSchema, 201: RunResponseSchema, ...errorResponses },
       },
     },
     async (request, reply) => {
-      let run: RunRecord | null;
+      let result: CreateRunWithIdempotencyResult;
       try {
-        run = await options.repository.createRun(
+        result = await options.repository.createRunWithIdempotency(
           request.params.id,
           request.body.prompt,
+          request.headers["idempotency-key"],
           request.body.attachmentIds,
         );
       } catch (error) {
@@ -194,8 +209,26 @@ export async function buildControlApi(
         }
         throw error;
       }
-      if (run === null) {
+      if (result.kind === "project_not_found") {
         throw new ApiError(404, "PROJECT_NOT_FOUND", "Project not found");
+      }
+      if (result.kind === "idempotency_conflict") {
+        throw new ApiError(
+          409,
+          "IDEMPOTENCY_KEY_CONFLICT",
+          "The idempotency key was already used for a different run request",
+          {
+            runId: result.run.id,
+            status: result.run.status,
+            controlVersion: result.run.controlVersion,
+          },
+        );
+      }
+
+      const run = result.run;
+
+      if (result.replayed) {
+        return reply.code(200).send(toRunResponse(run));
       }
 
       try {

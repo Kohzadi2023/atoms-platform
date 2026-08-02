@@ -22,6 +22,7 @@ import {
   RepositoryConflictError,
 } from "./errors.js";
 import type {
+  CreateRunWithIdempotencyResult,
   ControlRepository,
   PutProjectFileResult,
 } from "./repository.js";
@@ -39,6 +40,11 @@ class MemoryRepository implements ControlRepository {
   readonly files: ProjectFileRecord[] = [];
   lastRunAttachmentIds: readonly string[] = [];
   rejectRunAttachments = false;
+  readonly runsByIdempotencyKey = new Map<string, RunRecord>();
+  readonly runPayloadByIdempotencyKey = new Map<
+    string,
+    { readonly prompt: string; readonly attachmentIds: readonly string[] }
+  >();
   #projectCounter = 0;
   #runCounter = 0;
   #fileCounter = 0;
@@ -76,12 +82,43 @@ class MemoryRepository implements ControlRepository {
     prompt: string,
     attachmentIds: readonly string[] = [],
   ): Promise<RunRecord | null> {
+    const result = await this.createRunWithIdempotency(
+      projectId,
+      prompt,
+      `legacy-${uuid(this.#runCounter + 5000)}`,
+      attachmentIds,
+    );
+    if (result.kind === "project_not_found") return null;
+    return result.run;
+  }
+
+  async createRunWithIdempotency(
+    projectId: string,
+    prompt: string,
+    idempotencyKey: string,
+    attachmentIds: readonly string[] = [],
+  ): Promise<CreateRunWithIdempotencyResult> {
     this.lastRunAttachmentIds = attachmentIds;
     if (this.rejectRunAttachments) {
       throw new RepositoryAttachmentError(attachmentIds);
     }
+    const existing = this.runsByIdempotencyKey.get(idempotencyKey);
+    const existingPayload = this.runPayloadByIdempotencyKey.get(idempotencyKey);
+    if (existing !== undefined) {
+      if (
+        existing.projectId !== projectId ||
+        existingPayload?.prompt !== prompt ||
+        JSON.stringify(existingPayload.attachmentIds) !==
+          JSON.stringify(attachmentIds)
+      ) {
+        return { kind: "idempotency_conflict", run: existing };
+      }
+      return { kind: "ok", run: existing, replayed: true };
+    }
     const project = this.projects.get(projectId);
-    if (project === undefined || project.archivedAt !== null) return null;
+    if (project === undefined || project.archivedAt !== null) {
+      return { kind: "project_not_found" };
+    }
     this.#runCounter += 1;
     const run: RunRecord = {
       id: this.#runCounter === 1 ? RUN_ID : uuid(this.#runCounter + 20),
@@ -100,7 +137,12 @@ class MemoryRepository implements ControlRepository {
       cancelledAt: null,
     };
     this.runs.set(run.id, run);
-    return run;
+    this.runsByIdempotencyKey.set(idempotencyKey, run);
+    this.runPayloadByIdempotencyKey.set(idempotencyKey, {
+      prompt,
+      attachmentIds: [...attachmentIds],
+    });
+    return { kind: "ok", run, replayed: false };
   }
 
   async getRun(runId: string): Promise<RunRecord | null> {
@@ -339,6 +381,7 @@ test("POST /v1/projects/:id/runs persists and enqueues an idempotent run command
     const response = await app.inject({
       method: "POST",
       url: `/v1/projects/${PROJECT_ID}/runs`,
+      headers: { "idempotency-key": "create-run-atoms-v1" },
       payload: { prompt: "  Build a CRM  " },
     });
 
@@ -347,6 +390,49 @@ test("POST /v1/projects/:id/runs persists and enqueues an idempotent run command
     assert.deepEqual(queue.jobs, [
       { runId: RUN_ID, command: "start", controlVersion: 0 },
     ]);
+
+    const replay = await app.inject({
+      method: "POST",
+      url: `/v1/projects/${PROJECT_ID}/runs`,
+      headers: { "idempotency-key": "create-run-atoms-v1" },
+      payload: { prompt: "Build a CRM" },
+    });
+    assert.equal(replay.statusCode, 200);
+    assert.equal(replay.json().id, RUN_ID);
+    assert.equal(queue.jobs.length, 1);
+  } finally {
+    await app.close();
+  }
+});
+
+test("run creation rejects idempotency-key payload mismatch", async () => {
+  const { app } = await fixture();
+  try {
+    await app.inject({
+      method: "POST",
+      url: "/v1/projects",
+      payload: {
+        workspaceId: WORKSPACE_ID,
+        name: "Atoms",
+        slug: "atoms",
+      },
+    });
+    const first = await app.inject({
+      method: "POST",
+      url: `/v1/projects/${PROJECT_ID}/runs`,
+      headers: { "idempotency-key": "create-run-atoms-v2" },
+      payload: { prompt: "Build a CRM" },
+    });
+    assert.equal(first.statusCode, 201);
+
+    const conflict = await app.inject({
+      method: "POST",
+      url: `/v1/projects/${PROJECT_ID}/runs`,
+      headers: { "idempotency-key": "create-run-atoms-v2" },
+      payload: { prompt: "Build a payments service" },
+    });
+    assert.equal(conflict.statusCode, 409);
+    assert.equal(conflict.json().error.code, "IDEMPOTENCY_KEY_CONFLICT");
   } finally {
     await app.close();
   }
@@ -364,6 +450,7 @@ test("run creation snapshots only repository-approved clean attachments", async 
     const accepted = await app.inject({
       method: "POST",
       url: `/v1/projects/${PROJECT_ID}/runs`,
+      headers: { "idempotency-key": "attachments-run-v1" },
       payload: { prompt: "Build a CRM", attachmentIds: [attachmentId] },
     });
     assert.equal(accepted.statusCode, 201);
@@ -374,6 +461,7 @@ test("run creation snapshots only repository-approved clean attachments", async 
     const rejected = await app.inject({
       method: "POST",
       url: `/v1/projects/${PROJECT_ID}/runs`,
+      headers: { "idempotency-key": "attachments-run-v2" },
       payload: { prompt: "Build again", attachmentIds: [attachmentId] },
     });
     assert.equal(rejected.statusCode, 409);
@@ -423,6 +511,10 @@ test("CORS permits only an explicitly configured web origin", async () => {
       allowed.headers["access-control-allow-origin"],
       "http://localhost:3000",
     );
+    const allowHeaders = String(
+      allowed.headers["access-control-allow-headers"] ?? "",
+    ).toLowerCase();
+    assert.match(allowHeaders, /idempotency-key/);
 
     const denied = await app.inject({
       method: "OPTIONS",
@@ -661,6 +753,7 @@ test("queue failure is compensated by marking a persisted run FAILED", async () 
     const response = await app.inject({
       method: "POST",
       url: `/v1/projects/${PROJECT_ID}/runs`,
+      headers: { "idempotency-key": "queue-failure-v1" },
       payload: { prompt: "Build a CRM" },
     });
 

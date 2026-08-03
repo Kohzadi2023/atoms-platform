@@ -345,6 +345,8 @@ function outputs(options: {
   readonly requiresApproval?: boolean;
   readonly expectedVersion?: number;
   readonly alexFiles?: AgentOutputByName["Alex"]["files"];
+  readonly bobRoutes?: AgentOutputByName["Bob"]["routes"];
+  readonly sarahRouteMetadata?: AgentOutputByName["Sarah"]["seoPackage"]["routeMetadata"];
 } = {}): AgentOutputByName {
   return {
     Mike: {
@@ -380,7 +382,9 @@ function outputs(options: {
     },
     Bob: {
       architectureSummary: "One supported Next.js application.",
-      routes: [{ method: "GET", path: "/", purpose: "Dashboard" }],
+      routes:
+        options.bobRoutes ??
+        [{ method: "GET", path: "/", purpose: "Dashboard" }],
       components: ["Dashboard"],
       dataModels: ["User"],
       schemaPrisma: "model User { id String @id }",
@@ -446,14 +450,16 @@ function outputs(options: {
         version: "v1",
         sitemapXml: "<urlset></urlset>",
         robotsTxt: "User-agent: *\nAllow: /\n",
-        routeMetadata: [
-          {
-            routePath: "/",
-            title: "Customer Portal",
-            description: "Secure self-service dashboard for customers.",
-            canonicalUrl: null,
-          },
-        ],
+        routeMetadata:
+          options.sarahRouteMetadata ??
+          [
+            {
+              routePath: "/",
+              title: "Customer Portal",
+              description: "Secure self-service dashboard for customers.",
+              canonicalUrl: null,
+            },
+          ],
         findings: [],
       },
     },
@@ -482,6 +488,10 @@ function startJob(): RunJob {
   return { runId: RUN_ID, command: "start", controlVersion: 0 };
 }
 
+function approveJob(controlVersion: number): RunJob {
+  return { runId: RUN_ID, command: "approve", controlVersion };
+}
+
 function processor(repository: MemoryRepository, agents: AgentRuntime): RunProcessor {
   return new RunProcessor({
     repository,
@@ -498,6 +508,23 @@ test("worker executes the full Phase 4 chain once and commits ordered events", a
 
   assert.deepEqual(
     await runProcessor.process(startJob(), { attempt: 1, maxAttempts: 3 }),
+    { outcome: "stopped", status: "PAUSED" },
+  );
+  const approvalEvent = repository.events.find(
+    (event) => event.eventType === "approval.required",
+  );
+  assert.equal(typeof approvalEvent?.payload, "object");
+  assert.equal(approvalEvent?.payload === null, false);
+  assert.equal(
+    (approvalEvent?.payload as { readonly reason: string }).reason,
+    "Approve content variants before applying copy changes",
+  );
+  const approvedVersion = repository.approve();
+  assert.deepEqual(
+    await runProcessor.process(approveJob(approvedVersion), {
+      attempt: 1,
+      maxAttempts: 3,
+    }),
     { outcome: "completed" },
   );
   assert.deepEqual(agents.calls, [
@@ -588,6 +615,14 @@ test("worker loads clean references once and sends them only to Emma", async () 
 
   assert.deepEqual(
     await runProcessor.process(startJob(), { attempt: 1, maxAttempts: 3 }),
+    { outcome: "stopped", status: "PAUSED" },
+  );
+  const approvedVersion = repository.approve();
+  assert.deepEqual(
+    await runProcessor.process(approveJob(approvedVersion), {
+      attempt: 1,
+      maxAttempts: 3,
+    }),
     { outcome: "completed" },
   );
   assert.equal(loads, 1);
@@ -627,6 +662,14 @@ test("worker runs validation after Phase 4 agents and before completing the dura
 
   assert.deepEqual(
     await runProcessor.process(startJob(), { attempt: 2, maxAttempts: 3 }),
+    { outcome: "stopped", status: "PAUSED" },
+  );
+  const approvedVersion = repository.approve();
+  assert.deepEqual(
+    await runProcessor.process(approveJob(approvedVersion), {
+      attempt: 2,
+      maxAttempts: 3,
+    }),
     { outcome: "completed" },
   );
   assert.equal(validations.length, 1);
@@ -656,6 +699,14 @@ test("worker revokes a published preview if completion loses the control-version
 
   assert.deepEqual(
     await runProcessor.process(startJob(), { attempt: 1, maxAttempts: 3 }),
+    { outcome: "stopped", status: "PAUSED" },
+  );
+  const approvedVersion = repository.approve();
+  assert.deepEqual(
+    await runProcessor.process(approveJob(approvedVersion), {
+      attempt: 1,
+      maxAttempts: 3,
+    }),
     { outcome: "stopped", status: "stale" },
   );
   assert.equal(revoked, 1);
@@ -705,6 +756,14 @@ test("a retryable failure retries only the unfinished agent task", async () => {
 
   assert.deepEqual(
     await runProcessor.process(startJob(), { attempt: 2, maxAttempts: 3 }),
+    { outcome: "stopped", status: "PAUSED" },
+  );
+  const approvedVersion = repository.approve();
+  assert.deepEqual(
+    await runProcessor.process(approveJob(approvedVersion), {
+      attempt: 2,
+      maxAttempts: 3,
+    }),
     { outcome: "completed" },
   );
   assert.deepEqual(agents.calls, [
@@ -717,6 +776,68 @@ test("a retryable failure retries only the unfinished agent task", async () => {
     "Sarah",
     "Adrian",
   ]);
+});
+
+test("Sarah output fails when route coverage is incomplete", async () => {
+  const repository = new MemoryRepository();
+  const agents = new ScriptedAgentRuntime(
+    outputs({
+      bobRoutes: [
+        { method: "GET", path: "/", purpose: "Dashboard" },
+        { method: "GET", path: "/pricing", purpose: "Pricing" },
+      ],
+      sarahRouteMetadata: [
+        {
+          routePath: "/",
+          title: "Customer Portal",
+          description: "Secure self-service dashboard for customers.",
+          canonicalUrl: "https://acme.example/",
+        },
+      ],
+    }),
+  );
+  const runProcessor = processor(repository, agents);
+
+  assert.deepEqual(
+    await runProcessor.process(startJob(), { attempt: 1, maxAttempts: 3 }),
+    { outcome: "failed" },
+  );
+  assert.equal(repository.run.status, "FAILED");
+  assert.deepEqual(agents.calls, ["Mike", "Emma", "Bob", "Alex", "David", "Sarah"]);
+});
+
+test("Sarah output fails when canonical URLs are duplicated", async () => {
+  const repository = new MemoryRepository();
+  const agents = new ScriptedAgentRuntime(
+    outputs({
+      bobRoutes: [
+        { method: "GET", path: "/", purpose: "Dashboard" },
+        { method: "GET", path: "/pricing", purpose: "Pricing" },
+      ],
+      sarahRouteMetadata: [
+        {
+          routePath: "/",
+          title: "Customer Portal",
+          description: "Secure self-service dashboard for customers.",
+          canonicalUrl: "https://acme.example/home",
+        },
+        {
+          routePath: "/pricing",
+          title: "Pricing",
+          description: "Simple plans for teams.",
+          canonicalUrl: "https://acme.example/home",
+        },
+      ],
+    }),
+  );
+  const runProcessor = processor(repository, agents);
+
+  assert.deepEqual(
+    await runProcessor.process(startJob(), { attempt: 1, maxAttempts: 3 }),
+    { outcome: "failed" },
+  );
+  assert.equal(repository.run.status, "FAILED");
+  assert.deepEqual(agents.calls, ["Mike", "Emma", "Bob", "Alex", "David", "Sarah"]);
 });
 
 test("a generated-file CAS conflict preserves the manual revision and fails safely", async () => {

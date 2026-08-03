@@ -136,6 +136,9 @@ export function buildRunGraph(options: BuildRunGraphOptions) {
             ? {}
             : { referenceAttachments }),
         });
+        if (agentName === "Sarah") {
+          enforceDeterministicSeoChecks(output, upstreamOutputs);
+        }
         const normalizedOutput = JsonValueSchema.parse(output);
         const generatedFiles =
           agentName === "Alex"
@@ -202,6 +205,27 @@ export function buildRunGraph(options: BuildRunGraphOptions) {
     );
   };
 
+  const contentApprovalGate = async (state: RunGraphInput): Promise<{}> => {
+    const adrian = AgentOutputSchemas.Adrian.parse(state.outputs.Adrian);
+    const hasCopyVariants =
+      adrian.contentPackage.ctaVariants.length > 0 ||
+      adrian.contentPackage.adVariants.length > 0;
+    if (!hasCopyVariants || state.command === "approve") return {};
+
+    const paused = await options.repository.requestApproval(
+      state.runId,
+      state.controlVersion,
+      "Approve content variants before applying copy changes",
+      now(),
+    );
+    throw new RunStoppedError(
+      paused
+        ? "Run is waiting for content approval"
+        : "Run stopped before content approval could be requested",
+      paused ? "PAUSED" : "stopped",
+    );
+  };
+
   const builder = new StateGraph(RunState)
     .addNode("mike", runAgent("Mike"))
     .addNode("emma", runAgent("Emma"))
@@ -211,6 +235,7 @@ export function buildRunGraph(options: BuildRunGraphOptions) {
     .addNode("david", runAgent("David"))
     .addNode("sarah", runAgent("Sarah"))
     .addNode("adrian", runAgent("Adrian"))
+    .addNode("content-approval", contentApprovalGate)
     .addEdge(START, "mike")
     .addEdge("mike", "emma")
     .addEdge("emma", "bob")
@@ -219,13 +244,71 @@ export function buildRunGraph(options: BuildRunGraphOptions) {
     .addEdge("alex", "david")
     .addEdge("david", "sarah")
     .addEdge("sarah", "adrian")
-    .addEdge("adrian", END);
+    .addEdge("adrian", "content-approval")
+    .addEdge("content-approval", END);
 
   return builder.compile(
     options.checkpointer === undefined
       ? {}
       : { checkpointer: options.checkpointer },
   );
+}
+
+function enforceDeterministicSeoChecks(
+  output: unknown,
+  upstreamOutputs: AgentUpstreamOutputs,
+): void {
+  const sarah = AgentOutputSchemas.Sarah.parse(output);
+  const bob = upstreamOutputs.Bob;
+  if (bob === undefined) return;
+
+  const requiredRoutePaths = [...new Set(bob.routes.map((route) => route.path))];
+  const coveredRoutePaths = new Set(
+    sarah.seoPackage.routeMetadata.map((entry) => entry.routePath),
+  );
+  const missingRouteMetadata = requiredRoutePaths.filter(
+    (path) => !coveredRoutePaths.has(path),
+  );
+
+  const canonicalCounts = new Map<string, number>();
+  for (const entry of sarah.seoPackage.routeMetadata) {
+    if (entry.canonicalUrl === null) continue;
+    canonicalCounts.set(
+      entry.canonicalUrl,
+      (canonicalCounts.get(entry.canonicalUrl) ?? 0) + 1,
+    );
+  }
+  const duplicateCanonicals = [...canonicalCounts.entries()]
+    .filter(([, count]) => count > 1)
+    .map(([canonicalUrl]) => canonicalUrl);
+
+  if (missingRouteMetadata.length === 0 && duplicateCanonicals.length === 0) {
+    return;
+  }
+
+  const issues: string[] = [];
+  if (missingRouteMetadata.length > 0) {
+    issues.push(
+      `missing route metadata for: ${missingRouteMetadata.join(", ")}`,
+    );
+  }
+  if (duplicateCanonicals.length > 0) {
+    issues.push(
+      `duplicate canonical URLs detected: ${duplicateCanonicals.join(", ")}`,
+    );
+  }
+  throw new DeterministicSeoValidationError(
+    `Sarah output failed deterministic SEO checks: ${issues.join("; ")}`,
+  );
+}
+
+class DeterministicSeoValidationError extends Error {
+  readonly retryable = false;
+
+  constructor(message: string) {
+    super(message);
+    this.name = "DeterministicSeoValidationError";
+  }
 }
 
 function parseUpstreamOutputs(

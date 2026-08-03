@@ -32,6 +32,8 @@ accessible names or live announcements.
 
 - `GET /v1/runs/{runId}` restores current status and `controlVersion` before a
   pause, resume, approval, cancellation, or retry.
+- `POST /v1/runs/{runId}/actions` requires `approvalScope` when
+  `action=approve` and rejects `approvalScope` on non-approve actions.
 - `GET /v1/projects/{projectId}/files` returns only the latest summary for each
   path; file content remains opt-in through the existing content endpoint.
 - `CONTROL_API_CORS_ORIGINS` is a comma-separated allowlist of exact browser

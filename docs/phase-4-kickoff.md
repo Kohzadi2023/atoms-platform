@@ -136,3 +136,32 @@ Acceptance impact:
 The step is complete when `SEO_PACKAGE` and `CONTENT_PACKAGE` can be accepted as
 typed artifacts with deterministic validation failures and passing tests, while the
 orchestrator execution path remains unchanged.
+
+## Follow-up hardening (2026-08-03)
+
+After reviewing the Phase 4 orchestration flow and tests, we identified and fixed a
+multi-approval edge case:
+
+- A single `approve` command could bypass both the plan approval gate and the content
+  approval gate when both were present in the same run.
+
+Implemented guardrail:
+
+- Approval bypass is now consumed once per run invocation and only when
+  `approvalScope` matches the active approval gate.
+- Plan approval is considered already satisfied after Alex output exists.
+- Runs that require both plan and content approvals now pause twice and require two
+  explicit approvals.
+
+API/queue contract hardening:
+
+- `POST /v1/runs/{runId}/actions` now requires `approvalScope` when
+  `action=approve`.
+- `approvalScope` is rejected for non-approve actions.
+- Worker jobs carry `approvalScope` so graph bypass applies only to `plan` or
+  `content` as requested.
+
+Verification:
+
+- `pnpm --filter @atoms/orchestrator-worker test` passes with updated assertions for
+  two-step approval behavior.

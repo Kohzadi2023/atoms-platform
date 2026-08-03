@@ -8,6 +8,7 @@ import {
 import {
   JsonValueSchema,
   type JsonValue,
+  type ApprovalScope,
   type RunJobCommand,
 } from "@atoms/contracts";
 import {
@@ -32,7 +33,15 @@ const RunState = Annotation.Root({
   projectId: Annotation<string>,
   prompt: Annotation<string>,
   command: Annotation<RunJobCommand>,
+  approvalScope: Annotation<ApprovalScope | undefined>({
+    reducer: (_current, update) => update,
+    default: () => undefined,
+  }),
   controlVersion: Annotation<number>,
+  approvalBypassConsumed: Annotation<boolean>({
+    reducer: (_current, update) => update,
+    default: () => false,
+  }),
   outputs: Annotation<Record<string, JsonValue>>({
     reducer: (current, update) => ({ ...current, ...update }),
     default: () => ({}),
@@ -189,7 +198,15 @@ export function buildRunGraph(options: BuildRunGraphOptions) {
 
   const approvalGate = async (state: RunGraphInput): Promise<{}> => {
     const mike = AgentOutputSchemas.Mike.parse(state.outputs.Mike);
-    if (!mike.requiresApproval || state.command === "approve") return {};
+    const planApprovalAlreadyConsumed = state.outputs.Alex !== undefined;
+    if (!mike.requiresApproval || planApprovalAlreadyConsumed) return {};
+    if (
+      state.command === "approve" &&
+      state.approvalScope === "plan" &&
+      !state.approvalBypassConsumed
+    ) {
+      return { approvalBypassConsumed: true };
+    }
 
     const paused = await options.repository.requestApproval(
       state.runId,
@@ -210,7 +227,14 @@ export function buildRunGraph(options: BuildRunGraphOptions) {
     const hasCopyVariants =
       adrian.contentPackage.ctaVariants.length > 0 ||
       adrian.contentPackage.adVariants.length > 0;
-    if (!hasCopyVariants || state.command === "approve") return {};
+    if (!hasCopyVariants) return {};
+    if (
+      state.command === "approve" &&
+      state.approvalScope === "content" &&
+      !state.approvalBypassConsumed
+    ) {
+      return { approvalBypassConsumed: true };
+    }
 
     const paused = await options.repository.requestApproval(
       state.runId,

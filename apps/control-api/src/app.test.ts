@@ -558,6 +558,39 @@ test("GET /v1/runs/:runId/events replays only events after Last-Event-ID in orde
   }
 });
 
+test("SSE replay includes typed artifact.created payloads", async () => {
+  const { app, repository } = await fixture();
+  try {
+    await createProjectAndRun(repository);
+    repository.events.push({
+      runId: RUN_ID,
+      sequence: 1,
+      eventType: "artifact.created",
+      payload: {
+        version: "v1",
+        taskId: "00000000-0000-4000-8000-000000000010",
+        agent: "David",
+        artifactType: "david-output",
+        migrationArtifactId: "00000000-0000-4000-8000-000000000011",
+      },
+      createdAt: new Date(FIXED_NOW.getTime() + 1),
+    });
+    repository.setRunStatus(RUN_ID, "COMPLETED");
+
+    const response = await app.inject({
+      method: "GET",
+      url: `/v1/runs/${RUN_ID}/events`,
+    });
+
+    assert.equal(response.statusCode, 200);
+    assert.match(response.body, /event: artifact\.created/);
+    assert.match(response.body, /"artifactType":"david-output"/);
+    assert.match(response.body, /"version":"v1"/);
+  } finally {
+    await app.close();
+  }
+});
+
 test("POST /v1/runs/:runId/actions enforces status/version CAS and queues resume", async () => {
   const { app, repository, queue } = await fixture();
   try {

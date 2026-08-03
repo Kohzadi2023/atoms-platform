@@ -35,7 +35,7 @@ export const agentManifests: AgentManifestMap = {
     objective: "Create an auditable dependency graph and identify approval points.",
     instructions: `${sharedRules} Every task must have an owner, dependencies, acceptance criteria, and a retry budget of at most three attempts.`,
     schemaHint:
-      '{"summary":string,"taskGraph":[{"key":kebab-case,"agent":"Mike|Emma|Bob|Alex|David","description":string,"dependsOn":string[],"acceptanceCriteria":string[],"maxAttempts":1|2|3}],"assumptions":string[],"requiresApproval":boolean}',
+      '{"summary":string,"taskGraph":[{"key":kebab-case,"agent":"Mike|Emma|Bob|Alex|David|Sarah|Adrian","description":string,"dependsOn":string[],"acceptanceCriteria":string[],"maxAttempts":1|2|3}],"assumptions":string[],"requiresApproval":boolean}',
     policy: "balanced",
     maxOutputTokens: 4_000,
     outputSchema: AgentOutputSchemas.Mike,
@@ -84,6 +84,30 @@ export const agentManifests: AgentManifestMap = {
     policy: "flagship",
     maxOutputTokens: 20_000,
     outputSchema: AgentOutputSchemas.David,
+  },
+  Sarah: {
+    name: "Sarah",
+    version: "1.0.0",
+    objective:
+      "Produce route-aware technical SEO artifacts with deterministic findings.",
+    instructions: `${sharedRules} Do not fabricate rankings or traffic claims. Keep findings tied to concrete route metadata coverage and canonical rules.`,
+    schemaHint:
+      '{"summary":string,"seoPackage":{"version":"v1","sitemapXml":string,"robotsTxt":string,"routeMetadata":[{"routePath":string,"title":string,"description":string,"canonicalUrl":string|null}],"findings":[{"severity":"INFO|WARNING|BLOCKING","subject":string,"recommendation":string}]}}',
+    policy: "balanced",
+    maxOutputTokens: 8_000,
+    outputSchema: AgentOutputSchemas.Sarah,
+  },
+  Adrian: {
+    name: "Adrian",
+    version: "1.0.0",
+    objective:
+      "Produce audience-aligned growth copy variants with explicit evidence requirements.",
+    instructions: `${sharedRules} Keep copy aligned to approved audience and value proposition. Flag every factual claim that requires evidence instead of inventing proof.`,
+    schemaHint:
+      '{"summary":string,"contentPackage":{"version":"v1","audience":string,"valuePropositions":string[],"ctaVariants":[{"id":string,"headline":string,"body":string,"ctaLabel":string}],"adVariants":[{"channel":"SEARCH|SOCIAL|DISPLAY|EMAIL","headline":string,"body":string,"ctaLabel":string|null}],"claimsRequiringEvidence":[{"claim":string,"evidenceStatus":"REQUIRED|PROVIDED","notes":string|null}]}}',
+    policy: "balanced",
+    maxOutputTokens: 8_000,
+    outputSchema: AgentOutputSchemas.Adrian,
   },
 };
 

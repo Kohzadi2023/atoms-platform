@@ -1,4 +1,8 @@
-import { ProjectFilePathSchema } from "@atoms/contracts";
+import {
+  ContentPackageSchema,
+  ProjectFilePathSchema,
+  SeoPackageSchema,
+} from "@atoms/contracts";
 import { z } from "zod";
 
 export const ActiveAgentNameSchema = z.enum([
@@ -7,6 +11,8 @@ export const ActiveAgentNameSchema = z.enum([
   "Bob",
   "Alex",
   "David",
+  "Sarah",
+  "Adrian",
 ]);
 
 export type ActiveAgentName = z.infer<typeof ActiveAgentNameSchema>;
@@ -255,12 +261,32 @@ export const DavidOutputSchema = z
 
 export type DavidOutput = z.infer<typeof DavidOutputSchema>;
 
+export const SarahOutputSchema = z
+  .object({
+    summary: BoundedTextSchema,
+    seoPackage: SeoPackageSchema,
+  })
+  .strict();
+
+export type SarahOutput = z.infer<typeof SarahOutputSchema>;
+
+export const AdrianOutputSchema = z
+  .object({
+    summary: BoundedTextSchema,
+    contentPackage: ContentPackageSchema,
+  })
+  .strict();
+
+export type AdrianOutput = z.infer<typeof AdrianOutputSchema>;
+
 export interface AgentOutputByName {
   readonly Mike: MikeOutput;
   readonly Emma: EmmaOutput;
   readonly Bob: BobOutput;
   readonly Alex: AlexOutput;
   readonly David: DavidOutput;
+  readonly Sarah: SarahOutput;
+  readonly Adrian: AdrianOutput;
 }
 
 export const AgentOutputSchemas = {
@@ -269,6 +295,8 @@ export const AgentOutputSchemas = {
   Bob: BobOutputSchema,
   Alex: AlexOutputSchema,
   David: DavidOutputSchema,
+  Sarah: SarahOutputSchema,
+  Adrian: AdrianOutputSchema,
 } as const;
 
 export interface AgentProjectFile {

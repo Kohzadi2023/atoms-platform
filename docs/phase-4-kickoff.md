@@ -1,6 +1,6 @@
 # Phase 4 Kickoff: Sarah + Adrian Foundation
 
-Status: in progress (Milestones 1 and 2 complete)  
+Status: in progress (Milestones 1 and 2 complete; orchestration wiring landed)  
 Updated: 2026-08-03
 
 ## Why this is the next concrete step
@@ -105,6 +105,31 @@ Executed on 2026-08-03:
 - `pnpm --filter @atoms/contracts test` -> 18 passed, 0 failed
 - `pnpm --filter @atoms/control-api test` -> 18 passed, 0 failed, 1 skipped (env-gated integration)
 - `pnpm --filter @atoms/orchestrator-worker test` -> 24 passed, 0 failed, 2 skipped (env-gated integration/live)
+
+## Next step selected and implemented (2026-08-03)
+
+Based on the roadmap dependency order, the next bounded implementation after typed
+artifact contracts was to wire Sarah and Adrian into durable orchestration while
+preserving existing controls (approval gate, bounded retries, immutable revisions).
+
+Completed in code:
+
+- Added `Sarah` and `Adrian` to active agent contracts and manifests.
+- Extended the run graph from `... -> Alex -> David` to
+  `... -> Alex -> David -> Sarah -> Adrian`.
+- Added persisted enum support for these agents in Prisma (`AgentName`).
+- Emitted explicit `artifact.created` events for `seo-package` and
+  `content-package` when Sarah/Adrian complete.
+- Added a typed artifact query route `GET /v1/runs/:runId/artifacts` for
+  deterministic UI/state retrieval.
+- Added Control API end-to-end coverage for replay and query of
+  `seo-package` and `content-package` artifact envelopes.
+
+Acceptance impact:
+
+- Existing run-control behavior remains unchanged (same approval boundary, same retry
+  semantics, same validation stage ordering).
+- Phase 4 artifacts now flow through the same durable eventing path as prior agents.
 
 ## Exit definition for this kickoff step
 

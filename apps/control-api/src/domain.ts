@@ -1,9 +1,11 @@
 import type {
+  ArtifactCreatedEventPayloadV1,
   AgentRunStatus,
   FileContentResponse,
   JsonValue,
   ProjectFileSummary,
   ProjectResponse,
+  RunArtifactResponse,
   RunEventType,
   RunResponse,
 } from "@atoms/contracts";
@@ -44,6 +46,12 @@ export interface RunEventRecord {
   readonly eventType: RunEventType;
   readonly payload: JsonValue;
   readonly createdAt: Date;
+}
+
+export interface RunArtifactRecord {
+  readonly sequence: number;
+  readonly createdAt: Date;
+  readonly payload: ArtifactCreatedEventPayloadV1;
 }
 
 export interface ProjectFileRecord {
@@ -121,5 +129,15 @@ export function toProjectFileSummary(
     version: record.version,
     createdAt: record.createdAt.toISOString(),
     updatedAt: record.updatedAt.toISOString(),
+  };
+}
+
+export function toRunArtifactResponse(
+  record: RunArtifactRecord,
+): RunArtifactResponse {
+  return {
+    sequence: record.sequence,
+    occurredAt: record.createdAt.toISOString(),
+    payload: record.payload,
   };
 }

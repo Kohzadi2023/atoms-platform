@@ -20,6 +20,8 @@ enum AgentName {
   Bob
   Alex
   David
+  Sarah
+  Adrian
 }
 
 enum AgentRunStatus {

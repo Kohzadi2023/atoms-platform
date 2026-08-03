@@ -6,6 +6,7 @@ import {
   FileContentQuerySchema,
   FileContentResponseSchema,
   ProjectResponseSchema,
+  RunArtifactListResponseSchema,
   RunActionInputSchema,
   RunEventEnvelopeSchema,
   RunResponseSchema,
@@ -27,6 +28,7 @@ import {
   toFileContentResponse,
   toProjectFileSummary,
   toProjectResponse,
+  toRunArtifactResponse,
   toRunResponse,
   type RunRecord,
   type RunStatusPatch,
@@ -270,6 +272,27 @@ export async function buildControlApi(
         throw new ApiError(404, "RUN_NOT_FOUND", "Run not found");
       }
       return reply.code(200).send(toRunResponse(run));
+    },
+  );
+
+  api.get(
+    "/v1/runs/:runId/artifacts",
+    {
+      schema: {
+        operationId: "listRunArtifacts",
+        params: RunIdParamsSchema,
+        response: { 200: RunArtifactListResponseSchema, ...errorResponses },
+      },
+    },
+    async (request, reply) => {
+      const run = await options.repository.getRun(request.params.runId);
+      if (run === null) {
+        throw new ApiError(404, "RUN_NOT_FOUND", "Run not found");
+      }
+      const artifacts = await options.repository.listRunArtifacts(run.id);
+      return reply.code(200).send({
+        items: artifacts.map(toRunArtifactResponse),
+      });
     },
   );
 

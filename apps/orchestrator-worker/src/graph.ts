@@ -58,6 +58,14 @@ const taskDefinitions = {
     ordinal: 5,
     description: "Review schema and generate migrations, seed data, and data policies",
   },
+  Sarah: {
+    ordinal: 6,
+    description: "Generate SEO artifacts and deterministic metadata findings",
+  },
+  Adrian: {
+    ordinal: 7,
+    description: "Generate growth copy variants and evidence requirements",
+  },
 } as const;
 
 export function buildRunGraph(options: BuildRunGraphOptions) {
@@ -201,13 +209,17 @@ export function buildRunGraph(options: BuildRunGraphOptions) {
     .addNode("approval", approvalGate)
     .addNode("alex", runAgent("Alex"))
     .addNode("david", runAgent("David"))
+    .addNode("sarah", runAgent("Sarah"))
+    .addNode("adrian", runAgent("Adrian"))
     .addEdge(START, "mike")
     .addEdge("mike", "emma")
     .addEdge("emma", "bob")
     .addEdge("bob", "approval")
     .addEdge("approval", "alex")
     .addEdge("alex", "david")
-    .addEdge("david", END);
+    .addEdge("david", "sarah")
+    .addEdge("sarah", "adrian")
+    .addEdge("adrian", END);
 
   return builder.compile(
     options.checkpointer === undefined
@@ -235,5 +247,11 @@ function parseUpstreamOutputs(
     ...(outputs.David === undefined
       ? {}
       : { David: AgentOutputSchemas.David.parse(outputs.David) }),
+    ...(outputs.Sarah === undefined
+      ? {}
+      : { Sarah: AgentOutputSchemas.Sarah.parse(outputs.Sarah) }),
+    ...(outputs.Adrian === undefined
+      ? {}
+      : { Adrian: AgentOutputSchemas.Adrian.parse(outputs.Adrian) }),
   };
 }

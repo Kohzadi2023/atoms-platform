@@ -185,6 +185,13 @@ in-memory collaborators and do not call OpenAI or E2B. A live E2B smoke run is
 credential-gated and is intentionally not represented as passing when no
 `E2B_API_KEY` is available.
 
+For an audit-ready summary of the current repository-backed verification state,
+including the actual demo scripts and the repository-wide test outcome, see
+`docs/phase-4-verification.md`.
+
+For a step-by-step operator checklist to execute blocked Step 5 staging-live
+validation safely, see `docs/phase-3-step5-staging-checklist.md`.
+
 The manual `Phase 3 staging evidence` workflow is the only supported full exit
 entry point. A local or CI run with live flags absent records the PostgreSQL,
 Redis, Supabase, Vault, and E2B gates as skipped—not passed.

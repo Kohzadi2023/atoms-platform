@@ -49,6 +49,14 @@ jobs:
     timeout-minutes: 5
     steps:
       - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 11.7.0
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
       - name: Validate explicit scope and confirmations
         env:
           PHASE3_WORKFLOW_CONFIRMATION: ${{ inputs.workflow_confirmation }}
@@ -57,6 +65,21 @@ jobs:
           PHASE3_STAGING_MEASURED_COST_CAD: ${{ inputs.measured_variable_cost_cad }}
           PHASE3_STAGING_DESTRUCTIVE_CONFIRMATION: ${{ inputs.destructive_confirmation }}
         run: node scripts/validate-phase3-staging-inputs.mjs
+      - name: Write durability preflight audit
+        env:
+          RUN_PHASE3_DURABILITY_INTEGRATION_TESTS: "true"
+          PHASE3_INTEGRATION_DATABASE_CONFIRMATION: DEDICATED_EPHEMERAL_DATABASE
+          DATABASE_URL: postgresql://atoms:atoms@localhost:5432/placeholder
+          REDIS_URL: redis://localhost:6379
+        run: pnpm staging:phase3:preflight:json
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: phase3-preflight-evidence
+          path: |
+            artifacts/phase3-preflight-durability.json
+          if-no-files-found: warn
+          retention-days: 30
 
   migration-and-durability:
     needs: preflight
@@ -98,6 +121,13 @@ jobs:
           node-version: 24
           cache: pnpm
       - run: pnpm install --frozen-lockfile
+      - name: Enforce durability preflight before integration test
+        env:
+          RUN_PHASE3_DURABILITY_INTEGRATION_TESTS: "true"
+          PHASE3_INTEGRATION_DATABASE_CONFIRMATION: DEDICATED_EPHEMERAL_DATABASE
+          DATABASE_URL: postgresql://atoms:atoms@localhost:5432/atoms_upgrade
+          REDIS_URL: redis://localhost:6379
+        run: pnpm staging:phase3:preflight
       - name: Upgrade Phase 2 to the complete Phase 3 schema
         env:
           DATABASE_URL: postgresql://atoms:atoms@localhost:5432/atoms_upgrade
@@ -165,6 +195,33 @@ jobs:
           node-version: 24
           cache: pnpm
       - run: pnpm install --frozen-lockfile
+      - name: Enforce live-provider preflight and write audit
+        env:
+          RUN_PHASE3_DURABILITY_INTEGRATION_TESTS: "true"
+          RUN_LIVE_PHASE3_STAGING: "true"
+          PHASE3_STAGING_DESTRUCTIVE_CONFIRMATION: ${{ inputs.destructive_confirmation }}
+          PHASE3_INTEGRATION_DATABASE_CONFIRMATION: DEDICATED_EPHEMERAL_DATABASE
+          PHASE3_STAGING_CHANGE_TICKET: ${{ inputs.change_ticket }}
+          PHASE3_STAGING_MEASURED_COST_CAD: ${{ inputs.measured_variable_cost_cad }}
+          PHASE3_STAGING_EVIDENCE_PATH: artifacts/phase3-provider-evidence.json
+          DATABASE_URL: postgresql://atoms:atoms@localhost:5432/atoms_provider_exit
+          REDIS_URL: redis://localhost:6379
+          SUPABASE_ACCESS_TOKEN: ${{ secrets.SUPABASE_ACCESS_TOKEN }}
+          SUPABASE_ORGANIZATION_SLUG: ${{ vars.SUPABASE_ORGANIZATION_SLUG }}
+          VAULT_ADDR: ${{ secrets.VAULT_ADDR }}
+          VAULT_TOKEN: ${{ secrets.VAULT_TOKEN }}
+          E2B_API_KEY: ${{ secrets.E2B_API_KEY }}
+          PHASE3_STAGING_DATABASE_REGION: ${{ inputs.database_region }}
+          PHASE3_STAGING_MIN_OTHER_ORG_CONTROLS: ${{ vars.PHASE3_STAGING_MIN_OTHER_ORG_CONTROLS }}
+          PHASE3_STAGING_MIN_CUSTOMER_CONTROLS: ${{ vars.PHASE3_STAGING_MIN_CUSTOMER_CONTROLS }}
+        run: pnpm staging:phase3:preflight:live:json
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: phase3-preflight-live-evidence
+          path: artifacts/phase3-preflight-live.json
+          if-no-files-found: warn
+          retention-days: 30
       - name: Prepare the dedicated provider-exit audit database
         env:
           DATABASE_URL: postgresql://atoms:atoms@localhost:5432/atoms_provider_exit

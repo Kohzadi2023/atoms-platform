@@ -347,7 +347,10 @@ function outputs(options: {
   readonly alexFiles?: AgentOutputByName["Alex"]["files"];
   readonly bobRoutes?: AgentOutputByName["Bob"]["routes"];
   readonly sarahRouteMetadata?: AgentOutputByName["Sarah"]["seoPackage"]["routeMetadata"];
+  readonly includeContentVariants?: boolean;
 } = {}): AgentOutputByName {
+  const includeContentVariants = options.includeContentVariants ?? true;
+
   return {
     Mike: {
       summary: "Generate the supported customer portal.",
@@ -469,14 +472,16 @@ function outputs(options: {
         version: "v1",
         audience: "Small business customers",
         valuePropositions: ["Self-service account access in minutes"],
-        ctaVariants: [
-          {
-            id: "cta-primary",
-            headline: "Launch your secure portal",
-            body: "Give customers a fast way to manage their account online.",
-            ctaLabel: "Start now",
-          },
-        ],
+        ctaVariants: includeContentVariants
+          ? [
+              {
+                id: "cta-primary",
+                headline: "Launch your secure portal",
+                body: "Give customers a fast way to manage their account online.",
+                ctaLabel: "Start now",
+              },
+            ]
+          : [],
         adVariants: [],
         claimsRequiringEvidence: [],
       },
@@ -712,7 +717,7 @@ test("worker revokes a published preview if completion loses the control-version
   assert.equal(revoked, 1);
 });
 
-test("plan approval pauses after Bob and resumes without repeating completed agents", async () => {
+test("plan approval and content approval require two explicit approvals", async () => {
   const repository = new MemoryRepository();
   const agents = new ScriptedAgentRuntime(outputs({ requiresApproval: true }));
   const runProcessor = processor(repository, agents);
@@ -729,8 +734,33 @@ test("plan approval pauses after Bob and resumes without repeating completed age
       { runId: RUN_ID, command: "approve", controlVersion: approvedVersion },
       { attempt: 1, maxAttempts: 3 },
     ),
+    { outcome: "stopped", status: "PAUSED" },
+  );
+
+  const contentApprovalVersion = repository.approve();
+  assert.deepEqual(
+    await runProcessor.process(
+      {
+        runId: RUN_ID,
+        command: "approve",
+        controlVersion: contentApprovalVersion,
+      },
+      { attempt: 1, maxAttempts: 3 },
+    ),
     { outcome: "completed" },
   );
+
+  const approvalReasons = repository.events
+    .filter((event) => event.eventType === "approval.required")
+    .map(
+      (event) =>
+        (event.payload as { readonly reason: string }).reason,
+    );
+  assert.deepEqual(approvalReasons, [
+    "Approve the product and architecture plan before code generation",
+    "Approve content variants before applying copy changes",
+  ]);
+
   assert.deepEqual(agents.calls, [
     "Mike",
     "Emma",

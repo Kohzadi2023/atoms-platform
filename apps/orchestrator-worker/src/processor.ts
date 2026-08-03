@@ -77,6 +77,7 @@ export class RunProcessor {
           prompt: claim.run.prompt,
           command: job.command,
           controlVersion: claim.run.controlVersion,
+          approvalBypassConsumed: false,
           outputs: {},
         },
         {

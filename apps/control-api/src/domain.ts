@@ -4,6 +4,7 @@ import type {
   JsonValue,
   ProjectFileSummary,
   ProjectResponse,
+  RunEventType,
   RunResponse,
 } from "@atoms/contracts";
 
@@ -40,7 +41,7 @@ export interface RunRecord {
 export interface RunEventRecord {
   readonly runId: string;
   readonly sequence: number;
-  readonly eventType: string;
+  readonly eventType: RunEventType;
   readonly payload: JsonValue;
   readonly createdAt: Date;
 }

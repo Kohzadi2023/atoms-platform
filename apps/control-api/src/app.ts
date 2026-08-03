@@ -9,6 +9,7 @@ import {
   RunActionInputSchema,
   RunEventEnvelopeSchema,
   RunResponseSchema,
+  validateRunEventPayload,
   type AgentRunStatus,
   type JsonValue,
   type RunAction,
@@ -316,11 +317,15 @@ export async function buildControlApi(
             100,
           );
           for (const event of events) {
+            const payload = validateRunEventPayload(
+              event.eventType,
+              event.payload,
+            );
             const envelope = RunEventEnvelopeSchema.parse({
               sequence: event.sequence,
               runId: event.runId,
               eventType: event.eventType,
-              payload: event.payload,
+              payload,
               occurredAt: event.createdAt.toISOString(),
             });
             reply.raw.write(

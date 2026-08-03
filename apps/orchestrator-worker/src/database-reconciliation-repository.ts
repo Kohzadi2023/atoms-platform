@@ -9,6 +9,7 @@ import {
   type DatabaseReconciliationFindingKind,
   type DatabaseReconciliationSummary,
   type JsonValue,
+  validateRunEventPayload,
 } from "@atoms/contracts";
 import type { ManagedDatabaseResource } from "@atoms/database-provider";
 import { Prisma, type PrismaClient } from "@atoms/db";
@@ -640,6 +641,16 @@ async function appendIntegrationEvent(
     readonly message: string;
   },
 ): Promise<void> {
+  const payload = validateRunEventPayload("integration.status_changed", {
+    version: "v1",
+    integration: "generated-database",
+    databaseInstanceId: input.databaseInstanceId,
+    operationId: input.operationId,
+    operationVersion: input.operationVersion,
+    provider: "SUPABASE",
+    status: input.status,
+    message: input.message,
+  });
   const run = await transaction.agentRun.update({
     where: { id: input.runId },
     data: { eventSequence: { increment: 1 } },
@@ -650,16 +661,7 @@ async function appendIntegrationEvent(
       runId: input.runId,
       sequence: run.eventSequence,
       eventType: "integration.status_changed",
-      payload: {
-        version: "v1",
-        integration: "generated-database",
-        databaseInstanceId: input.databaseInstanceId,
-        operationId: input.operationId,
-        operationVersion: input.operationVersion,
-        provider: "SUPABASE",
-        status: input.status,
-        message: input.message,
-      },
+      payload: toPrismaJson(payload),
     },
   });
 }

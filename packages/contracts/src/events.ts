@@ -27,6 +27,34 @@ export const RunEventTypeSchema = z.enum([
 
 export type RunEventType = z.infer<typeof RunEventTypeSchema>;
 
+export const ArtifactTypeSchema = z.enum([
+  "mike-output",
+  "emma-output",
+  "bob-output",
+  "alex-output",
+  "david-output",
+  "sarah-output",
+  "adrian-output",
+  "seo-package",
+  "content-package",
+]);
+
+export type ArtifactType = z.infer<typeof ArtifactTypeSchema>;
+
+export const ArtifactCreatedEventPayloadV1Schema = z
+  .object({
+    version: z.literal("v1"),
+    taskId: z.string().uuid(),
+    agent: z.enum(["Mike", "Emma", "Bob", "Alex", "David", "Sarah", "Adrian"]),
+    artifactType: ArtifactTypeSchema,
+    migrationArtifactId: z.string().uuid().optional(),
+  })
+  .strict();
+
+export type ArtifactCreatedEventPayloadV1 = z.infer<
+  typeof ArtifactCreatedEventPayloadV1Schema
+>;
+
 export const SandboxReadyEventPayloadV1Schema = z
   .object({
     version: z.literal("v1"),
@@ -107,6 +135,28 @@ export const DatabaseStatusChangedEventPayloadV1Schema = z
 export type DatabaseStatusChangedEventPayloadV1 = z.infer<
   typeof DatabaseStatusChangedEventPayloadV1Schema
 >;
+
+export function validateRunEventPayload(
+  eventType: RunEventType,
+  payload: unknown,
+) {
+  if (eventType === "sandbox.ready") {
+    return SandboxReadyEventPayloadV1Schema.parse(payload);
+  }
+  if (eventType === "task.progress") {
+    return SandboxValidationProgressEventPayloadV1Schema.parse(payload);
+  }
+  if (eventType === "preview.updated") {
+    return PreviewUpdatedEventPayloadV1Schema.parse(payload);
+  }
+  if (eventType === "integration.status_changed") {
+    return DatabaseStatusChangedEventPayloadV1Schema.parse(payload);
+  }
+  if (eventType === "artifact.created") {
+    return ArtifactCreatedEventPayloadV1Schema.parse(payload);
+  }
+  return JsonValueSchema.parse(payload);
+}
 
 export const RunEventEnvelopeSchema = z
   .object({

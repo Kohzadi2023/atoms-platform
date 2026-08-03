@@ -3,7 +3,9 @@ import test from "node:test";
 
 import {
   ApproveOrphanCleanupInputSchema,
+  ArtifactCreatedEventPayloadV1Schema,
   AttachmentScanJobSchema,
+  ContentPackageSchema,
   CreateAttachmentUploadIntentInputSchema,
   CreateProjectInputSchema,
   CreateRunInputSchema,
@@ -22,7 +24,9 @@ import {
   RunEventEnvelopeSchema,
   RunJobSchema,
   SandboxReadyEventPayloadV1Schema,
+  SeoPackageSchema,
   SandboxValidationProgressEventPayloadV1Schema,
+  validateRunEventPayload,
 } from "./index.js";
 
 const workspaceId = "d6ac1939-4d53-4a15-8f81-a1b135e0fa32";
@@ -349,6 +353,158 @@ test("Phase 3 staging evidence is complete, cost-bounded, and credential-free", 
     Phase3ProviderStagingEvidenceSchema.parse({
       ...evidence,
       measuredVariableCostCadMicros: 4_000_001,
+    }),
+  );
+});
+
+test("SEO_PACKAGE v1 accepts sitemap, robots, route metadata, and findings", () => {
+  const parsed = SeoPackageSchema.parse({
+    version: "v1",
+    sitemapXml: "<?xml version=\"1.0\"?><urlset></urlset>",
+    robotsTxt: "User-agent: *\nAllow: /",
+    routeMetadata: [
+      {
+        routePath: "/",
+        title: "Acme Booking",
+        description: "Book appointments with Acme.",
+        canonicalUrl: "https://acme.example/",
+      },
+    ],
+    findings: [
+      {
+        severity: "INFO",
+        subject: "metadata coverage",
+        recommendation: "Add metadata for all public routes",
+      },
+    ],
+  });
+
+  assert.equal(parsed.routeMetadata[0]?.routePath, "/");
+});
+
+test("SEO_PACKAGE rejects duplicate route metadata paths", () => {
+  assert.throws(() =>
+    SeoPackageSchema.parse({
+      version: "v1",
+      sitemapXml: "<urlset></urlset>",
+      robotsTxt: "User-agent: *\nAllow: /",
+      routeMetadata: [
+        {
+          routePath: "/pricing",
+          title: "Pricing",
+          description: "Pricing page",
+          canonicalUrl: "https://acme.example/pricing",
+        },
+        {
+          routePath: "/pricing",
+          title: "Pricing duplicate",
+          description: "Duplicate route",
+          canonicalUrl: "https://acme.example/pricing",
+        },
+      ],
+      findings: [],
+    }),
+  );
+});
+
+test("CONTENT_PACKAGE v1 accepts audience, value props, CTAs, ads, and claims", () => {
+  const parsed = ContentPackageSchema.parse({
+    version: "v1",
+    audience: "Technical founders launching MVPs",
+    valuePropositions: [
+      "Ship a usable product quickly",
+      "Retain full source ownership",
+    ],
+    ctaVariants: [
+      {
+        id: "cta-primary",
+        headline: "Launch your MVP this week",
+        body: "Generate a full-stack baseline and iterate with confidence.",
+        ctaLabel: "Start building",
+      },
+    ],
+    adVariants: [
+      {
+        channel: "SEARCH",
+        headline: "AI MVP generator",
+        body: "From prompt to deployable app with source ownership.",
+        ctaLabel: "Try now",
+      },
+    ],
+    claimsRequiringEvidence: [
+      {
+        claim: "Cuts launch time by 60%.",
+        evidenceStatus: "REQUIRED",
+        notes: "Needs cohort benchmark evidence",
+      },
+    ],
+  });
+
+  assert.equal(parsed.ctaVariants[0]?.id, "cta-primary");
+});
+
+test("CONTENT_PACKAGE rejects duplicate CTA variant IDs", () => {
+  assert.throws(() =>
+    ContentPackageSchema.parse({
+      version: "v1",
+      audience: "Agencies",
+      valuePropositions: ["Deliver client portals faster"],
+      ctaVariants: [
+        {
+          id: "cta-1",
+          headline: "Variant one",
+          body: "Body one",
+          ctaLabel: "Try",
+        },
+        {
+          id: "cta-1",
+          headline: "Variant two",
+          body: "Body two",
+          ctaLabel: "Start",
+        },
+      ],
+      adVariants: [],
+      claimsRequiringEvidence: [],
+    }),
+  );
+});
+
+test("artifact.created payload requires typed v1 event fields", () => {
+  const payload = ArtifactCreatedEventPayloadV1Schema.parse({
+    version: "v1",
+    taskId: "00000000-0000-4000-8000-000000000120",
+    agent: "Sarah",
+    artifactType: "seo-package",
+  });
+  assert.equal(payload.agent, "Sarah");
+  assert.throws(() =>
+    ArtifactCreatedEventPayloadV1Schema.parse({
+      version: "v1",
+      taskId: "00000000-0000-4000-8000-000000000121",
+      agent: "Sarah",
+      artifactType: "unknown-artifact",
+    }),
+  );
+});
+
+test("validateRunEventPayload dispatches by event type", () => {
+  const artifact = validateRunEventPayload("artifact.created", {
+    version: "v1",
+    taskId: "00000000-0000-4000-8000-000000000122",
+    agent: "David",
+    artifactType: "david-output",
+    migrationArtifactId: "00000000-0000-4000-8000-000000000123",
+  });
+  assert.equal(
+    (artifact as { artifactType: string }).artifactType,
+    "david-output",
+  );
+
+  assert.throws(() =>
+    validateRunEventPayload("artifact.created", {
+      taskId: "00000000-0000-4000-8000-000000000124",
+      agent: "David",
+      artifactType: "david-output",
     }),
   );
 });

@@ -3,7 +3,7 @@ import type {
   FileContentInput,
   JsonValue,
 } from "@atoms/contracts";
-import { JsonValueSchema } from "@atoms/contracts";
+import { JsonValueSchema, RunEventTypeSchema } from "@atoms/contracts";
 import { Prisma, type AgentRun, type PrismaClient, type RunEvent } from "@atoms/db";
 
 import type {
@@ -456,7 +456,7 @@ function toRunEventRecord(record: RunEvent): RunEventRecord {
   return {
     runId: record.runId,
     sequence: record.sequence,
-    eventType: record.eventType,
+    eventType: RunEventTypeSchema.parse(record.eventType),
     payload: JsonValueSchema.parse(record.payload),
     createdAt: record.createdAt,
   };

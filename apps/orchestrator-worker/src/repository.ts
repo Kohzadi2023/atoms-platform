@@ -6,6 +6,7 @@ import {
   type JsonValue,
   type RunEventType,
   type RunJob,
+  validateRunEventPayload,
 } from "@atoms/contracts";
 import {
   Prisma,
@@ -352,6 +353,7 @@ export class PrismaWorkerRepository
           attempt: task.attempt,
         });
         await appendEvent(transaction, input.runId, "artifact.created", {
+          version: "v1",
           taskId: task.id,
           agent: task.agentName,
           artifactType: `${task.agentName.toLowerCase()}-output`,
@@ -767,6 +769,9 @@ async function appendEvent(
   eventType: RunEventType,
   payload: JsonValue,
 ): Promise<void> {
+  const normalizedPayload = JsonValueSchema.parse(
+    validateRunEventPayload(eventType, payload),
+  );
   const run = await transaction.agentRun.update({
     where: { id: runId },
     data: { eventSequence: { increment: 1 } },
@@ -777,7 +782,7 @@ async function appendEvent(
       runId,
       sequence: run.eventSequence,
       eventType,
-      payload: toPrismaJson(payload),
+      payload: toPrismaJson(normalizedPayload),
     },
   });
 }

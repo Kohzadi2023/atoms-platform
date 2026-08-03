@@ -111,6 +111,10 @@ export const RunActionSchema = z.enum([
 
 export type RunAction = z.infer<typeof RunActionSchema>;
 
+export const ApprovalScopeSchema = z.enum(["plan", "content"]);
+
+export type ApprovalScope = z.infer<typeof ApprovalScopeSchema>;
+
 export const RunJobCommandSchema = z.enum([
   "start",
   "approve",
@@ -129,6 +133,7 @@ export const RunJobSchema = z
     command: RunJobCommandSchema,
     controlVersion: z.number().int().nonnegative(),
     reason: z.string().trim().min(1).max(2_000).optional(),
+    approvalScope: ApprovalScopeSchema.optional(),
   })
   .strict();
 
@@ -140,6 +145,25 @@ export const RunActionInputSchema = z
     expectedStatus: AgentRunStatusSchema.optional(),
     expectedControlVersion: z.number().int().nonnegative().optional(),
     reason: z.string().trim().min(1).max(2_000).optional(),
+    approvalScope: ApprovalScopeSchema.optional(),
+  })
+  .superRefine((value, context) => {
+    if (value.action === "approve") {
+      if (value.approvalScope !== undefined) return;
+      context.addIssue({
+        code: z.ZodIssueCode.custom,
+        message: "approvalScope is required for approve actions",
+        path: ["approvalScope"],
+      });
+      return;
+    }
+
+    if (value.approvalScope === undefined) return;
+    context.addIssue({
+      code: z.ZodIssueCode.custom,
+      message: "approvalScope is only valid when action is approve",
+      path: ["approvalScope"],
+    });
   })
   .strict();
 

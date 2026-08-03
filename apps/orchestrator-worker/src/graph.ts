@@ -8,6 +8,7 @@ import {
 import {
   JsonValueSchema,
   type JsonValue,
+  type ApprovalScope,
   type RunJobCommand,
 } from "@atoms/contracts";
 import {
@@ -32,6 +33,10 @@ const RunState = Annotation.Root({
   projectId: Annotation<string>,
   prompt: Annotation<string>,
   command: Annotation<RunJobCommand>,
+  approvalScope: Annotation<ApprovalScope | undefined>({
+    reducer: (_current, update) => update,
+    default: () => undefined,
+  }),
   controlVersion: Annotation<number>,
   approvalBypassConsumed: Annotation<boolean>({
     reducer: (_current, update) => update,
@@ -195,7 +200,11 @@ export function buildRunGraph(options: BuildRunGraphOptions) {
     const mike = AgentOutputSchemas.Mike.parse(state.outputs.Mike);
     const planApprovalAlreadyConsumed = state.outputs.Alex !== undefined;
     if (!mike.requiresApproval || planApprovalAlreadyConsumed) return {};
-    if (state.command === "approve" && !state.approvalBypassConsumed) {
+    if (
+      state.command === "approve" &&
+      state.approvalScope === "plan" &&
+      !state.approvalBypassConsumed
+    ) {
       return { approvalBypassConsumed: true };
     }
 
@@ -219,7 +228,11 @@ export function buildRunGraph(options: BuildRunGraphOptions) {
       adrian.contentPackage.ctaVariants.length > 0 ||
       adrian.contentPackage.adVariants.length > 0;
     if (!hasCopyVariants) return {};
-    if (state.command === "approve" && !state.approvalBypassConsumed) {
+    if (
+      state.command === "approve" &&
+      state.approvalScope === "content" &&
+      !state.approvalBypassConsumed
+    ) {
       return { approvalBypassConsumed: true };
     }
 

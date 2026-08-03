@@ -745,6 +745,31 @@ test("run action matrix supports approve, cancel, and retry transitions", async 
       url: `/v1/runs/${RUN_ID}/actions`,
       payload: { action: "pause", expectedControlVersion: 0 },
     });
+    const invalidApprove = await app.inject({
+      method: "POST",
+      url: `/v1/runs/${RUN_ID}/actions`,
+      payload: {
+        action: "approve",
+        expectedStatus: "PAUSED",
+        expectedControlVersion: 1,
+      },
+    });
+    assert.equal(invalidApprove.statusCode, 400);
+    assert.equal(invalidApprove.json().error.code, "VALIDATION_ERROR");
+
+    const invalidResumeScope = await app.inject({
+      method: "POST",
+      url: `/v1/runs/${RUN_ID}/actions`,
+      payload: {
+        action: "resume",
+        expectedStatus: "PAUSED",
+        expectedControlVersion: 1,
+        approvalScope: "plan",
+      },
+    });
+    assert.equal(invalidResumeScope.statusCode, 400);
+    assert.equal(invalidResumeScope.json().error.code, "VALIDATION_ERROR");
+
     const approved = await app.inject({
       method: "POST",
       url: `/v1/runs/${RUN_ID}/actions`,
@@ -753,6 +778,7 @@ test("run action matrix supports approve, cancel, and retry transitions", async 
         expectedStatus: "PAUSED",
         expectedControlVersion: 1,
         reason: "PRD approved",
+        approvalScope: "plan",
       },
     });
     assert.equal(approved.statusCode, 200);
@@ -790,6 +816,7 @@ test("run action matrix supports approve, cancel, and retry transitions", async 
         command: "approve",
         controlVersion: 2,
         reason: "PRD approved",
+        approvalScope: "plan",
       },
       { runId: RUN_ID, command: "retry", controlVersion: 4 },
     ]);

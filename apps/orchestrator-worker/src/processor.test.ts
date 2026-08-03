@@ -493,8 +493,11 @@ function startJob(): RunJob {
   return { runId: RUN_ID, command: "start", controlVersion: 0 };
 }
 
-function approveJob(controlVersion: number): RunJob {
-  return { runId: RUN_ID, command: "approve", controlVersion };
+function approveJob(
+  controlVersion: number,
+  approvalScope: "plan" | "content",
+): RunJob {
+  return { runId: RUN_ID, command: "approve", controlVersion, approvalScope };
 }
 
 function processor(repository: MemoryRepository, agents: AgentRuntime): RunProcessor {
@@ -526,7 +529,7 @@ test("worker executes the full Phase 4 chain once and commits ordered events", a
   );
   const approvedVersion = repository.approve();
   assert.deepEqual(
-    await runProcessor.process(approveJob(approvedVersion), {
+    await runProcessor.process(approveJob(approvedVersion, "content"), {
       attempt: 1,
       maxAttempts: 3,
     }),
@@ -624,7 +627,7 @@ test("worker loads clean references once and sends them only to Emma", async () 
   );
   const approvedVersion = repository.approve();
   assert.deepEqual(
-    await runProcessor.process(approveJob(approvedVersion), {
+    await runProcessor.process(approveJob(approvedVersion, "content"), {
       attempt: 1,
       maxAttempts: 3,
     }),
@@ -671,7 +674,7 @@ test("worker runs validation after Phase 4 agents and before completing the dura
   );
   const approvedVersion = repository.approve();
   assert.deepEqual(
-    await runProcessor.process(approveJob(approvedVersion), {
+    await runProcessor.process(approveJob(approvedVersion, "content"), {
       attempt: 2,
       maxAttempts: 3,
     }),
@@ -708,7 +711,7 @@ test("worker revokes a published preview if completion loses the control-version
   );
   const approvedVersion = repository.approve();
   assert.deepEqual(
-    await runProcessor.process(approveJob(approvedVersion), {
+    await runProcessor.process(approveJob(approvedVersion, "content"), {
       attempt: 1,
       maxAttempts: 3,
     }),
@@ -731,7 +734,12 @@ test("plan approval and content approval require two explicit approvals", async 
 
   assert.deepEqual(
     await runProcessor.process(
-      { runId: RUN_ID, command: "approve", controlVersion: approvedVersion },
+      {
+        runId: RUN_ID,
+        command: "approve",
+        controlVersion: approvedVersion,
+        approvalScope: "plan",
+      },
       { attempt: 1, maxAttempts: 3 },
     ),
     { outcome: "stopped", status: "PAUSED" },
@@ -744,6 +752,7 @@ test("plan approval and content approval require two explicit approvals", async 
         runId: RUN_ID,
         command: "approve",
         controlVersion: contentApprovalVersion,
+        approvalScope: "content",
       },
       { attempt: 1, maxAttempts: 3 },
     ),
@@ -772,6 +781,40 @@ test("plan approval and content approval require two explicit approvals", async 
   ]);
 });
 
+test("content approval is not bypassed when approve scope is plan", async () => {
+  const repository = new MemoryRepository();
+  const agents = new ScriptedAgentRuntime(outputs());
+  const runProcessor = processor(repository, agents);
+
+  assert.deepEqual(
+    await runProcessor.process(startJob(), { attempt: 1, maxAttempts: 3 }),
+    { outcome: "stopped", status: "PAUSED" },
+  );
+
+  const wrongScopeVersion = repository.approve();
+  assert.deepEqual(
+    await runProcessor.process(
+      {
+        runId: RUN_ID,
+        command: "approve",
+        controlVersion: wrongScopeVersion,
+        approvalScope: "plan",
+      },
+      { attempt: 1, maxAttempts: 3 },
+    ),
+    { outcome: "stopped", status: "PAUSED" },
+  );
+
+  const correctScopeVersion = repository.approve();
+  assert.deepEqual(
+    await runProcessor.process(approveJob(correctScopeVersion, "content"), {
+      attempt: 1,
+      maxAttempts: 3,
+    }),
+    { outcome: "completed" },
+  );
+});
+
 test("a retryable failure retries only the unfinished agent task", async () => {
   const repository = new MemoryRepository();
   const agents = new ScriptedAgentRuntime(outputs());
@@ -790,7 +833,7 @@ test("a retryable failure retries only the unfinished agent task", async () => {
   );
   const approvedVersion = repository.approve();
   assert.deepEqual(
-    await runProcessor.process(approveJob(approvedVersion), {
+    await runProcessor.process(approveJob(approvedVersion, "content"), {
       attempt: 2,
       maxAttempts: 3,
     }),

@@ -64,6 +64,33 @@ test("RunActionInput constrains commands and concurrency tokens", () => {
       expectedControlVersion: 3,
     },
   );
+  assert.deepEqual(
+    RunActionInputSchema.parse({
+      action: "approve",
+      expectedStatus: "PAUSED",
+      expectedControlVersion: 4,
+      approvalScope: "content",
+    }),
+    {
+      action: "approve",
+      expectedStatus: "PAUSED",
+      expectedControlVersion: 4,
+      approvalScope: "content",
+    },
+  );
+  assert.throws(() =>
+    RunActionInputSchema.parse({
+      action: "approve",
+      expectedStatus: "PAUSED",
+      expectedControlVersion: 4,
+    }),
+  );
+  assert.throws(() =>
+    RunActionInputSchema.parse({
+      action: "resume",
+      approvalScope: "plan",
+    }),
+  );
   assert.throws(() => RunActionInputSchema.parse({ action: "delete" }));
 });
 
@@ -170,15 +197,17 @@ test("RunJob defines the durable Control API to worker queue contract", () => {
   assert.deepEqual(
     RunJobSchema.parse({
       runId,
-      command: "resume",
+      command: "approve",
       controlVersion: 4,
       reason: "Continue after approval",
+      approvalScope: "plan",
     }),
     {
       runId,
-      command: "resume",
+      command: "approve",
       controlVersion: 4,
       reason: "Continue after approval",
+      approvalScope: "plan",
     },
   );
   assert.throws(() =>

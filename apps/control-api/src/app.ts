@@ -430,6 +430,9 @@ export async function buildControlApi(
             ...(request.body.reason === undefined
               ? {}
               : { reason: request.body.reason }),
+            ...(request.body.approvalScope === undefined
+              ? {}
+              : { approvalScope: request.body.approvalScope }),
           });
         } catch (error) {
           await options.repository.markRunFailed(

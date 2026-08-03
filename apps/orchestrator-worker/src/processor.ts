@@ -76,6 +76,7 @@ export class RunProcessor {
           projectId: claim.run.projectId,
           prompt: claim.run.prompt,
           command: job.command,
+          approvalScope: job.approvalScope,
           controlVersion: claim.run.controlVersion,
           approvalBypassConsumed: false,
           outputs: {},

@@ -147,10 +147,19 @@ multi-approval edge case:
 
 Implemented guardrail:
 
-- Approval bypass is now consumed once per run invocation.
+- Approval bypass is now consumed once per run invocation and only when
+  `approvalScope` matches the active approval gate.
 - Plan approval is considered already satisfied after Alex output exists.
 - Runs that require both plan and content approvals now pause twice and require two
   explicit approvals.
+
+API/queue contract hardening:
+
+- `POST /v1/runs/{runId}/actions` now requires `approvalScope` when
+  `action=approve`.
+- `approvalScope` is rejected for non-approve actions.
+- Worker jobs carry `approvalScope` so graph bypass applies only to `plan` or
+  `content` as requested.
 
 Verification:
 

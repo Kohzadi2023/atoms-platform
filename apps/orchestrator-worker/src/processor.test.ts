@@ -171,8 +171,10 @@ class MemoryRepository implements WorkerRepository {
       ordinal: task.ordinal,
     });
     this.append("artifact.created", {
+      version: "v1",
       taskId: task.id,
       agent: task.agentName,
+      artifactType: `${task.agentName.toLowerCase()}-output`,
     });
     if (input.generatedFiles !== undefined) {
       this.append("code_generated", {
@@ -450,6 +452,28 @@ test("worker executes Mike, Emma, Bob, Alex, and David once and commits ordered 
   assert.deepEqual(agents.calls, ["Mike", "Emma", "Bob", "Alex", "David"]);
   assert.equal(repository.run.status, "COMPLETED");
   assert.equal(repository.latestFileForTest("app/page.tsx")?.version, 1);
+  const artifactEvents = repository.events.filter(
+    (event) => event.eventType === "artifact.created",
+  );
+  assert.equal(artifactEvents.length, 5);
+  const firstArtifactPayload = artifactEvents[0]?.payload;
+  const lastArtifactPayload = artifactEvents[4]?.payload;
+  assert.equal(typeof firstArtifactPayload, "object");
+  assert.equal(firstArtifactPayload === null, false);
+  assert.equal(typeof lastArtifactPayload, "object");
+  assert.equal(lastArtifactPayload === null, false);
+  assert.equal(
+    (firstArtifactPayload as { readonly version: string }).version,
+    "v1",
+  );
+  assert.equal(
+    (firstArtifactPayload as { readonly artifactType: string }).artifactType,
+    "mike-output",
+  );
+  assert.equal(
+    (lastArtifactPayload as { readonly artifactType: string }).artifactType,
+    "david-output",
+  );
   assert.deepEqual(
     repository.events.map((event) => event.sequence),
     repository.events.map((_event, index) => index + 1),

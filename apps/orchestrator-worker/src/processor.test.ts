@@ -176,6 +176,22 @@ class MemoryRepository implements WorkerRepository {
       agent: task.agentName,
       artifactType: `${task.agentName.toLowerCase()}-output`,
     });
+    if (task.agentName === "Sarah") {
+      this.append("artifact.created", {
+        version: "v1",
+        taskId: task.id,
+        agent: task.agentName,
+        artifactType: "seo-package",
+      });
+    }
+    if (task.agentName === "Adrian") {
+      this.append("artifact.created", {
+        version: "v1",
+        taskId: task.id,
+        agent: task.agentName,
+        artifactType: "content-package",
+      });
+    }
     if (input.generatedFiles !== undefined) {
       this.append("code_generated", {
         taskId: task.id,
@@ -424,6 +440,41 @@ function outputs(options: {
       },
       destructiveChanges: [],
     },
+    Sarah: {
+      summary: "Prepared route metadata and deterministic SEO findings.",
+      seoPackage: {
+        version: "v1",
+        sitemapXml: "<urlset></urlset>",
+        robotsTxt: "User-agent: *\nAllow: /\n",
+        routeMetadata: [
+          {
+            routePath: "/",
+            title: "Customer Portal",
+            description: "Secure self-service dashboard for customers.",
+            canonicalUrl: null,
+          },
+        ],
+        findings: [],
+      },
+    },
+    Adrian: {
+      summary: "Generated launch copy variants aligned to the approved audience.",
+      contentPackage: {
+        version: "v1",
+        audience: "Small business customers",
+        valuePropositions: ["Self-service account access in minutes"],
+        ctaVariants: [
+          {
+            id: "cta-primary",
+            headline: "Launch your secure portal",
+            body: "Give customers a fast way to manage their account online.",
+            ctaLabel: "Start now",
+          },
+        ],
+        adVariants: [],
+        claimsRequiringEvidence: [],
+      },
+    },
   };
 }
 
@@ -440,7 +491,7 @@ function processor(repository: MemoryRepository, agents: AgentRuntime): RunProce
   });
 }
 
-test("worker executes Mike, Emma, Bob, Alex, and David once and commits ordered events", async () => {
+test("worker executes the full Phase 4 chain once and commits ordered events", async () => {
   const repository = new MemoryRepository();
   const agents = new ScriptedAgentRuntime(outputs());
   const runProcessor = processor(repository, agents);
@@ -449,15 +500,23 @@ test("worker executes Mike, Emma, Bob, Alex, and David once and commits ordered 
     await runProcessor.process(startJob(), { attempt: 1, maxAttempts: 3 }),
     { outcome: "completed" },
   );
-  assert.deepEqual(agents.calls, ["Mike", "Emma", "Bob", "Alex", "David"]);
+  assert.deepEqual(agents.calls, [
+    "Mike",
+    "Emma",
+    "Bob",
+    "Alex",
+    "David",
+    "Sarah",
+    "Adrian",
+  ]);
   assert.equal(repository.run.status, "COMPLETED");
   assert.equal(repository.latestFileForTest("app/page.tsx")?.version, 1);
   const artifactEvents = repository.events.filter(
     (event) => event.eventType === "artifact.created",
   );
-  assert.equal(artifactEvents.length, 5);
+  assert.equal(artifactEvents.length, 9);
   const firstArtifactPayload = artifactEvents[0]?.payload;
-  const lastArtifactPayload = artifactEvents[4]?.payload;
+  const lastArtifactPayload = artifactEvents[8]?.payload;
   assert.equal(typeof firstArtifactPayload, "object");
   assert.equal(firstArtifactPayload === null, false);
   assert.equal(typeof lastArtifactPayload, "object");
@@ -471,8 +530,14 @@ test("worker executes Mike, Emma, Bob, Alex, and David once and commits ordered 
     "mike-output",
   );
   assert.equal(
+    (
+      artifactEvents[7]?.payload as { readonly artifactType: string }
+    ).artifactType,
+    "adrian-output",
+  );
+  assert.equal(
     (lastArtifactPayload as { readonly artifactType: string }).artifactType,
-    "david-output",
+    "content-package",
   );
   assert.deepEqual(
     repository.events.map((event) => event.sequence),
@@ -483,7 +548,15 @@ test("worker executes Mike, Emma, Bob, Alex, and David once and commits ordered 
     await runProcessor.process(startJob(), { attempt: 1, maxAttempts: 3 }),
     { outcome: "skipped", reason: "stale" },
   );
-  assert.deepEqual(agents.calls, ["Mike", "Emma", "Bob", "Alex", "David"]);
+  assert.deepEqual(agents.calls, [
+    "Mike",
+    "Emma",
+    "Bob",
+    "Alex",
+    "David",
+    "Sarah",
+    "Adrian",
+  ]);
 });
 
 test("worker loads clean references once and sends them only to Emma", async () => {
@@ -531,7 +604,7 @@ test("worker loads clean references once and sends them only to Emma", async () 
   );
 });
 
-test("worker runs validation after David and before completing the durable run", async () => {
+test("worker runs validation after Phase 4 agents and before completing the durable run", async () => {
   const repository = new MemoryRepository();
   const agents = new ScriptedAgentRuntime(outputs());
   const validations: RunValidationInput[] = [];
@@ -539,6 +612,8 @@ test("worker runs validation after David and before completing the durable run",
     validate: async (input) => {
       assert.equal(repository.run.status, "RUNNING");
       assert.equal(repository.tasks.get(5)?.status, "COMPLETED");
+      assert.equal(repository.tasks.get(6)?.status, "COMPLETED");
+      assert.equal(repository.tasks.get(7)?.status, "COMPLETED");
       validations.push(input);
     },
   };
@@ -605,7 +680,15 @@ test("plan approval pauses after Bob and resumes without repeating completed age
     ),
     { outcome: "completed" },
   );
-  assert.deepEqual(agents.calls, ["Mike", "Emma", "Bob", "Alex", "David"]);
+  assert.deepEqual(agents.calls, [
+    "Mike",
+    "Emma",
+    "Bob",
+    "Alex",
+    "David",
+    "Sarah",
+    "Adrian",
+  ]);
 });
 
 test("a retryable failure retries only the unfinished agent task", async () => {
@@ -631,6 +714,8 @@ test("a retryable failure retries only the unfinished agent task", async () => {
     "Alex",
     "Alex",
     "David",
+    "Sarah",
+    "Adrian",
   ]);
 });
 

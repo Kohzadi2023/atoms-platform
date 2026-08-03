@@ -361,6 +361,22 @@ export class PrismaWorkerRepository
             ? {}
             : { migrationArtifactId }),
         });
+        if (task.agentName === "Sarah") {
+          await appendEvent(transaction, input.runId, "artifact.created", {
+            version: "v1",
+            taskId: task.id,
+            agent: task.agentName,
+            artifactType: "seo-package",
+          });
+        }
+        if (task.agentName === "Adrian") {
+          await appendEvent(transaction, input.runId, "artifact.created", {
+            version: "v1",
+            taskId: task.id,
+            agent: task.agentName,
+            artifactType: "content-package",
+          });
+        }
         if (input.generatedFiles !== undefined) {
           await appendEvent(transaction, input.runId, "code_generated", {
             taskId: task.id,

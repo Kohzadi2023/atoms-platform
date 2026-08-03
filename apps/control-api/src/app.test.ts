@@ -12,6 +12,7 @@ import { buildControlApi } from "./app.js";
 import type {
   ProjectFileRecord,
   ProjectRecord,
+  RunArtifactRecord,
   RunEventRecord,
   RunJob,
   RunRecord,
@@ -211,6 +212,20 @@ class MemoryRepository implements ControlRepository {
       .filter((event) => event.runId === runId && event.sequence > sequence)
       .sort((left, right) => left.sequence - right.sequence)
       .slice(0, limit);
+  }
+
+  async listRunArtifacts(runId: string): Promise<readonly RunArtifactRecord[]> {
+    return this.events
+      .filter(
+        (event) =>
+          event.runId === runId && event.eventType === "artifact.created",
+      )
+      .sort((left, right) => left.sequence - right.sequence)
+      .map((event) => ({
+        sequence: event.sequence,
+        createdAt: event.createdAt,
+        payload: event.payload as RunArtifactRecord["payload"],
+      }));
   }
 
   async listProjectFiles(
@@ -562,19 +577,32 @@ test("SSE replay includes typed artifact.created payloads", async () => {
   const { app, repository } = await fixture();
   try {
     await createProjectAndRun(repository);
-    repository.events.push({
-      runId: RUN_ID,
-      sequence: 1,
-      eventType: "artifact.created",
-      payload: {
-        version: "v1",
-        taskId: "00000000-0000-4000-8000-000000000010",
-        agent: "David",
-        artifactType: "david-output",
-        migrationArtifactId: "00000000-0000-4000-8000-000000000011",
+    repository.events.push(
+      {
+        runId: RUN_ID,
+        sequence: 1,
+        eventType: "artifact.created",
+        payload: {
+          version: "v1",
+          taskId: "00000000-0000-4000-8000-000000000010",
+          agent: "Sarah",
+          artifactType: "seo-package",
+        },
+        createdAt: new Date(FIXED_NOW.getTime() + 1),
       },
-      createdAt: new Date(FIXED_NOW.getTime() + 1),
-    });
+      {
+        runId: RUN_ID,
+        sequence: 2,
+        eventType: "artifact.created",
+        payload: {
+          version: "v1",
+          taskId: "00000000-0000-4000-8000-000000000011",
+          agent: "Adrian",
+          artifactType: "content-package",
+        },
+        createdAt: new Date(FIXED_NOW.getTime() + 2),
+      },
+    );
     repository.setRunStatus(RUN_ID, "COMPLETED");
 
     const response = await app.inject({
@@ -584,8 +612,76 @@ test("SSE replay includes typed artifact.created payloads", async () => {
 
     assert.equal(response.statusCode, 200);
     assert.match(response.body, /event: artifact\.created/);
-    assert.match(response.body, /"artifactType":"david-output"/);
+    assert.match(response.body, /"artifactType":"seo-package"/);
+    assert.match(response.body, /"artifactType":"content-package"/);
     assert.match(response.body, /"version":"v1"/);
+  } finally {
+    await app.close();
+  }
+});
+
+test("GET /v1/runs/:runId/artifacts returns ordered typed artifact envelopes", async () => {
+  const { app, repository } = await fixture();
+  try {
+    await createProjectAndRun(repository);
+    repository.events.push(
+      {
+        runId: RUN_ID,
+        sequence: 3,
+        eventType: "artifact.created",
+        payload: {
+          version: "v1",
+          taskId: "00000000-0000-4000-8000-000000000030",
+          agent: "David",
+          artifactType: "david-output",
+          migrationArtifactId: "00000000-0000-4000-8000-000000000099",
+        },
+        createdAt: new Date(FIXED_NOW.getTime() + 30),
+      },
+      {
+        runId: RUN_ID,
+        sequence: 4,
+        eventType: "artifact.created",
+        payload: {
+          version: "v1",
+          taskId: "00000000-0000-4000-8000-000000000031",
+          agent: "Sarah",
+          artifactType: "seo-package",
+        },
+        createdAt: new Date(FIXED_NOW.getTime() + 40),
+      },
+      {
+        runId: RUN_ID,
+        sequence: 5,
+        eventType: "artifact.created",
+        payload: {
+          version: "v1",
+          taskId: "00000000-0000-4000-8000-000000000032",
+          agent: "Adrian",
+          artifactType: "content-package",
+        },
+        createdAt: new Date(FIXED_NOW.getTime() + 50),
+      },
+      event(6, "task.completed"),
+    );
+
+    const response = await app.inject({
+      method: "GET",
+      url: `/v1/runs/${RUN_ID}/artifacts`,
+    });
+
+    assert.equal(response.statusCode, 200);
+    assert.equal(response.json().items.length, 3);
+    assert.equal(response.json().items[0].sequence, 3);
+    assert.equal(response.json().items[1].payload.artifactType, "seo-package");
+    assert.equal(
+      response.json().items[2].payload.artifactType,
+      "content-package",
+    );
+    assert.equal(
+      response.json().items[0].payload.migrationArtifactId,
+      "00000000-0000-4000-8000-000000000099",
+    );
   } finally {
     await app.close();
   }

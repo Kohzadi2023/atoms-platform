@@ -1,13 +1,20 @@
 import type {
+  ArtifactCreatedEventPayloadV1,
   CreateProjectInput,
   FileContentInput,
   JsonValue,
 } from "@atoms/contracts";
-import { JsonValueSchema, RunEventTypeSchema } from "@atoms/contracts";
+import {
+  ArtifactCreatedEventPayloadV1Schema,
+  JsonValueSchema,
+  RunEventTypeSchema,
+  validateRunEventPayload,
+} from "@atoms/contracts";
 import { Prisma, type AgentRun, type PrismaClient, type RunEvent } from "@atoms/db";
 
 import type {
   ProjectFileRecord,
+  RunArtifactRecord,
   ProjectRecord,
   RunEventRecord,
   RunRecord,
@@ -69,6 +76,7 @@ export interface ControlRepository {
     sequence: number,
     limit: number,
   ): Promise<readonly RunEventRecord[]>;
+  listRunArtifacts(runId: string): Promise<readonly RunArtifactRecord[]>;
   listProjectFiles(
     projectId: string,
   ): Promise<readonly ProjectFileRecord[] | null>;
@@ -333,6 +341,14 @@ export class PrismaControlRepository implements ControlRepository {
     return events.map(toRunEventRecord);
   }
 
+  async listRunArtifacts(runId: string): Promise<readonly RunArtifactRecord[]> {
+    const events = await this.#prisma.runEvent.findMany({
+      where: { runId, eventType: "artifact.created" },
+      orderBy: { sequence: "asc" },
+    });
+    return events.map(toRunArtifactRecord);
+  }
+
   async listProjectFiles(
     projectId: string,
   ): Promise<readonly ProjectFileRecord[] | null> {
@@ -458,6 +474,20 @@ function toRunEventRecord(record: RunEvent): RunEventRecord {
     sequence: record.sequence,
     eventType: RunEventTypeSchema.parse(record.eventType),
     payload: JsonValueSchema.parse(record.payload),
+    createdAt: record.createdAt,
+  };
+}
+
+function toRunArtifactRecord(record: RunEvent): RunArtifactRecord {
+  const payload = ArtifactCreatedEventPayloadV1Schema.parse(
+    validateRunEventPayload(
+      "artifact.created",
+      JsonValueSchema.parse(record.payload),
+    ),
+  );
+  return {
+    sequence: record.sequence,
+    payload: payload as ArtifactCreatedEventPayloadV1,
     createdAt: record.createdAt,
   };
 }

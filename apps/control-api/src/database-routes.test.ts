@@ -98,6 +98,9 @@ class NoopControlRepository implements ControlRepository {
   async listRunEventsAfter(): Promise<[]> {
     return [];
   }
+  async listRunArtifacts(): Promise<[]> {
+    return [];
+  }
   async listProjectFiles(): Promise<null> {
     return null;
   }

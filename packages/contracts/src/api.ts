@@ -1,6 +1,7 @@
 import { z } from "zod";
 
 import { JsonValueSchema } from "./json.js";
+import { ArtifactCreatedEventPayloadV1Schema } from "./events.js";
 import { MAX_PROJECT_ATTACHMENTS } from "./attachments.js";
 
 const IsoTimestampSchema = z.string().datetime({ offset: true });
@@ -192,4 +193,24 @@ export const ProjectFileListResponseSchema = z
 
 export type ProjectFileListResponse = z.infer<
   typeof ProjectFileListResponseSchema
+>;
+
+export const RunArtifactResponseSchema = z
+  .object({
+    sequence: z.number().int().positive(),
+    occurredAt: IsoTimestampSchema,
+    payload: ArtifactCreatedEventPayloadV1Schema,
+  })
+  .strict();
+
+export type RunArtifactResponse = z.infer<typeof RunArtifactResponseSchema>;
+
+export const RunArtifactListResponseSchema = z
+  .object({
+    items: z.array(RunArtifactResponseSchema).max(10_000),
+  })
+  .strict();
+
+export type RunArtifactListResponse = z.infer<
+  typeof RunArtifactListResponseSchema
 >;

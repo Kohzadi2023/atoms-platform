@@ -65,8 +65,9 @@ schema at `packages/db/prisma/schema.prisma`.
   ClamAV status before exposing an immutable clean snapshot to a run.
 - Only Emma receives clean file/image inputs. Bob, Alex, and David consume the
   structured PRD, avoiding repeated file-token cost across the graph.
-- If Mike requires plan approval, the worker pauses after Bob. An `approve`
-  action resumes at Alex without repeating completed model calls.
+- If Mike requires plan approval, the worker pauses after Bob. Approvals are
+  explicit and scoped: `approve` must include `approvalScope` (`plan` or
+  `content`) so one approval cannot silently bypass another gate.
 - Alex writes files with expected-version compare-and-swap. A manual edit wins
   and produces a safe run failure instead of last-write-wins data loss.
 - David writes forward-only migration/seed files with the same atomic

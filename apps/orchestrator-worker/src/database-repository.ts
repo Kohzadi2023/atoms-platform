@@ -2,6 +2,7 @@ import type { AgentProjectFile } from "@atoms/agents";
 import {
   DatabaseInstanceStatusSchema,
   JsonValueSchema,
+  validateRunEventPayload,
   type DatabaseOperationJob,
   type JsonValue,
 } from "@atoms/contracts";
@@ -405,6 +406,16 @@ async function appendStatusEvent(
     | "DELETED",
   message: string,
 ): Promise<void> {
+  const payload = validateRunEventPayload("integration.status_changed", {
+    version: "v1",
+    integration: "generated-database",
+    databaseInstanceId: database.id,
+    operationId: database.operationId,
+    operationVersion: database.operationVersion,
+    provider: "SUPABASE",
+    status,
+    message,
+  });
   const run = await transaction.agentRun.update({
     where: { id: database.migrationArtifact.sourceRunId },
     data: { eventSequence: { increment: 1 } },
@@ -415,16 +426,7 @@ async function appendStatusEvent(
       runId: database.migrationArtifact.sourceRunId,
       sequence: run.eventSequence,
       eventType: "integration.status_changed",
-      payload: {
-        version: "v1",
-        integration: "generated-database",
-        databaseInstanceId: database.id,
-        operationId: database.operationId,
-        operationVersion: database.operationVersion,
-        provider: "SUPABASE",
-        status,
-        message,
-      },
+      payload: toPrismaJson(payload),
     },
   });
 }

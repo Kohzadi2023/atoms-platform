@@ -1,0 +1,29 @@
+{
+  "schema": "phase3-staging-preflight.v1",
+  "mode": "durability",
+  "passed": true,
+  "checkedAt": "2026-08-03T22:00:02.447Z",
+  "checks": [
+    {
+      "ok": true,
+      "key": "RUN_PHASE3_DURABILITY_INTEGRATION_TESTS",
+      "reason": null
+    },
+    {
+      "ok": true,
+      "key": "PHASE3_INTEGRATION_DATABASE_CONFIRMATION",
+      "reason": null
+    },
+    {
+      "ok": true,
+      "key": "DATABASE_URL",
+      "reason": null
+    },
+    {
+      "ok": true,
+      "key": "REDIS_URL",
+      "reason": null
+    }
+  ],
+  "failures": []
+}

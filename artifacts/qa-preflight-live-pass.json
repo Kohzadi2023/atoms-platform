@@ -1,0 +1,104 @@
+{
+  "schema": "phase3-staging-preflight.v1",
+  "mode": "live-provider",
+  "passed": true,
+  "checkedAt": "2026-08-03T21:57:11.859Z",
+  "checks": [
+    {
+      "ok": true,
+      "key": "RUN_PHASE3_DURABILITY_INTEGRATION_TESTS",
+      "reason": null
+    },
+    {
+      "ok": true,
+      "key": "PHASE3_INTEGRATION_DATABASE_CONFIRMATION",
+      "reason": null
+    },
+    {
+      "ok": true,
+      "key": "DATABASE_URL",
+      "reason": null
+    },
+    {
+      "ok": true,
+      "key": "REDIS_URL",
+      "reason": null
+    },
+    {
+      "ok": true,
+      "key": "RUN_LIVE_PHASE3_STAGING",
+      "reason": null
+    },
+    {
+      "ok": true,
+      "key": "PHASE3_STAGING_DESTRUCTIVE_CONFIRMATION",
+      "reason": null
+    },
+    {
+      "ok": true,
+      "key": "PHASE3_INTEGRATION_DATABASE_CONFIRMATION",
+      "reason": null
+    },
+    {
+      "ok": true,
+      "key": "PHASE3_STAGING_CHANGE_TICKET",
+      "reason": null
+    },
+    {
+      "ok": true,
+      "key": "PHASE3_STAGING_MEASURED_COST_CAD",
+      "reason": null
+    },
+    {
+      "ok": true,
+      "key": "PHASE3_STAGING_EVIDENCE_PATH",
+      "reason": null
+    },
+    {
+      "ok": true,
+      "key": "DATABASE_URL",
+      "reason": null
+    },
+    {
+      "ok": true,
+      "key": "SUPABASE_ACCESS_TOKEN",
+      "reason": null
+    },
+    {
+      "ok": true,
+      "key": "SUPABASE_ORGANIZATION_SLUG",
+      "reason": null
+    },
+    {
+      "ok": true,
+      "key": "VAULT_ADDR",
+      "reason": null
+    },
+    {
+      "ok": true,
+      "key": "VAULT_TOKEN",
+      "reason": null
+    },
+    {
+      "ok": true,
+      "key": "E2B_API_KEY",
+      "reason": null
+    },
+    {
+      "ok": true,
+      "key": "PHASE3_STAGING_DATABASE_REGION",
+      "reason": null
+    },
+    {
+      "ok": true,
+      "key": "PHASE3_STAGING_MIN_OTHER_ORG_CONTROLS",
+      "reason": null
+    },
+    {
+      "ok": true,
+      "key": "PHASE3_STAGING_MIN_CUSTOMER_CONTROLS",
+      "reason": null
+    }
+  ],
+  "failures": []
+}

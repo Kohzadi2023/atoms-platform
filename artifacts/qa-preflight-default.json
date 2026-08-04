@@ -1,0 +1,50 @@
+{
+  "schema": "phase3-staging-preflight.v1",
+  "mode": "durability",
+  "passed": false,
+  "checkedAt": "2026-08-03T21:56:42.073Z",
+  "checks": [
+    {
+      "ok": false,
+      "key": "RUN_PHASE3_DURABILITY_INTEGRATION_TESTS",
+      "reason": "must equal \"true\""
+    },
+    {
+      "ok": false,
+      "key": "PHASE3_INTEGRATION_DATABASE_CONFIRMATION",
+      "reason": "must equal \"DEDICATED_EPHEMERAL_DATABASE\""
+    },
+    {
+      "ok": false,
+      "key": "DATABASE_URL",
+      "reason": "is required and must be non-empty"
+    },
+    {
+      "ok": false,
+      "key": "REDIS_URL",
+      "reason": "is required and must be non-empty"
+    }
+  ],
+  "failures": [
+    {
+      "ok": false,
+      "key": "RUN_PHASE3_DURABILITY_INTEGRATION_TESTS",
+      "reason": "must equal \"true\""
+    },
+    {
+      "ok": false,
+      "key": "PHASE3_INTEGRATION_DATABASE_CONFIRMATION",
+      "reason": "must equal \"DEDICATED_EPHEMERAL_DATABASE\""
+    },
+    {
+      "ok": false,
+      "key": "DATABASE_URL",
+      "reason": "is required and must be non-empty"
+    },
+    {
+      "ok": false,
+      "key": "REDIS_URL",
+      "reason": "is required and must be non-empty"
+    }
+  ]
+}

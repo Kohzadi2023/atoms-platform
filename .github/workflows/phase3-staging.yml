@@ -195,6 +195,40 @@ jobs:
           node-version: 24
           cache: pnpm
       - run: pnpm install --frozen-lockfile
+      - name: Start isolated ephemeral Vault
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          # This token protects only the disposable Vault process on this
+          # GitHub-hosted runner. It is generated per job, masked before use,
+          # and never persisted as a repository or environment secret.
+          vault_token="$(openssl rand -hex 32)"
+          echo "::add-mask::${vault_token}"
+          {
+            echo "VAULT_ADDR=http://127.0.0.1:8200"
+            echo "VAULT_TOKEN=${vault_token}"
+            echo "VAULT_KV_MOUNT=secret"
+          } >> "${GITHUB_ENV}"
+
+          docker run --detach --rm \
+            --name phase3-staging-vault \
+            --cap-add IPC_LOCK \
+            --publish 127.0.0.1:8200:8200 \
+            --env "VAULT_DEV_ROOT_TOKEN_ID=${vault_token}" \
+            --env "VAULT_DEV_LISTEN_ADDRESS=0.0.0.0:8200" \
+            hashicorp/vault:1.21.4@sha256:4e33b126a59c0c333b76fb4e894722462659a6bec7c48c9ee8cea56fccfd2569
+
+          for attempt in {1..30}; do
+            if curl --fail --silent --show-error \
+              http://127.0.0.1:8200/v1/sys/health > /dev/null; then
+              exit 0
+            fi
+            sleep 1
+          done
+
+          docker logs phase3-staging-vault
+          exit 1
       - name: Enforce live-provider preflight and write audit
         env:
           RUN_PHASE3_DURABILITY_INTEGRATION_TESTS: "true"
@@ -208,12 +242,10 @@ jobs:
           REDIS_URL: redis://localhost:6379
           SUPABASE_ACCESS_TOKEN: ${{ secrets.SUPABASE_ACCESS_TOKEN }}
           SUPABASE_ORGANIZATION_SLUG: ${{ vars.SUPABASE_ORGANIZATION_SLUG }}
-          VAULT_ADDR: ${{ secrets.VAULT_ADDR }}
-          VAULT_TOKEN: ${{ secrets.VAULT_TOKEN }}
           E2B_API_KEY: ${{ secrets.E2B_API_KEY }}
           PHASE3_STAGING_DATABASE_REGION: ${{ inputs.database_region }}
-          PHASE3_STAGING_MIN_OTHER_ORG_CONTROLS: ${{ vars.PHASE3_STAGING_MIN_OTHER_ORG_CONTROLS }}
-          PHASE3_STAGING_MIN_CUSTOMER_CONTROLS: ${{ vars.PHASE3_STAGING_MIN_CUSTOMER_CONTROLS }}
+          PHASE3_STAGING_MIN_OTHER_ORG_CONTROLS: ${{ vars.PHASE3_STAGING_MIN_OTHER_ORG_CONTROLS || '1' }}
+          PHASE3_STAGING_MIN_CUSTOMER_CONTROLS: ${{ vars.PHASE3_STAGING_MIN_CUSTOMER_CONTROLS || '1' }}
         run: pnpm staging:phase3:preflight:live:json
       - uses: actions/upload-artifact@v4
         if: always()
@@ -238,16 +270,13 @@ jobs:
           DATABASE_URL: postgresql://atoms:atoms@localhost:5432/atoms_provider_exit
           SUPABASE_ACCESS_TOKEN: ${{ secrets.SUPABASE_ACCESS_TOKEN }}
           SUPABASE_ORGANIZATION_SLUG: ${{ vars.SUPABASE_ORGANIZATION_SLUG }}
-          SUPABASE_MANAGEMENT_API_URL: ${{ vars.SUPABASE_MANAGEMENT_API_URL }}
-          VAULT_ADDR: ${{ secrets.VAULT_ADDR }}
-          VAULT_TOKEN: ${{ secrets.VAULT_TOKEN }}
-          VAULT_KV_MOUNT: ${{ vars.VAULT_KV_MOUNT }}
+          SUPABASE_MANAGEMENT_API_URL: ${{ vars.SUPABASE_MANAGEMENT_API_URL || 'https://api.supabase.com' }}
           VAULT_NAMESPACE: ${{ vars.VAULT_NAMESPACE }}
           E2B_API_KEY: ${{ secrets.E2B_API_KEY }}
           E2B_TEMPLATE: ${{ vars.E2B_TEMPLATE }}
           E2B_ALLOWED_HOSTS: registry.npmjs.org,binaries.prisma.sh
-          PHASE3_STAGING_MIN_OTHER_ORG_CONTROLS: ${{ vars.PHASE3_STAGING_MIN_OTHER_ORG_CONTROLS }}
-          PHASE3_STAGING_MIN_CUSTOMER_CONTROLS: ${{ vars.PHASE3_STAGING_MIN_CUSTOMER_CONTROLS }}
+          PHASE3_STAGING_MIN_OTHER_ORG_CONTROLS: ${{ vars.PHASE3_STAGING_MIN_OTHER_ORG_CONTROLS || '1' }}
+          PHASE3_STAGING_MIN_CUSTOMER_CONTROLS: ${{ vars.PHASE3_STAGING_MIN_CUSTOMER_CONTROLS || '1' }}
         run: pnpm staging:phase3:provider
       - uses: actions/upload-artifact@v4
         if: always()
@@ -256,3 +285,6 @@ jobs:
           path: artifacts/phase3-provider-evidence.json
           if-no-files-found: warn
           retention-days: 30
+      - name: Stop ephemeral Vault
+        if: always()
+        run: docker rm --force phase3-staging-vault 2> /dev/null || true

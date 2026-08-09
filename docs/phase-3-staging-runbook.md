@@ -120,15 +120,21 @@ disable self-approval. Configure only that environment with:
 | Kind | Name |
 | --- | --- |
 | Secret | `SUPABASE_ACCESS_TOKEN` |
-| Secret | `VAULT_ADDR` |
-| Secret | `VAULT_TOKEN` |
 | Secret | `E2B_API_KEY` |
 | Variable | `SUPABASE_ORGANIZATION_SLUG` |
-| Variable | `SUPABASE_MANAGEMENT_API_URL` |
-| Variable | `VAULT_KV_MOUNT` and optional `VAULT_NAMESPACE` |
+| Variable | optional `SUPABASE_MANAGEMENT_API_URL` |
+| Variable | optional `VAULT_NAMESPACE` |
 | Variable | optional `E2B_TEMPLATE` |
-| Variable | `PHASE3_STAGING_MIN_OTHER_ORG_CONTROLS` (default `1`) |
-| Variable | `PHASE3_STAGING_MIN_CUSTOMER_CONTROLS` (default `1`) |
+| Variable | optional `PHASE3_STAGING_MIN_OTHER_ORG_CONTROLS` (default `1`) |
+| Variable | optional `PHASE3_STAGING_MIN_CUSTOMER_CONTROLS` (default `1`) |
+
+The provider-exit job starts Vault `1.21.4` in dev mode on runner loopback,
+generates and masks a unique root token for that job, exports the resulting
+`VAULT_ADDR`, `VAULT_TOKEN`, and `VAULT_KV_MOUNT` through `GITHUB_ENV`, and
+removes the container in an `always()` cleanup step. This validates the Vault
+KV v2 adapter without storing static Vault credentials in GitHub. It is a CI
+smoke boundary only and does not replace a persistent, authenticated Vault
+deployment for production workloads.
 
 Before approval, prepare at least one visible project in another organization
 and one customer-named project in the staging organization. The provider exit

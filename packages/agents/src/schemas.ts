@@ -1,19 +1,12 @@
 import {
   ContentPackageSchema,
   ProjectFilePathSchema,
+  RunAgentNameSchema,
   SeoPackageSchema,
 } from "@atoms/contracts";
 import { z } from "zod";
 
-export const ActiveAgentNameSchema = z.enum([
-  "Mike",
-  "Emma",
-  "Bob",
-  "Alex",
-  "David",
-  "Sarah",
-  "Adrian",
-]);
+export const ActiveAgentNameSchema = RunAgentNameSchema;
 
 export type ActiveAgentName = z.infer<typeof ActiveAgentNameSchema>;
 

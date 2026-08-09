@@ -5,10 +5,9 @@ import type {
   JsonValue,
 } from "@atoms/contracts";
 import {
-  ArtifactCreatedEventPayloadV1Schema,
   JsonValueSchema,
   RunEventTypeSchema,
-  validateRunEventPayload,
+  normalizeArtifactCreatedEventPayload,
 } from "@atoms/contracts";
 import { Prisma, type AgentRun, type PrismaClient, type RunEvent } from "@atoms/db";
 
@@ -346,7 +345,32 @@ export class PrismaControlRepository implements ControlRepository {
       where: { runId, eventType: "artifact.created" },
       orderBy: { sequence: "asc" },
     });
-    return events.map(toRunArtifactRecord);
+    const normalized = events.map((event) => ({
+      event,
+      payload: normalizeArtifactCreatedEventPayload(
+        JsonValueSchema.parse(event.payload),
+      ),
+    }));
+    const taskIds = [...new Set(normalized.map(({ payload }) => payload.taskId))];
+    const tasks = await this.#prisma.agentTask.findMany({
+      where: { runId, id: { in: taskIds } },
+      select: { id: true, output: true },
+    });
+    const outputsByTaskId = new Map(
+      tasks.map((task) => [
+        task.id,
+        task.output === null ? null : JsonValueSchema.parse(task.output),
+      ]),
+    );
+    return normalized.map(({ event, payload }) => ({
+      sequence: event.sequence,
+      payload,
+      content: selectArtifactContent(
+        payload.artifactType,
+        outputsByTaskId.get(payload.taskId) ?? null,
+      ),
+      createdAt: event.createdAt,
+    }));
   }
 
   async listProjectFiles(
@@ -478,18 +502,26 @@ function toRunEventRecord(record: RunEvent): RunEventRecord {
   };
 }
 
-function toRunArtifactRecord(record: RunEvent): RunArtifactRecord {
-  const payload = ArtifactCreatedEventPayloadV1Schema.parse(
-    validateRunEventPayload(
-      "artifact.created",
-      JsonValueSchema.parse(record.payload),
-    ),
-  );
-  return {
-    sequence: record.sequence,
-    payload: payload as ArtifactCreatedEventPayloadV1,
-    createdAt: record.createdAt,
-  };
+function selectArtifactContent(
+  artifactType: ArtifactCreatedEventPayloadV1["artifactType"],
+  taskOutput: JsonValue | null,
+): JsonValue | null {
+  if (!isJsonObject(taskOutput)) {
+    return taskOutput;
+  }
+  if (artifactType === "seo-package") {
+    return taskOutput.seoPackage ?? null;
+  }
+  if (artifactType === "content-package") {
+    return taskOutput.contentPackage ?? null;
+  }
+  return taskOutput;
+}
+
+function isJsonObject(
+  value: JsonValue | null,
+): value is { readonly [key: string]: JsonValue } {
+  return value !== null && typeof value === "object" && !Array.isArray(value);
 }
 
 function toPrismaNullableJson(

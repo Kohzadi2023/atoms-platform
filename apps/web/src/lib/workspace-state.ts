@@ -1,14 +1,17 @@
 import {
   DatabaseStatusChangedEventPayloadV1Schema,
   PreviewUpdatedEventPayloadV1Schema,
+  RunAgentNameSchema,
   SandboxValidationProgressEventPayloadV1Schema,
+  normalizeApprovalRequiredEventPayload,
+  type ApprovalScope,
   type AgentRunStatus,
   type JsonValue,
   type RunAction,
   type RunEventEnvelope,
 } from "@atoms/contracts";
 
-export const AGENT_ORDER = ["Mike", "Emma", "Bob", "Alex", "David"] as const;
+export const AGENT_ORDER = RunAgentNameSchema.options;
 export type AgentName = (typeof AGENT_ORDER)[number];
 export type TaskStatus =
   | "idle"
@@ -54,6 +57,7 @@ export interface WorkspaceProjection {
   readonly tasks: Readonly<Record<AgentName, AgentTaskProjection>>;
   readonly activeAgent: AgentName | undefined;
   readonly approvalReason: string | undefined;
+  readonly approvalScope: ApprovalScope | undefined;
   readonly preview: PreviewProjection | undefined;
   readonly validations: readonly ValidationProjection[];
   readonly generatedPaths: readonly string[];
@@ -70,6 +74,7 @@ export function createWorkspaceProjection(): WorkspaceProjection {
     ) as Record<AgentName, AgentTaskProjection>,
     activeAgent: undefined,
     approvalReason: undefined,
+    approvalScope: undefined,
     preview: undefined,
     validations: [],
     generatedPaths: [],
@@ -160,9 +165,14 @@ export function reduceRunEvent(
 
   if (event.eventType === "approval.required" || event.eventType === "approval_required") {
     const agent = next.activeAgent;
+    const approval = readApproval(event.payload);
     next = {
       ...next,
-      approvalReason: readString(payload.reason) ?? "Mike requested plan approval.",
+      approvalReason:
+        approval?.reason ??
+        readString(payload.reason) ??
+        "Approval is required before the run can continue.",
+      approvalScope: approval?.scope,
       inferredRunStatus: "PAUSED",
       ...(agent === undefined
         ? {}
@@ -172,7 +182,15 @@ export function reduceRunEvent(
 
   if (event.eventType === "run.status_changed") {
     const status = readRunStatus(payload.to);
-    if (status !== undefined) next = { ...next, inferredRunStatus: status };
+    if (status !== undefined) {
+      next = {
+        ...next,
+        inferredRunStatus: status,
+        ...(status !== "PAUSED"
+          ? { approvalReason: undefined, approvalScope: undefined }
+          : {}),
+      };
+    }
   }
 
   if (event.eventType === "run.completed") {
@@ -181,6 +199,7 @@ export function reduceRunEvent(
       inferredRunStatus: "COMPLETED",
       activeAgent: undefined,
       approvalReason: undefined,
+      approvalScope: undefined,
     };
   }
 
@@ -189,6 +208,8 @@ export function reduceRunEvent(
       ...next,
       inferredRunStatus: "FAILED",
       activeAgent: undefined,
+      approvalReason: undefined,
+      approvalScope: undefined,
       error: readError(payload.error) ?? readString(payload.message) ?? "Run failed",
     };
   }
@@ -382,4 +403,12 @@ function readError(value: JsonValue | undefined): string | undefined {
     return undefined;
   }
   return typeof value.message === "string" ? value.message : undefined;
+}
+
+function readApproval(value: JsonValue) {
+  try {
+    return normalizeApprovalRequiredEventPayload(value);
+  } catch {
+    return undefined;
+  }
 }

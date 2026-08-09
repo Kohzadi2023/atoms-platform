@@ -52,6 +52,7 @@ export interface RunArtifactRecord {
   readonly sequence: number;
   readonly createdAt: Date;
   readonly payload: ArtifactCreatedEventPayloadV1;
+  readonly content: JsonValue | null;
 }
 
 export interface ProjectFileRecord {
@@ -139,5 +140,6 @@ export function toRunArtifactResponse(
     sequence: record.sequence,
     occurredAt: record.createdAt.toISOString(),
     payload: record.payload,
+    content: record.content,
   };
 }

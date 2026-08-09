@@ -7,7 +7,9 @@ import type {
   ProjectFileSummary,
   ProjectResponse,
   ProjectAttachment,
+  RunActionInput,
   RunAction,
+  RunArtifactResponse,
   RunEventEnvelope,
   RunResponse,
 } from "@atoms/contracts";
@@ -85,6 +87,7 @@ const WORKSPACE_TABS = [
   { id: "code", label: "Code", icon: Code2 },
   { id: "diff", label: "Diff", icon: FileDiff },
   { id: "tests", label: "Tests", icon: FlaskConical },
+  { id: "artifacts", label: "Artifacts", icon: FileCode2 },
   { id: "data", label: "Data", icon: Database },
   { id: "deployments", label: "Deployments", icon: Rocket },
 ] as const;
@@ -119,6 +122,7 @@ export function WorkspaceShell() {
   const [notice, setNotice] = useState<string | undefined>();
   const [now, setNow] = useState(() => Date.now());
   const [files, setFiles] = useState<readonly ProjectFileSummary[]>([]);
+  const [artifacts, setArtifacts] = useState<readonly RunArtifactResponse[]>([]);
   const [fileSearch, setFileSearch] = useState("");
   const [selectedFile, setSelectedFile] = useState<
     FileContentResponse | undefined
@@ -127,6 +131,9 @@ export function WorkspaceShell() {
   const [editorValue, setEditorValue] = useState("");
   const [saving, setSaving] = useState(false);
   const lastSequenceRef = useRef(0);
+  const runRequestRef = useRef<
+    { readonly fingerprint: string; readonly idempotencyKey: string } | undefined
+  >(undefined);
   const uploadIntentsRef = useRef(
     new Map<string, AttachmentUploadIntentResponse>(),
   );
@@ -141,6 +148,18 @@ export function WorkspaceShell() {
       try {
         const response = await api.listProjectFiles(projectId);
         setFiles(response.items);
+      } catch (caught) {
+        setError(toMessage(caught));
+      }
+    },
+    [api],
+  );
+
+  const refreshArtifacts = useCallback(
+    async (runId: string) => {
+      try {
+        const response = await api.listRunArtifacts(runId);
+        setArtifacts(response.items);
       } catch (caught) {
         setError(toMessage(caught));
       }
@@ -168,6 +187,7 @@ export function WorkspaceShell() {
         setProjection(createWorkspaceProjection());
         setNotice("Restored the durable run and replaying ordered events…");
         void refreshFiles(restoredProject.id);
+        void refreshArtifacts(restoredRun.id);
       })
       .catch((caught: unknown) => {
         if (controller.signal.aborted) return;
@@ -175,7 +195,7 @@ export function WorkspaceShell() {
         setError(`Could not restore the saved run: ${toMessage(caught)}`);
       });
     return () => controller.abort();
-  }, [api, refreshFiles]);
+  }, [api, refreshArtifacts, refreshFiles]);
 
   useEffect(() => {
     if (run === undefined) return;
@@ -198,6 +218,9 @@ export function WorkspaceShell() {
           ) {
             void refreshFiles(run.projectId);
           }
+          if (event.eventType === "artifact.created") {
+            void refreshArtifacts(run.id);
+          }
           if (
             event.eventType === "approval.required" ||
             event.eventType === "run.completed" ||
@@ -214,12 +237,13 @@ export function WorkspaceShell() {
           ...current,
           inferredRunStatus: latest.status,
         }));
+        await refreshArtifacts(run.id);
       })
       .catch((caught: unknown) => {
         if (!controller.signal.aborted) setError(toMessage(caught));
       });
     return () => controller.abort();
-  }, [api, refreshFiles, run?.id, run?.projectId]);
+  }, [api, refreshArtifacts, refreshFiles, run?.id, run?.projectId]);
 
   useEffect(() => {
     if (run === undefined || terminal) return;
@@ -309,14 +333,27 @@ export function WorkspaceShell() {
         );
         setAttachmentRecords(clean);
       }
+      const fingerprint = JSON.stringify({
+        prompt: prompt.trim(),
+        attachmentIds: [...attachmentIds].sort(),
+      });
+      if (runRequestRef.current?.fingerprint !== fingerprint) {
+        runRequestRef.current = {
+          fingerprint,
+          idempotencyKey: globalThis.crypto.randomUUID(),
+        };
+      }
       const createdRun = await api.createRun(
         createdProject.id,
         prompt,
+        runRequestRef.current.idempotencyKey,
         attachmentIds,
       );
+      runRequestRef.current = undefined;
       lastSequenceRef.current = 0;
       setProjection(createWorkspaceProjection());
       setFiles([]);
+      setArtifacts([]);
       setSelectedFile(undefined);
       setPreviousContent(undefined);
       setRun(createdRun);
@@ -377,13 +414,33 @@ export function WorkspaceShell() {
           `${action} is no longer valid because the run is ${latest.status}.`,
         );
       }
-      const updated = await api.runAction(run.id, action, latest);
+      const common = {
+        expectedStatus: latest.status,
+        expectedControlVersion: latest.controlVersion,
+      } as const;
+      let input: RunActionInput;
+      if (action === "approve") {
+        if (projection.approvalScope === undefined) {
+          throw new Error(
+            "The approval scope is unavailable. Wait for the approval event replay before trying again.",
+          );
+        }
+        input = {
+          ...common,
+          action,
+          approvalScope: projection.approvalScope,
+          reason: `Approved ${projection.approvalScope} in the Atoms workspace`,
+        };
+      } else {
+        input = { ...common, action };
+      }
+      const updated = await api.runAction(run.id, input);
       setRun(updated);
       setProjection((current) => ({
         ...current,
         inferredRunStatus: updated.status,
         ...(action === "approve" || action === "resume"
-          ? { approvalReason: undefined }
+          ? { approvalReason: undefined, approvalScope: undefined }
           : {}),
       }));
       setNotice(`${capitalize(action)} accepted at control version ${String(updated.controlVersion)}.`);
@@ -740,7 +797,7 @@ export function WorkspaceShell() {
                         ) : (
                           <Check size={14} />
                         )}
-                        Approve plan
+                        Approve {projection.approvalScope ?? "request"}
                       </button>
                     </div>
                   </div>
@@ -875,6 +932,9 @@ export function WorkspaceShell() {
               ) : null}
               {activeTab === "tests" ? (
                 <TestsPanel validations={projection.validations} />
+              ) : null}
+              {activeTab === "artifacts" ? (
+                <ArtifactsPanel artifacts={artifacts} />
               ) : null}
               {activeTab === "data" ? <DataPanel database={projection.database} /> : null}
               {activeTab === "deployments" ? <DeploymentsPanel /> : null}
@@ -1096,6 +1156,58 @@ function TestsPanel({ validations }: { readonly validations: ReturnType<typeof c
   );
 }
 
+function ArtifactsPanel({
+  artifacts,
+}: {
+  readonly artifacts: readonly RunArtifactResponse[];
+}) {
+  if (artifacts.length === 0) {
+    return (
+      <EmptyState
+        icon={FileCode2}
+        title="No artifacts yet"
+        description="Typed agent outputs, SEO packages, and content packages appear here as soon as they are committed."
+      />
+    );
+  }
+  return (
+    <div className="space-y-3">
+      {artifacts.map((artifact) => (
+        <details
+          key={`${String(artifact.sequence)}:${artifact.payload.artifactType}`}
+          className="group rounded-xl border border-[#26303d] bg-[#0d1219]"
+          open={
+            artifact.payload.artifactType === "seo-package" ||
+            artifact.payload.artifactType === "content-package"
+          }
+        >
+          <summary className="flex cursor-pointer list-none items-center gap-3 px-4 py-3">
+            <span className="grid size-7 place-items-center rounded-lg bg-[#10291f] text-[#78e6bd]">
+              <FileCode2 size={15} />
+            </span>
+            <span className="min-w-0 flex-1">
+              <span className="block text-sm font-medium">
+                {artifact.payload.artifactType}
+              </span>
+              <span className="mt-0.5 block text-xs text-[#788598]">
+                {artifact.payload.agent} · event {String(artifact.sequence)}
+              </span>
+            </span>
+            <ChevronRight className="text-[#657286] transition group-open:rotate-90" size={16} />
+          </summary>
+          <div className="border-t border-[#202936] p-3">
+            <pre className="max-h-[32rem] overflow-auto whitespace-pre-wrap rounded-lg bg-[#070a0f] p-3 font-mono text-xs leading-5 text-[#aeb9c8]">
+              {artifact.content === null
+                ? "Artifact content is unavailable for this historical event."
+                : JSON.stringify(artifact.content, null, 2)}
+            </pre>
+          </div>
+        </details>
+      ))}
+    </div>
+  );
+}
+
 function DataPanel({ database }: { readonly database: ReturnType<typeof createWorkspaceProjection>["database"] }) {
   if (database === undefined) {
     return <EmptyState icon={Database} title="No generated database" description="David can produce a migration artifact, but provisioning remains lazy and requires an explicit confirmed API action." />;
@@ -1269,7 +1381,15 @@ function formatElapsed(run: RunResponse, now: number): string {
 }
 
 function agentRole(agent: AgentName): string {
-  return { Mike: "Coordinates policies and approvals", Emma: "Produces structured product requirements", Bob: "Designs architecture and Prisma schema", Alex: "Generates application code and tests", David: "Creates database migrations and policy report" }[agent];
+  return {
+    Mike: "Coordinates policies and approvals",
+    Emma: "Produces structured product requirements",
+    Bob: "Designs architecture and Prisma schema",
+    Alex: "Generates application code and tests",
+    David: "Creates database migrations and policy report",
+    Sarah: "Builds route-aware SEO artifacts",
+    Adrian: "Creates evidence-aware growth content",
+  }[agent];
 }
 
 function actionIcon(action: RunAction) {

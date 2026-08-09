@@ -10,18 +10,21 @@ application; it does not introduce a second frontend stack.
 2. Optionally upload up to five PDF, text, PNG, JPEG, or WebP references through
    encrypted quarantine storage and wait for MIME and malware validation.
 3. Create a durable run from a prompt and immutable clean-attachment snapshots.
+   Browser retries reuse the same validated idempotency key for the same request.
 4. Stream ordered events with an explicit `Last-Event-ID` cursor and reconnect
    after a bounded server stream closes. A refresh stores only the project/run
    UUIDs, restores current CAS state from the API, and replays events from zero;
    prompts and generated code are never copied into browser storage.
-5. Render Mike, Emma, Bob, Alex, and David task state, plan approval, run
-   controls, deterministic validation evidence, and generated-database state.
+5. Render all seven agents (Mike through Adrian), scoped plan/content approval,
+   run controls, deterministic validation evidence, and generated-database state.
 6. Embed only a URL on the configured signed preview domain in a sandboxed,
    no-referrer iframe.
 7. List the latest immutable project files, open them in Monaco, and save a
    manual edit with the latest observed version. A `409` conflict leaves the
    unsaved editor value intact.
 8. Compare the latest file revision with its immediate predecessor.
+9. Retrieve typed artifact content, including Sarah's SEO package and Adrian's
+   content package, from the durable run artifact endpoint.
 
 The responsive layout displays both panes at 1280 px and uses an Agent Hub /
 Project Workspace switch below 1024 px. Tabs, form controls, status updates,
@@ -32,8 +35,14 @@ accessible names or live announcements.
 
 - `GET /v1/runs/{runId}` restores current status and `controlVersion` before a
   pause, resume, approval, cancellation, or retry.
+- `POST /v1/projects/{projectId}/runs` requires the shared `Idempotency-Key`
+  contract; retries of an unchanged browser submission reuse that key.
 - `POST /v1/runs/{runId}/actions` requires `approvalScope` when
   `action=approve` and rejects `approvalScope` on non-approve actions.
+- Approval events carry a versioned `plan` or `content` scope. Legacy persisted
+  approval and artifact events are normalized during replay.
+- `GET /v1/runs/{runId}/artifacts` returns the typed event envelope and the
+  corresponding persisted agent-task content.
 - `GET /v1/projects/{projectId}/files` returns only the latest summary for each
   path; file content remains opt-in through the existing content endpoint.
 - `CONTROL_API_CORS_ORIGINS` is a comma-separated allowlist of exact browser

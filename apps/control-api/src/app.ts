@@ -1,4 +1,5 @@
 import {
+  CreateRunHeadersSchema,
   CreateProjectInputSchema,
   CreateRunInputSchema,
   FileContentInputSchema,
@@ -58,16 +59,6 @@ const RunIdParamsSchema = z
 const SseHeadersSchema = z
   .object({
     "last-event-id": z.string().trim().regex(/^\d+$/).optional(),
-  })
-  .passthrough();
-const IdempotencyHeadersSchema = z
-  .object({
-    "idempotency-key": z
-      .string()
-      .trim()
-      .min(8)
-      .max(128)
-      .regex(/^[a-zA-Z0-9._-]+$/),
   })
   .passthrough();
 const ErrorResponseSchema = z
@@ -187,7 +178,7 @@ export async function buildControlApi(
       schema: {
         operationId: "createRun",
         params: ProjectIdParamsSchema,
-        headers: IdempotencyHeadersSchema,
+        headers: CreateRunHeadersSchema,
         body: CreateRunInputSchema,
         response: { 200: RunResponseSchema, 201: RunResponseSchema, ...errorResponses },
       },
@@ -430,9 +421,9 @@ export async function buildControlApi(
             ...(request.body.reason === undefined
               ? {}
               : { reason: request.body.reason }),
-            ...(request.body.approvalScope === undefined
-              ? {}
-              : { approvalScope: request.body.approvalScope }),
+            ...(request.body.action === "approve"
+              ? { approvalScope: request.body.approvalScope }
+              : {}),
           });
         } catch (error) {
           await options.repository.markRunFailed(

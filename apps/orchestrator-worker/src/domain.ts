@@ -4,6 +4,7 @@ import type {
   AgentProjectFile,
 } from "@atoms/agents";
 import type {
+  ApprovalScope,
   AgentRunStatus,
   JsonValue,
   RunEventType,
@@ -103,6 +104,7 @@ export interface WorkerRepository {
   requestApproval(
     runId: string,
     expectedControlVersion: number,
+    scope: ApprovalScope,
     reason: string,
     now: Date,
   ): Promise<boolean>;

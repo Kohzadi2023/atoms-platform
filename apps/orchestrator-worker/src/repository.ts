@@ -3,6 +3,7 @@ import { createHash } from "node:crypto";
 import { AgentOutputSchemas, type AgentProjectFile } from "@atoms/agents";
 import {
   JsonValueSchema,
+  type ApprovalScope,
   type JsonValue,
   type RunEventType,
   type RunJob,
@@ -680,6 +681,7 @@ export class PrismaWorkerRepository
   requestApproval(
     runId: string,
     expectedControlVersion: number,
+    scope: ApprovalScope,
     reason: string,
     now: Date,
   ): Promise<boolean> {
@@ -698,7 +700,11 @@ export class PrismaWorkerRepository
         },
       });
       if (update.count !== 1) return false;
-      await appendEvent(transaction, runId, "approval.required", { reason });
+      await appendEvent(transaction, runId, "approval.required", {
+        version: "v1",
+        scope,
+        reason,
+      });
       return true;
     });
   }

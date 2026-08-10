@@ -3,11 +3,13 @@ import test from "node:test";
 
 import {
   ApproveOrphanCleanupInputSchema,
+  ApprovalRequiredEventPayloadV1Schema,
   ArtifactCreatedEventPayloadV1Schema,
   AttachmentScanJobSchema,
   ContentPackageSchema,
   CreateAttachmentUploadIntentInputSchema,
   CreateProjectInputSchema,
+  CreateRunHeadersSchema,
   CreateRunInputSchema,
   MAX_ATTACHMENT_BYTES,
   DatabaseOperationJobSchema,
@@ -92,6 +94,18 @@ test("RunActionInput constrains commands and concurrency tokens", () => {
     }),
   );
   assert.throws(() => RunActionInputSchema.parse({ action: "delete" }));
+});
+
+test("run creation headers share the API idempotency contract", () => {
+  assert.deepEqual(
+    CreateRunHeadersSchema.parse({
+      "idempotency-key": "run-request-2026-08-09",
+    }),
+    { "idempotency-key": "run-request-2026-08-09" },
+  );
+  assert.throws(() =>
+    CreateRunHeadersSchema.parse({ "idempotency-key": "short" }),
+  );
 });
 
 test("attachment contracts enforce fixed MIME, size, count, and queue fencing", () => {
@@ -529,11 +543,25 @@ test("validateRunEventPayload dispatches by event type", () => {
     "david-output",
   );
 
-  assert.throws(() =>
-    validateRunEventPayload("artifact.created", {
-      taskId: "00000000-0000-4000-8000-000000000124",
-      agent: "David",
-      artifactType: "david-output",
-    }),
+  const legacyArtifact = validateRunEventPayload("artifact.created", {
+    taskId: "00000000-0000-4000-8000-000000000124",
+    agent: "David",
+    artifactType: "david-output",
+  });
+  assert.equal(
+    (legacyArtifact as { version: string }).version,
+    "v1",
+  );
+
+  const legacyApproval = validateRunEventPayload("approval.required", {
+    reason: "Approve content variants before applying copy changes",
+  });
+  assert.deepEqual(
+    ApprovalRequiredEventPayloadV1Schema.parse(legacyApproval),
+    {
+      version: "v1",
+      scope: "content",
+      reason: "Approve content variants before applying copy changes",
+    },
   );
 });

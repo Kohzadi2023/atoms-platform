@@ -211,6 +211,7 @@ export function buildRunGraph(options: BuildRunGraphOptions) {
     const paused = await options.repository.requestApproval(
       state.runId,
       state.controlVersion,
+      "plan",
       "Approve the product and architecture plan before code generation",
       now(),
     );
@@ -239,6 +240,7 @@ export function buildRunGraph(options: BuildRunGraphOptions) {
     const paused = await options.repository.requestApproval(
       state.runId,
       state.controlVersion,
+      "content",
       "Approve content variants before applying copy changes",
       now(),
     );

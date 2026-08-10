@@ -121,7 +121,7 @@ Completed in code:
 - Emitted explicit `artifact.created` events for `seo-package` and
   `content-package` when Sarah/Adrian complete.
 - Added a typed artifact query route `GET /v1/runs/:runId/artifacts` for
-  deterministic UI/state retrieval.
+  deterministic UI/state retrieval, including the persisted artifact content.
 - Added Control API end-to-end coverage for replay and query of
   `seo-package` and `content-package` artifact envelopes.
 

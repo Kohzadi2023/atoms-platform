@@ -27,6 +27,18 @@ export const RunEventTypeSchema = z.enum([
 
 export type RunEventType = z.infer<typeof RunEventTypeSchema>;
 
+export const RunAgentNameSchema = z.enum([
+  "Mike",
+  "Emma",
+  "Bob",
+  "Alex",
+  "David",
+  "Sarah",
+  "Adrian",
+]);
+
+export type RunAgentName = z.infer<typeof RunAgentNameSchema>;
+
 export const ArtifactTypeSchema = z.enum([
   "mike-output",
   "emma-output",
@@ -45,7 +57,7 @@ export const ArtifactCreatedEventPayloadV1Schema = z
   .object({
     version: z.literal("v1"),
     taskId: z.string().uuid(),
-    agent: z.enum(["Mike", "Emma", "Bob", "Alex", "David", "Sarah", "Adrian"]),
+    agent: RunAgentNameSchema,
     artifactType: ArtifactTypeSchema,
     migrationArtifactId: z.string().uuid().optional(),
   })
@@ -54,6 +66,56 @@ export const ArtifactCreatedEventPayloadV1Schema = z
 export type ArtifactCreatedEventPayloadV1 = z.infer<
   typeof ArtifactCreatedEventPayloadV1Schema
 >;
+
+export const ApprovalRequiredEventPayloadV1Schema = z
+  .object({
+    version: z.literal("v1"),
+    scope: z.enum(["plan", "content"]),
+    reason: z.string().trim().min(1).max(2_000),
+  })
+  .strict();
+
+export type ApprovalRequiredEventPayloadV1 = z.infer<
+  typeof ApprovalRequiredEventPayloadV1Schema
+>;
+
+const LegacyArtifactCreatedEventPayloadSchema =
+  ArtifactCreatedEventPayloadV1Schema.omit({ version: true }).strict();
+
+const LegacyApprovalRequiredEventPayloadSchema = z
+  .object({
+    reason: z.string().trim().min(1).max(2_000),
+  })
+  .strict();
+
+export function normalizeArtifactCreatedEventPayload(
+  payload: unknown,
+): ArtifactCreatedEventPayloadV1 {
+  const current = ArtifactCreatedEventPayloadV1Schema.safeParse(payload);
+  if (current.success) return current.data;
+
+  const legacy = LegacyArtifactCreatedEventPayloadSchema.parse(payload);
+  return ArtifactCreatedEventPayloadV1Schema.parse({
+    version: "v1",
+    ...legacy,
+  });
+}
+
+export function normalizeApprovalRequiredEventPayload(
+  payload: unknown,
+): ApprovalRequiredEventPayloadV1 {
+  const current = ApprovalRequiredEventPayloadV1Schema.safeParse(payload);
+  if (current.success) return current.data;
+
+  const legacy = LegacyApprovalRequiredEventPayloadSchema.parse(payload);
+  return {
+    version: "v1",
+    scope: legacy.reason.toLowerCase().includes("content")
+      ? "content"
+      : "plan",
+    reason: legacy.reason,
+  };
+}
 
 export const SandboxReadyEventPayloadV1Schema = z
   .object({
@@ -153,7 +215,13 @@ export function validateRunEventPayload(
     return DatabaseStatusChangedEventPayloadV1Schema.parse(payload);
   }
   if (eventType === "artifact.created") {
-    return ArtifactCreatedEventPayloadV1Schema.parse(payload);
+    return normalizeArtifactCreatedEventPayload(payload);
+  }
+  if (
+    eventType === "approval.required" ||
+    eventType === "approval_required"
+  ) {
+    return normalizeApprovalRequiredEventPayload(payload);
   }
   return JsonValueSchema.parse(payload);
 }

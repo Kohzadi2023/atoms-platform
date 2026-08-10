@@ -2,10 +2,13 @@ import {
   AttachmentListResponseSchema,
   AttachmentUploadIntentResponseSchema,
   FileContentResponseSchema,
+  IdempotencyKeySchema,
   ProjectAttachmentSchema,
   ProjectFileListResponseSchema,
   ProjectResponseSchema,
   RunEventEnvelopeSchema,
+  RunArtifactListResponseSchema,
+  RunActionInputSchema,
   RunResponseSchema,
   type CreateProjectInput,
   type AttachmentListResponse,
@@ -15,7 +18,8 @@ import {
   type ProjectFileListResponse,
   type ProjectResponse,
   type ProjectAttachment,
-  type RunAction,
+  type RunActionInput,
+  type RunArtifactListResponse,
   type RunEventEnvelope,
   type RunResponse,
 } from "@atoms/contracts";
@@ -64,13 +68,16 @@ export class ControlApiClient {
   createRun(
     projectId: string,
     prompt: string,
+    idempotencyKey: string,
     attachmentIds: readonly string[] = [],
   ): Promise<RunResponse> {
+    const normalizedKey = IdempotencyKeySchema.parse(idempotencyKey);
     return this.#request(
       `/v1/projects/${encodeURIComponent(projectId)}/runs`,
       RunResponseSchema,
       {
         method: "POST",
+        headers: { "Idempotency-Key": normalizedKey },
         body: JSON.stringify({ prompt, attachmentIds }),
       },
     );
@@ -117,18 +124,22 @@ export class ControlApiClient {
     );
   }
 
-  runAction(runId: string, action: RunAction, current: RunResponse) {
+  runAction(runId: string, input: RunActionInput) {
+    const parsed = RunActionInputSchema.parse(input);
     return this.#request(
       `/v1/runs/${encodeURIComponent(runId)}/actions`,
       RunResponseSchema,
       {
         method: "POST",
-        body: JSON.stringify({
-          action,
-          expectedStatus: current.status,
-          expectedControlVersion: current.controlVersion,
-        }),
+        body: JSON.stringify(parsed),
       },
+    );
+  }
+
+  listRunArtifacts(runId: string): Promise<RunArtifactListResponse> {
+    return this.#request(
+      `/v1/runs/${encodeURIComponent(runId)}/artifacts`,
+      RunArtifactListResponseSchema,
     );
   }
 

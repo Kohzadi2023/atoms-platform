@@ -221,12 +221,13 @@ class MemoryRepository implements WorkerRepository {
   async requestApproval(
     _runId: string,
     expectedControlVersion: number,
+    scope: "plan" | "content",
     reason: string,
   ): Promise<boolean> {
     if (!this.active(expectedControlVersion)) return false;
     this.run.status = "PAUSED";
     this.run.controlVersion += 1;
-    this.append("approval.required", { reason });
+    this.append("approval.required", { version: "v1", scope, reason });
     return true;
   }
 
@@ -527,6 +528,10 @@ test("worker executes the full Phase 4 chain once and commits ordered events", a
     (approvalEvent?.payload as { readonly reason: string }).reason,
     "Approve content variants before applying copy changes",
   );
+  assert.equal(
+    (approvalEvent?.payload as { readonly scope: string }).scope,
+    "content",
+  );
   const approvedVersion = repository.approve();
   assert.deepEqual(
     await runProcessor.process(approveJob(approvedVersion, "content"), {
@@ -769,6 +774,13 @@ test("plan approval and content approval require two explicit approvals", async 
     "Approve the product and architecture plan before code generation",
     "Approve content variants before applying copy changes",
   ]);
+  const approvalScopes = repository.events
+    .filter((event) => event.eventType === "approval.required")
+    .map(
+      (event) =>
+        (event.payload as { readonly scope: string }).scope,
+    );
+  assert.deepEqual(approvalScopes, ["plan", "content"]);
 
   assert.deepEqual(agents.calls, [
     "Mike",

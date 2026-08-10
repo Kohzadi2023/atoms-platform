@@ -45,6 +45,60 @@ test("event projection orders agent work and records deterministic validation", 
   assert.equal(state.validations[0]?.exitCode, 0);
 });
 
+test("Phase 4 agents and scoped approvals remain visible after event replay", () => {
+  let state = createWorkspaceProjection();
+  state = reduceRunEvent(
+    state,
+    event(1, "task.started", {
+      taskId: "00000000-0000-4000-8000-000000000010",
+      agent: "Sarah",
+      ordinal: 6,
+      attempt: 1,
+    }),
+  );
+  state = reduceRunEvent(
+    state,
+    event(2, "task.completed", {
+      taskId: "00000000-0000-4000-8000-000000000010",
+      agent: "Sarah",
+      ordinal: 6,
+      attempt: 1,
+    }),
+  );
+  state = reduceRunEvent(
+    state,
+    event(3, "task.started", {
+      taskId: "00000000-0000-4000-8000-000000000011",
+      agent: "Adrian",
+      ordinal: 7,
+      attempt: 1,
+    }),
+  );
+  state = reduceRunEvent(
+    state,
+    event(4, "approval.required", {
+      version: "v1",
+      scope: "content",
+      reason: "Approve content variants before applying copy changes",
+    }),
+  );
+
+  assert.equal(state.tasks.Sarah.status, "completed");
+  assert.equal(state.tasks.Adrian.status, "waiting");
+  assert.equal(state.approvalScope, "content");
+  assert.match(state.approvalReason ?? "", /content variants/);
+
+  state = reduceRunEvent(
+    state,
+    event(5, "run.status_changed", {
+      from: "PENDING",
+      to: "RUNNING",
+    }),
+  );
+  assert.equal(state.approvalReason, undefined);
+  assert.equal(state.approvalScope, undefined);
+});
+
 test("database projection ignores an older fenced operation event", () => {
   const base = createWorkspaceProjection();
   const newer = reduceRunEvent(

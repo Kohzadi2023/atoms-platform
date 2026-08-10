@@ -7,6 +7,7 @@ import type {
   FileContentInput,
   JsonValue,
 } from "@atoms/contracts";
+import { normalizeArtifactCreatedEventPayload } from "@atoms/contracts";
 
 import { buildControlApi } from "./app.js";
 import type {
@@ -38,6 +39,7 @@ class MemoryRepository implements ControlRepository {
   readonly projects = new Map<string, ProjectRecord>();
   readonly runs = new Map<string, RunRecord>();
   readonly events: RunEventRecord[] = [];
+  readonly artifactContentsByTaskId = new Map<string, JsonValue>();
   readonly files: ProjectFileRecord[] = [];
   lastRunAttachmentIds: readonly string[] = [];
   rejectRunAttachments = false;
@@ -224,7 +226,11 @@ class MemoryRepository implements ControlRepository {
       .map((event) => ({
         sequence: event.sequence,
         createdAt: event.createdAt,
-        payload: event.payload as RunArtifactRecord["payload"],
+        payload: normalizeArtifactCreatedEventPayload(event.payload),
+        content:
+          this.artifactContentsByTaskId.get(
+            normalizeArtifactCreatedEventPayload(event.payload).taskId,
+          ) ?? null,
       }));
   }
 
@@ -552,7 +558,9 @@ test("GET /v1/runs/:runId/events replays only events after Last-Event-ID in orde
     repository.events.push(
       event(1, "task_started"),
       event(2, "code_generated"),
-      event(3, "approval_required"),
+      event(3, "approval_required", {
+        reason: "Approve the product and architecture plan before code generation",
+      }),
     );
     repository.setRunStatus(RUN_ID, "COMPLETED");
 
@@ -567,6 +575,7 @@ test("GET /v1/runs/:runId/events replays only events after Last-Event-ID in orde
     assert.doesNotMatch(response.body, /id: 1\n/);
     assert.match(response.body, /id: 2\nevent: code_generated/);
     assert.match(response.body, /id: 3\nevent: approval_required/);
+    assert.match(response.body, /"scope":"plan"/);
     assert.ok(response.body.indexOf("id: 2") < response.body.indexOf("id: 3"));
   } finally {
     await app.close();
@@ -583,7 +592,6 @@ test("SSE replay includes typed artifact.created payloads", async () => {
         sequence: 1,
         eventType: "artifact.created",
         payload: {
-          version: "v1",
           taskId: "00000000-0000-4000-8000-000000000010",
           agent: "Sarah",
           artifactType: "seo-package",
@@ -664,6 +672,27 @@ test("GET /v1/runs/:runId/artifacts returns ordered typed artifact envelopes", a
       },
       event(6, "task.completed"),
     );
+    repository.artifactContentsByTaskId.set(
+      "00000000-0000-4000-8000-000000000031",
+      {
+        version: "v1",
+        sitemapXml: "<urlset></urlset>",
+        robotsTxt: "User-agent: *",
+        routeMetadata: [],
+        findings: [],
+      },
+    );
+    repository.artifactContentsByTaskId.set(
+      "00000000-0000-4000-8000-000000000032",
+      {
+        version: "v1",
+        audience: "Developers",
+        valuePropositions: ["Ship safely"],
+        ctaVariants: [],
+        adVariants: [],
+        claimsRequiringEvidence: [],
+      },
+    );
 
     const response = await app.inject({
       method: "GET",
@@ -678,6 +707,8 @@ test("GET /v1/runs/:runId/artifacts returns ordered typed artifact envelopes", a
       response.json().items[2].payload.artifactType,
       "content-package",
     );
+    assert.equal(response.json().items[1].content.sitemapXml, "<urlset></urlset>");
+    assert.equal(response.json().items[2].content.audience, "Developers");
     assert.equal(
       response.json().items[0].payload.migrationArtifactId,
       "00000000-0000-4000-8000-000000000099",
@@ -921,12 +952,16 @@ test("queue failure is compensated by marking a persisted run FAILED", async () 
   }
 });
 
-function event(sequence: number, eventType: RunEventRecord["eventType"]): RunEventRecord {
+function event(
+  sequence: number,
+  eventType: RunEventRecord["eventType"],
+  payload: JsonValue = { sequence },
+): RunEventRecord {
   return {
     runId: RUN_ID,
     sequence,
     eventType,
-    payload: { sequence },
+    payload,
     createdAt: new Date(FIXED_NOW.getTime() + sequence),
   };
 }

@@ -69,6 +69,21 @@ export const CreateRunInputSchema = z
 
 export type CreateRunInput = z.infer<typeof CreateRunInputSchema>;
 
+export const IdempotencyKeySchema = z
+  .string()
+  .trim()
+  .min(8)
+  .max(128)
+  .regex(/^[a-zA-Z0-9._-]+$/);
+
+export const CreateRunHeadersSchema = z
+  .object({
+    "idempotency-key": IdempotencyKeySchema,
+  })
+  .passthrough();
+
+export type CreateRunHeaders = z.infer<typeof CreateRunHeadersSchema>;
+
 export const AgentRunStatusSchema = z.enum([
   "PENDING",
   "RUNNING",
@@ -139,33 +154,27 @@ export const RunJobSchema = z
 
 export type RunJob = z.infer<typeof RunJobSchema>;
 
-export const RunActionInputSchema = z
-  .object({
-    action: RunActionSchema,
-    expectedStatus: AgentRunStatusSchema.optional(),
-    expectedControlVersion: z.number().int().nonnegative().optional(),
-    reason: z.string().trim().min(1).max(2_000).optional(),
-    approvalScope: ApprovalScopeSchema.optional(),
-  })
-  .superRefine((value, context) => {
-    if (value.action === "approve") {
-      if (value.approvalScope !== undefined) return;
-      context.addIssue({
-        code: z.ZodIssueCode.custom,
-        message: "approvalScope is required for approve actions",
-        path: ["approvalScope"],
-      });
-      return;
-    }
+const RunActionPreconditionShape = {
+  expectedStatus: AgentRunStatusSchema.optional(),
+  expectedControlVersion: z.number().int().nonnegative().optional(),
+  reason: z.string().trim().min(1).max(2_000).optional(),
+} as const;
 
-    if (value.approvalScope === undefined) return;
-    context.addIssue({
-      code: z.ZodIssueCode.custom,
-      message: "approvalScope is only valid when action is approve",
-      path: ["approvalScope"],
-    });
-  })
-  .strict();
+export const RunActionInputSchema = z.union([
+  z
+    .object({
+      ...RunActionPreconditionShape,
+      action: z.literal("approve"),
+      approvalScope: ApprovalScopeSchema,
+    })
+    .strict(),
+  z
+    .object({
+      ...RunActionPreconditionShape,
+      action: z.enum(["pause", "resume", "cancel", "retry"]),
+    })
+    .strict(),
+]);
 
 export type RunActionInput = z.infer<typeof RunActionInputSchema>;
 
@@ -224,6 +233,7 @@ export const RunArtifactResponseSchema = z
     sequence: z.number().int().positive(),
     occurredAt: IsoTimestampSchema,
     payload: ArtifactCreatedEventPayloadV1Schema,
+    content: JsonValueSchema.nullable(),
   })
   .strict();
 

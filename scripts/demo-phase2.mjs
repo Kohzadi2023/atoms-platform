@@ -26,7 +26,10 @@ const run = await requestJson(
   `${controlApiUrl}/v1/projects/${project.id}/runs`,
   {
     method: "POST",
-    headers: { "content-type": "application/json" },
+    headers: {
+      "content-type": "application/json",
+      "idempotency-key": `phase2-demo-${suffix}`,
+    },
     body: JSON.stringify({ prompt }),
   },
 );
@@ -61,18 +64,28 @@ while (!terminal) {
         `[${String(event.sequence).padStart(3, "0")}] ${event.eventType}`,
       );
       if (event.eventType === "approval.required") {
+        const approvalScope = event.payload?.scope;
+        if (approvalScope !== "plan" && approvalScope !== "content") {
+          throw new Error("Approval event did not include a supported scope");
+        }
         const promptUi = createInterface({ input: stdin, output: stdout });
         const answer = await promptUi.question(
-          "Mike requested approval. Continue to code generation? [y/N] ",
+          `${event.payload.reason ?? `${approvalScope} approval requested`} Continue? [y/N] `,
         );
         promptUi.close();
         if (answer.trim().toLowerCase() === "y") {
+          const current = await requestJson(
+            `${controlApiUrl}/v1/runs/${run.id}`,
+          );
           await requestJson(`${controlApiUrl}/v1/runs/${run.id}/actions`, {
             method: "POST",
             headers: { "content-type": "application/json" },
             body: JSON.stringify({
               action: "approve",
-              reason: "Approved interactively by the Phase 2 demo operator",
+              approvalScope,
+              expectedStatus: current.status,
+              expectedControlVersion: current.controlVersion,
+              reason: `Approved ${approvalScope} interactively by the Phase 2 demo operator`,
             }),
           });
         } else {
@@ -93,7 +106,7 @@ while (!terminal) {
 
 await reader.cancel();
 
-async function requestJson(url, init) {
+async function requestJson(url, init = {}) {
   const response = await fetch(url, init);
   const value = await response.json();
   if (!response.ok) {

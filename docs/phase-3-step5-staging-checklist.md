@@ -15,13 +15,14 @@ This checklist is the operator-facing companion to
 2. Confirm required secrets/variables are configured in that environment:
    - `SUPABASE_ACCESS_TOKEN`
    - `SUPABASE_ORGANIZATION_SLUG`
-   - `SUPABASE_MANAGEMENT_API_URL`
-   - `VAULT_ADDR`
-   - `VAULT_TOKEN`
-   - `VAULT_KV_MOUNT` (and optional `VAULT_NAMESPACE`)
    - `E2B_API_KEY` (optional `E2B_TEMPLATE`)
-   - `PHASE3_STAGING_MIN_OTHER_ORG_CONTROLS`
-   - `PHASE3_STAGING_MIN_CUSTOMER_CONTROLS`
+   - Optional override: `SUPABASE_MANAGEMENT_API_URL`
+   - Optional override: `VAULT_NAMESPACE`
+   - Optional overrides: `PHASE3_STAGING_MIN_OTHER_ORG_CONTROLS` and
+     `PHASE3_STAGING_MIN_CUSTOMER_CONTROLS` (both default to `1`)
+   - Do not configure `VAULT_ADDR`, `VAULT_TOKEN`, or `VAULT_KV_MOUNT` for this
+     workflow. The protected job creates an isolated Vault dev server, generates
+     and masks a per-job token, and removes the server after evidence capture.
 3. Confirm control inventory exists before any live run:
    - At least one visible project in another organization
    - At least one customer-named project in the staging organization
@@ -81,6 +82,8 @@ Pass criteria:
 - Evidence includes provision -> health -> migrate/seed -> reconciliation path.
 - Workflow uploads `phase3-preflight-evidence` (durability) and, when live is requested,
   `phase3-preflight-live-evidence` artifacts with preflight JSON.
+- The ephemeral Vault container is reachable only on runner loopback and is
+  removed by the final `always()` cleanup step.
 
 ## D. Post-run evidence validation
 

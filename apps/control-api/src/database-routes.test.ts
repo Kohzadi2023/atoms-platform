@@ -24,6 +24,7 @@ import type {
 import type { ControlRepository, PutProjectFileResult } from "./repository.js";
 import type { CreateRunWithIdempotencyResult } from "./repository.js";
 import type { RunQueue } from "./run-queue.js";
+import type { WorkspaceMembershipRecord } from "./repository.js";
 
 const PROJECT_ID = "00000000-0000-4000-8000-000000000001";
 const WORKSPACE_ID = "00000000-0000-4000-8000-000000000002";
@@ -72,6 +73,20 @@ const migrationArtifact: MigrationArtifactRecord = {
 };
 
 class NoopControlRepository implements ControlRepository {
+  async listWorkspaceMemberships(): Promise<readonly WorkspaceMembershipRecord[]> {
+    return [
+      {
+        workspace: { id: WORKSPACE_ID, name: "Workspace", slug: "workspace" },
+        role: "OWNER",
+      },
+    ];
+  }
+  async getWorkspaceMembership(): Promise<WorkspaceMembershipRecord> {
+    return {
+      workspace: { id: WORKSPACE_ID, name: "Workspace", slug: "workspace" },
+      role: "OWNER",
+    };
+  }
   async createProject(_input: CreateProjectInput): Promise<never> {
     throw new Error("not used");
   }
@@ -108,6 +123,7 @@ class NoopControlRepository implements ControlRepository {
     return null;
   }
   async putProjectFile(
+    _userId: string,
     _projectId: string,
     _input: FileContentInput,
   ): Promise<PutProjectFileResult> {
@@ -122,6 +138,13 @@ class NoopRunQueue implements RunQueue {
 }
 
 class MemoryDatabaseRepository implements DatabaseControlRepository {
+  async getProjectWorkspaceMembership(): Promise<{
+    readonly workspaceId: string;
+    readonly role: "OWNER" | "ADMIN" | "MEMBER";
+  }> {
+    return { workspaceId: WORKSPACE_ID, role: "OWNER" };
+  }
+
   createResult: CreateDatabaseOperationResult = {
     kind: "ok",
     database,
@@ -129,6 +152,7 @@ class MemoryDatabaseRepository implements DatabaseControlRepository {
   };
 
   async createDatabaseOperation(
+    _userId: string,
     _projectId: string,
     _idempotencyKey: string,
     _input: ProvisionDatabaseInput,
@@ -136,15 +160,20 @@ class MemoryDatabaseRepository implements DatabaseControlRepository {
     return this.createResult;
   }
 
-  async getDatabaseInstance(): Promise<DatabaseInstanceRecord | null> {
+  async getDatabaseInstance(
+    _userId: string,
+  ): Promise<DatabaseInstanceRecord | null> {
     return database;
   }
 
-  async getLatestMigrationArtifact(): Promise<MigrationArtifactRecord> {
+  async getLatestMigrationArtifact(
+    _userId: string,
+  ): Promise<MigrationArtifactRecord> {
     return migrationArtifact;
   }
 
   async requestDatabaseAction(
+    _userId: string,
     _projectId: string,
     _databaseInstanceId: string,
     _input: DatabaseActionInput,
@@ -172,6 +201,7 @@ async function fixture() {
   const app = await buildControlApi({
     repository: new NoopControlRepository(),
     runQueue: new NoopRunQueue(),
+    authRequired: false,
     databaseOperations: { repository, queue },
     now: () => FIXED_NOW,
   });

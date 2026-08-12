@@ -11,6 +11,9 @@ import {
   CreateProjectInputSchema,
   CreateRunHeadersSchema,
   CreateRunInputSchema,
+  GetMeResponseSchema,
+  GetWorkspaceResponseSchema,
+  ListWorkspacesResponseSchema,
   MAX_ATTACHMENT_BYTES,
   DatabaseOperationJobSchema,
   DatabaseReconciliationSummarySchema,
@@ -186,6 +189,40 @@ test("ProjectFileListResponse exposes latest revision metadata without content",
   assert.throws(() =>
     ProjectFileListResponseSchema.parse({
       items: [{ ...item, content: "must remain opt-in" }],
+    }),
+  );
+});
+
+test("identity contracts expose only strict user and membership summaries", () => {
+  const workspace = {
+    id: "00000000-0000-4000-8000-000000000101",
+    name: "Atoms Workspace",
+    slug: "atoms-workspace",
+  };
+
+  const me = GetMeResponseSchema.parse({
+    userId: "user-123",
+    subject: "user-123",
+    memberships: [{ workspace, role: "ADMIN" }],
+  });
+  assert.equal(me.memberships[0]?.role, "ADMIN");
+
+  const workspaces = ListWorkspacesResponseSchema.parse({
+    items: [workspace],
+  });
+  assert.equal(workspaces.items.length, 1);
+
+  const membership = GetWorkspaceResponseSchema.parse({
+    workspace,
+    role: "OWNER",
+  });
+  assert.equal(membership.role, "OWNER");
+
+  assert.throws(() =>
+    GetMeResponseSchema.parse({
+      userId: "user-123",
+      subject: "user-123",
+      memberships: [{ workspace, role: "MEMBER", token: "secret" }],
     }),
   );
 });

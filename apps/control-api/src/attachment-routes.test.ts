@@ -139,6 +139,17 @@ async function createFixture() {
   const app = Fastify();
   app.setValidatorCompiler(validatorCompiler);
   app.setSerializerCompiler(serializerCompiler);
+  app.addHook("onRequest", async (request) => {
+    request.principal = {
+      userId: "user-test",
+      subject: "user-test",
+      issuer: "urn:atoms:test",
+      audience: ["atoms-control-api"],
+      issuedAt: Math.floor(NOW.getTime() / 1_000),
+      notBefore: Math.floor(NOW.getTime() / 1_000),
+      expiresAt: Math.floor(NOW.getTime() / 1_000) + 3600,
+    };
+  });
   registerAttachmentRoutes(app, {
     repository,
     queue,
@@ -162,6 +173,8 @@ class MemoryAttachmentRepository implements AttachmentRepository {
   attachment: AttachmentRecord | undefined;
 
   async createAttachment(input: {
+    readonly userId: string;
+    readonly projectId: string;
     readonly attachmentId: string;
     readonly metadata: CreateAttachmentUploadIntentInput;
   }): Promise<CreateAttachmentResult> {
@@ -174,15 +187,21 @@ class MemoryAttachmentRepository implements AttachmentRepository {
     return { kind: "ok", attachment: this.attachment };
   }
 
-  async listAttachments(): Promise<readonly AttachmentRecord[]> {
+  async listAttachments(
+    _userId: string,
+  ): Promise<readonly AttachmentRecord[]> {
     return this.attachment === undefined ? [] : [this.attachment];
   }
 
-  async getAttachment(): Promise<AttachmentRecord | null> {
+  async getAttachment(
+    _userId: string,
+  ): Promise<AttachmentRecord | null> {
     return this.attachment ?? null;
   }
 
-  async completeUpload(): Promise<CompleteAttachmentResult> {
+  async completeUpload(_input: {
+    readonly userId: string;
+  }): Promise<CompleteAttachmentResult> {
     if (this.attachment === undefined) return { kind: "not_found" };
     this.attachment = {
       ...this.attachment,
@@ -194,6 +213,7 @@ class MemoryAttachmentRepository implements AttachmentRepository {
   }
 
   async failAttachment(input: {
+    readonly userId: string;
     readonly failureCode: string;
   }): Promise<void> {
     if (this.attachment !== undefined) {

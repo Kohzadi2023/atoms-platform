@@ -2,6 +2,7 @@ import type {
   DatabaseActionInput,
   JsonValue,
   ProvisionDatabaseInput,
+  WorkspaceRole,
 } from "@atoms/contracts";
 import { JsonValueSchema } from "@atoms/contracts";
 import {
@@ -32,20 +33,28 @@ export type DestroyDatabaseOperationResult =
   | { readonly kind: "invalid_status"; readonly status: string };
 
 export interface DatabaseControlRepository {
+  getProjectWorkspaceMembership(
+    userId: string,
+    projectId: string,
+  ): Promise<{ readonly workspaceId: string; readonly role: WorkspaceRole } | null>;
   createDatabaseOperation(
+    userId: string,
     projectId: string,
     idempotencyKey: string,
     input: ProvisionDatabaseInput,
     now: Date,
   ): Promise<CreateDatabaseOperationResult>;
   getDatabaseInstance(
+    userId: string,
     projectId: string,
     databaseInstanceId: string,
   ): Promise<DatabaseInstanceRecord | null>;
   getLatestMigrationArtifact(
+    userId: string,
     projectId: string,
   ): Promise<MigrationArtifactRecord | null>;
   requestDatabaseAction(
+    userId: string,
     projectId: string,
     databaseInstanceId: string,
     input: DatabaseActionInput,
@@ -75,7 +84,36 @@ export class PrismaDatabaseControlRepository
       options.providerCredentialSecretRef ?? "env://SUPABASE_ACCESS_TOKEN";
   }
 
+  async getProjectWorkspaceMembership(
+    userId: string,
+    projectId: string,
+  ): Promise<{ readonly workspaceId: string; readonly role: WorkspaceRole } | null> {
+    const membership = await this.#prisma.membership.findFirst({
+      where: {
+        userId,
+        workspace: {
+          projects: {
+            some: {
+              id: projectId,
+              archivedAt: null,
+            },
+          },
+        },
+      },
+      select: {
+        workspaceId: true,
+        role: true,
+      },
+    });
+    if (membership === null) return null;
+    return {
+      workspaceId: membership.workspaceId,
+      role: membership.role,
+    };
+  }
+
   async createDatabaseOperation(
+    userId: string,
     projectId: string,
     idempotencyKey: string,
     input: ProvisionDatabaseInput,
@@ -99,7 +137,15 @@ export class PrismaDatabaseControlRepository
           }
 
           const project = await transaction.project.findFirst({
-            where: { id: projectId, archivedAt: null },
+            where: {
+              id: projectId,
+              archivedAt: null,
+              workspace: {
+                memberships: {
+                  some: { userId },
+                },
+              },
+            },
             select: { id: true, workspaceId: true, name: true },
           });
           if (project === null) return { kind: "project_not_found" };
@@ -190,20 +236,42 @@ export class PrismaDatabaseControlRepository
   }
 
   async getDatabaseInstance(
+    userId: string,
     projectId: string,
     databaseInstanceId: string,
   ): Promise<DatabaseInstanceRecord | null> {
     const database = await this.#prisma.databaseInstance.findFirst({
-      where: { id: databaseInstanceId, projectId },
+      where: {
+        id: databaseInstanceId,
+        projectId,
+        project: {
+          workspace: {
+            memberships: {
+              some: { userId },
+            },
+          },
+        },
+      },
     });
     return database === null ? null : toDatabaseRecord(database);
   }
 
   async getLatestMigrationArtifact(
+    userId: string,
     projectId: string,
   ): Promise<MigrationArtifactRecord | null> {
     const artifact = await this.#prisma.migrationArtifact.findFirst({
-      where: { projectId, status: "VALIDATED" },
+      where: {
+        projectId,
+        status: "VALIDATED",
+        project: {
+          workspace: {
+            memberships: {
+              some: { userId },
+            },
+          },
+        },
+      },
       orderBy: { createdAt: "desc" },
     });
     if (artifact === null) return null;
@@ -224,6 +292,7 @@ export class PrismaDatabaseControlRepository
   }
 
   requestDatabaseAction(
+    userId: string,
     projectId: string,
     databaseInstanceId: string,
     _input: DatabaseActionInput,
@@ -232,7 +301,17 @@ export class PrismaDatabaseControlRepository
     return this.#prisma.$transaction(
       async (transaction): Promise<DestroyDatabaseOperationResult> => {
         const current = await transaction.databaseInstance.findFirst({
-          where: { id: databaseInstanceId, projectId },
+          where: {
+            id: databaseInstanceId,
+            projectId,
+            project: {
+              workspace: {
+                memberships: {
+                  some: { userId },
+                },
+              },
+            },
+          },
           include: { migrationArtifact: { select: { sourceRunId: true } } },
         });
         if (current === null) return { kind: "not_found" };

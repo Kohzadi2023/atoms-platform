@@ -39,6 +39,57 @@ export const CreateProjectInputSchema = z
 
 export type CreateProjectInput = z.infer<typeof CreateProjectInputSchema>;
 
+export const WorkspaceRoleSchema = z.enum(["OWNER", "ADMIN", "MEMBER"]);
+
+export type WorkspaceRole = z.infer<typeof WorkspaceRoleSchema>;
+
+export const WorkspaceSummarySchema = z
+  .object({
+    id: z.string().uuid(),
+    name: z.string(),
+    slug: z.string(),
+  })
+  .strict();
+
+export type WorkspaceSummary = z.infer<typeof WorkspaceSummarySchema>;
+
+export const WorkspaceMembershipSummarySchema = z
+  .object({
+    workspace: WorkspaceSummarySchema,
+    role: WorkspaceRoleSchema,
+  })
+  .strict();
+
+export type WorkspaceMembershipSummary = z.infer<
+  typeof WorkspaceMembershipSummarySchema
+>;
+
+export const AuthenticatedUserSchema = z
+  .object({
+    userId: z.string().trim().min(1).max(191),
+    subject: z.string().trim().min(1).max(191),
+    memberships: z.array(WorkspaceMembershipSummarySchema).max(1_000),
+  })
+  .strict();
+
+export type AuthenticatedUser = z.infer<typeof AuthenticatedUserSchema>;
+
+export const GetMeResponseSchema = AuthenticatedUserSchema;
+
+export type GetMeResponse = z.infer<typeof GetMeResponseSchema>;
+
+export const ListWorkspacesResponseSchema = z
+  .object({
+    items: z.array(WorkspaceSummarySchema).max(1_000),
+  })
+  .strict();
+
+export type ListWorkspacesResponse = z.infer<typeof ListWorkspacesResponseSchema>;
+
+export const GetWorkspaceResponseSchema = WorkspaceMembershipSummarySchema;
+
+export type GetWorkspaceResponse = z.infer<typeof GetWorkspaceResponseSchema>;
+
 export const ProjectResponseSchema = z
   .object({
     id: z.string().uuid(),

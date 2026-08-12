@@ -26,6 +26,7 @@ import type {
   CreateRunWithIdempotencyResult,
   ControlRepository,
   PutProjectFileResult,
+  WorkspaceMembershipRecord,
 } from "./repository.js";
 import type { RunQueue } from "./run-queue.js";
 
@@ -50,6 +51,30 @@ class MemoryRepository implements ControlRepository {
   #runCounter = 0;
   #fileCounter = 0;
 
+  async listWorkspaceMemberships(
+    userId: string,
+  ): Promise<readonly WorkspaceMembershipRecord[]> {
+    if (userId !== "user-test") return [];
+    return [
+      {
+        workspace: {
+          id: WORKSPACE_ID,
+          name: "Workspace",
+          slug: "workspace",
+        },
+        role: "OWNER",
+      },
+    ];
+  }
+
+  async getWorkspaceMembership(
+    userId: string,
+    workspaceId: string,
+  ): Promise<WorkspaceMembershipRecord | null> {
+    const memberships = await this.listWorkspaceMemberships(userId);
+    return memberships.find((membership) => membership.workspace.id === workspaceId) ?? null;
+  }
+
   async createProject(input: CreateProjectInput): Promise<ProjectRecord> {
     const duplicate = [...this.projects.values()].some(
       (project) =>
@@ -73,17 +98,19 @@ class MemoryRepository implements ControlRepository {
     return project;
   }
 
-  async getProject(projectId: string): Promise<ProjectRecord | null> {
+  async getProject(_userId: string, projectId: string): Promise<ProjectRecord | null> {
     const project = this.projects.get(projectId);
     return project === undefined || project.archivedAt !== null ? null : project;
   }
 
   async createRun(
+    userId: string,
     projectId: string,
     prompt: string,
     attachmentIds: readonly string[] = [],
   ): Promise<RunRecord | null> {
     const result = await this.createRunWithIdempotency(
+      userId,
       projectId,
       prompt,
       `legacy-${uuid(this.#runCounter + 5000)}`,
@@ -94,6 +121,7 @@ class MemoryRepository implements ControlRepository {
   }
 
   async createRunWithIdempotency(
+    _userId: string,
     projectId: string,
     prompt: string,
     idempotencyKey: string,
@@ -146,11 +174,12 @@ class MemoryRepository implements ControlRepository {
     return { kind: "ok", run, replayed: false };
   }
 
-  async getRun(runId: string): Promise<RunRecord | null> {
+  async getRun(_userId: string, runId: string): Promise<RunRecord | null> {
     return this.runs.get(runId) ?? null;
   }
 
   async transitionRun(
+    _userId: string,
     runId: string,
     expectedStatus: AgentRunStatus,
     expectedControlVersion: number,
@@ -204,6 +233,7 @@ class MemoryRepository implements ControlRepository {
   }
 
   async listRunEventsAfter(
+    _userId: string,
     runId: string,
     sequence: number,
     limit: number,
@@ -214,7 +244,10 @@ class MemoryRepository implements ControlRepository {
       .slice(0, limit);
   }
 
-  async listRunArtifacts(runId: string): Promise<readonly RunArtifactRecord[]> {
+  async listRunArtifacts(
+    _userId: string,
+    runId: string,
+  ): Promise<readonly RunArtifactRecord[]> {
     return this.events
       .filter(
         (event) =>
@@ -229,6 +262,7 @@ class MemoryRepository implements ControlRepository {
   }
 
   async listProjectFiles(
+    _userId: string,
     projectId: string,
   ): Promise<readonly ProjectFileRecord[] | null> {
     if (!this.projects.has(projectId)) return null;
@@ -246,6 +280,7 @@ class MemoryRepository implements ControlRepository {
   }
 
   async getProjectFile(
+    _userId: string,
     projectId: string,
     filePath: string,
     version?: number,
@@ -263,11 +298,12 @@ class MemoryRepository implements ControlRepository {
   }
 
   async putProjectFile(
+    _userId: string,
     projectId: string,
     input: FileContentInput,
   ): Promise<PutProjectFileResult> {
     if (!this.projects.has(projectId)) return { kind: "project_not_found" };
-    const latest = await this.getProjectFile(projectId, input.filePath);
+    const latest = await this.getProjectFile("user-test", projectId, input.filePath);
     const actualVersion = latest?.version ?? null;
     if (
       (input.expectedVersion === 0 && latest !== null) ||
@@ -320,6 +356,7 @@ async function fixture(corsOrigins: readonly string[] = []): Promise<{
   const app = await buildControlApi({
     repository,
     runQueue: queue,
+    authRequired: false,
     now: () => FIXED_NOW,
     ssePollIntervalMs: 1,
     sseHeartbeatMs: 10,
@@ -337,7 +374,7 @@ async function createProjectAndRun(
     name: "Atoms",
     slug: "atoms",
   });
-  const run = await repository.createRun(PROJECT_ID, "Build a CRM");
+  const run = await repository.createRun("user-test", PROJECT_ID, "Build a CRM");
   if (run === null) throw new Error("Run fixture was not created");
   return run;
 }
@@ -915,7 +952,7 @@ test("queue failure is compensated by marking a persisted run FAILED", async () 
 
     assert.equal(response.statusCode, 503);
     assert.equal(response.json().error.code, "RUN_QUEUE_UNAVAILABLE");
-    assert.equal((await repository.getRun(RUN_ID))?.status, "FAILED");
+    assert.equal((await repository.getRun("user-test", RUN_ID))?.status, "FAILED");
   } finally {
     await app.close();
   }

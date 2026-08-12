@@ -23,6 +23,7 @@
     "bullmq": "catalog:",
     "fastify": "catalog:",
     "fastify-type-provider-zod": "catalog:",
+    "jose": "6.1.2",
     "zod": "catalog:"
   },
   "devDependencies": {

@@ -3,6 +3,7 @@ import type {
   CreateProjectInput,
   FileContentInput,
   JsonValue,
+  WorkspaceRole,
 } from "@atoms/contracts";
 import {
   ArtifactCreatedEventPayloadV1Schema,
@@ -45,22 +46,43 @@ export type CreateRunWithIdempotencyResult =
       readonly run: RunRecord;
     };
 
+export interface WorkspaceSummaryRecord {
+  readonly id: string;
+  readonly name: string;
+  readonly slug: string;
+}
+
+export interface WorkspaceMembershipRecord {
+  readonly workspace: WorkspaceSummaryRecord;
+  readonly role: WorkspaceRole;
+}
+
 export interface ControlRepository {
+  listWorkspaceMemberships(
+    userId: string,
+  ): Promise<readonly WorkspaceMembershipRecord[]>;
+  getWorkspaceMembership(
+    userId: string,
+    workspaceId: string,
+  ): Promise<WorkspaceMembershipRecord | null>;
   createProject(input: CreateProjectInput): Promise<ProjectRecord>;
-  getProject(projectId: string): Promise<ProjectRecord | null>;
+  getProject(userId: string, projectId: string): Promise<ProjectRecord | null>;
   createRun(
+    userId: string,
     projectId: string,
     prompt: string,
     attachmentIds?: readonly string[],
   ): Promise<RunRecord | null>;
   createRunWithIdempotency(
+    userId: string,
     projectId: string,
     prompt: string,
     idempotencyKey: string,
     attachmentIds?: readonly string[],
   ): Promise<CreateRunWithIdempotencyResult>;
-  getRun(runId: string): Promise<RunRecord | null>;
+  getRun(userId: string, runId: string): Promise<RunRecord | null>;
   transitionRun(
+    userId: string,
     runId: string,
     expectedStatus: RunRecord["status"],
     expectedControlVersion: number,
@@ -72,20 +94,27 @@ export interface ControlRepository {
     error: JsonValue,
   ): Promise<void>;
   listRunEventsAfter(
+    userId: string,
     runId: string,
     sequence: number,
     limit: number,
   ): Promise<readonly RunEventRecord[]>;
-  listRunArtifacts(runId: string): Promise<readonly RunArtifactRecord[]>;
+  listRunArtifacts(
+    userId: string,
+    runId: string,
+  ): Promise<readonly RunArtifactRecord[]>;
   listProjectFiles(
+    userId: string,
     projectId: string,
   ): Promise<readonly ProjectFileRecord[] | null>;
   getProjectFile(
+    userId: string,
     projectId: string,
     filePath: string,
     version?: number,
   ): Promise<ProjectFileRecord | null>;
   putProjectFile(
+    userId: string,
     projectId: string,
     input: FileContentInput,
   ): Promise<PutProjectFileResult>;
@@ -97,6 +126,64 @@ export class PrismaControlRepository implements ControlRepository {
 
   constructor(prisma: PrismaClient) {
     this.#prisma = prisma;
+  }
+
+  async listWorkspaceMemberships(
+    userId: string,
+  ): Promise<readonly WorkspaceMembershipRecord[]> {
+    const memberships = await this.#prisma.membership.findMany({
+      where: { userId },
+      include: {
+        workspace: {
+          select: {
+            id: true,
+            name: true,
+            slug: true,
+          },
+        },
+      },
+      orderBy: { createdAt: "asc" },
+    });
+    return memberships.map((membership) => ({
+      workspace: {
+        id: membership.workspace.id,
+        name: membership.workspace.name,
+        slug: membership.workspace.slug,
+      },
+      role: membership.role,
+    }));
+  }
+
+  async getWorkspaceMembership(
+    userId: string,
+    workspaceId: string,
+  ): Promise<WorkspaceMembershipRecord | null> {
+    const membership = await this.#prisma.membership.findUnique({
+      where: {
+        workspaceId_userId: {
+          workspaceId,
+          userId,
+        },
+      },
+      include: {
+        workspace: {
+          select: {
+            id: true,
+            name: true,
+            slug: true,
+          },
+        },
+      },
+    });
+    if (membership === null) return null;
+    return {
+      workspace: {
+        id: membership.workspace.id,
+        name: membership.workspace.name,
+        slug: membership.workspace.slug,
+      },
+      role: membership.role,
+    };
   }
 
   async createProject(input: CreateProjectInput): Promise<ProjectRecord> {
@@ -120,18 +207,28 @@ export class PrismaControlRepository implements ControlRepository {
     }
   }
 
-  async getProject(projectId: string): Promise<ProjectRecord | null> {
+  async getProject(userId: string, projectId: string): Promise<ProjectRecord | null> {
     return this.#prisma.project.findFirst({
-      where: { id: projectId, archivedAt: null },
+      where: {
+        id: projectId,
+        archivedAt: null,
+        workspace: {
+          memberships: {
+            some: { userId },
+          },
+        },
+      },
     });
   }
 
   async createRun(
+    userId: string,
     projectId: string,
     prompt: string,
     attachmentIds: readonly string[] = [],
   ): Promise<RunRecord | null> {
     const result = await this.createRunWithIdempotency(
+      userId,
       projectId,
       prompt,
       `legacy-${cryptoRandomKey()}`,
@@ -143,6 +240,7 @@ export class PrismaControlRepository implements ControlRepository {
   }
 
   async createRunWithIdempotency(
+    userId: string,
     projectId: string,
     prompt: string,
     idempotencyKey: string,
@@ -151,7 +249,15 @@ export class PrismaControlRepository implements ControlRepository {
     try {
       return await this.#prisma.$transaction(async (transaction) => {
         const project = await transaction.project.findFirst({
-          where: { id: projectId, archivedAt: null },
+          where: {
+            id: projectId,
+            archivedAt: null,
+            workspace: {
+              memberships: {
+                some: { userId },
+              },
+            },
+          },
           select: { id: true, workspaceId: true },
         });
         if (project === null) {
@@ -261,18 +367,46 @@ export class PrismaControlRepository implements ControlRepository {
     }
   }
 
-  async getRun(runId: string): Promise<RunRecord | null> {
-    const run = await this.#prisma.agentRun.findUnique({ where: { id: runId } });
+  async getRun(userId: string, runId: string): Promise<RunRecord | null> {
+    const run = await this.#prisma.agentRun.findFirst({
+      where: {
+        id: runId,
+        project: {
+          workspace: {
+            memberships: {
+              some: { userId },
+            },
+          },
+        },
+      },
+    });
     return run === null ? null : toRunRecord(run);
   }
 
   async transitionRun(
+    userId: string,
     runId: string,
     expectedStatus: RunRecord["status"],
     expectedControlVersion: number,
     patch: RunStatusPatch,
   ): Promise<RunRecord | null> {
     return this.#prisma.$transaction(async (transaction) => {
+      const authorizedRun = await transaction.agentRun.findFirst({
+        where: {
+          id: runId,
+          project: {
+            workspace: {
+              memberships: {
+                some: { userId },
+              },
+            },
+          },
+        },
+        select: { id: true },
+      });
+      if (authorizedRun === null) {
+        return null;
+      }
       const update = await transaction.agentRun.updateMany({
         where: {
           id: runId,
@@ -329,10 +463,26 @@ export class PrismaControlRepository implements ControlRepository {
   }
 
   async listRunEventsAfter(
+    userId: string,
     runId: string,
     sequence: number,
     limit: number,
   ): Promise<readonly RunEventRecord[]> {
+    const authorized = await this.#prisma.agentRun.findFirst({
+      where: {
+        id: runId,
+        project: {
+          workspace: {
+            memberships: {
+              some: { userId },
+            },
+          },
+        },
+      },
+      select: { id: true },
+    });
+    if (authorized === null) return [];
+
     const events = await this.#prisma.runEvent.findMany({
       where: { runId, sequence: { gt: sequence } },
       orderBy: { sequence: "asc" },
@@ -341,7 +491,25 @@ export class PrismaControlRepository implements ControlRepository {
     return events.map(toRunEventRecord);
   }
 
-  async listRunArtifacts(runId: string): Promise<readonly RunArtifactRecord[]> {
+  async listRunArtifacts(
+    userId: string,
+    runId: string,
+  ): Promise<readonly RunArtifactRecord[]> {
+    const authorized = await this.#prisma.agentRun.findFirst({
+      where: {
+        id: runId,
+        project: {
+          workspace: {
+            memberships: {
+              some: { userId },
+            },
+          },
+        },
+      },
+      select: { id: true },
+    });
+    if (authorized === null) return [];
+
     const events = await this.#prisma.runEvent.findMany({
       where: { runId, eventType: "artifact.created" },
       orderBy: { sequence: "asc" },
@@ -350,10 +518,19 @@ export class PrismaControlRepository implements ControlRepository {
   }
 
   async listProjectFiles(
+    userId: string,
     projectId: string,
   ): Promise<readonly ProjectFileRecord[] | null> {
     const project = await this.#prisma.project.findFirst({
-      where: { id: projectId, archivedAt: null },
+      where: {
+        id: projectId,
+        archivedAt: null,
+        workspace: {
+          memberships: {
+            some: { userId },
+          },
+        },
+      },
       select: { id: true },
     });
     if (project === null) return null;
@@ -366,6 +543,7 @@ export class PrismaControlRepository implements ControlRepository {
   }
 
   getProjectFile(
+    userId: string,
     projectId: string,
     filePath: string,
     version?: number,
@@ -373,6 +551,13 @@ export class PrismaControlRepository implements ControlRepository {
     return this.#prisma.projectFile.findFirst({
       where: {
         projectId,
+        project: {
+          workspace: {
+            memberships: {
+              some: { userId },
+            },
+          },
+        },
         filePath,
         ...(version === undefined ? {} : { version }),
       },
@@ -381,6 +566,7 @@ export class PrismaControlRepository implements ControlRepository {
   }
 
   async putProjectFile(
+    userId: string,
     projectId: string,
     input: FileContentInput,
   ): Promise<PutProjectFileResult> {
@@ -388,7 +574,15 @@ export class PrismaControlRepository implements ControlRepository {
       return await this.#prisma.$transaction(
         async (transaction): Promise<PutProjectFileResult> => {
           const project = await transaction.project.findFirst({
-            where: { id: projectId, archivedAt: null },
+            where: {
+              id: projectId,
+              archivedAt: null,
+              workspace: {
+                memberships: {
+                  some: { userId },
+                },
+              },
+            },
             select: { id: true },
           });
           if (project === null) {
@@ -422,7 +616,7 @@ export class PrismaControlRepository implements ControlRepository {
       );
     } catch (error) {
       if (prismaErrorCode(error) === "P2002" || prismaErrorCode(error) === "P2034") {
-        const latest = await this.getProjectFile(projectId, input.filePath);
+        const latest = await this.getProjectFile(userId, projectId, input.filePath);
         return {
           kind: "version_conflict",
           actualVersion: latest?.version ?? null,

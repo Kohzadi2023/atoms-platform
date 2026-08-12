@@ -15,6 +15,10 @@ import {
 import type { DatabaseOperationQueue } from "./database-operation-queue.js";
 import type { DatabaseControlRepository } from "./database-repository.js";
 import { ApiError } from "./errors.js";
+import {
+  requireAdministrativeRole,
+  workspaceAccessDeniedError,
+} from "./authorization.js";
 
 const ProjectParamsSchema = z.object({ id: z.string().uuid() }).strict();
 const DatabaseParamsSchema = z
@@ -56,7 +60,21 @@ export function registerDatabaseRoutes(
       },
     },
     async (request, reply) => {
+      const principal = request.principal;
+      if (principal === undefined) {
+        throw new ApiError(401, "AUTHENTICATION_REQUIRED", "Authentication required");
+      }
+      const membership = await options.repository.getProjectWorkspaceMembership(
+        principal.userId,
+        request.params.id,
+      );
+      if (membership === null) {
+        throw workspaceAccessDeniedError();
+      }
+      requireAdministrativeRole(membership.role, "provision_database");
+
       const result = await options.repository.createDatabaseOperation(
+        principal.userId,
         request.params.id,
         request.headers["idempotency-key"],
         request.body,
@@ -127,7 +145,21 @@ export function registerDatabaseRoutes(
       },
     },
     async (request, reply) => {
+      const principal = request.principal;
+      if (principal === undefined) {
+        throw new ApiError(401, "AUTHENTICATION_REQUIRED", "Authentication required");
+      }
+      const membership = await options.repository.getProjectWorkspaceMembership(
+        principal.userId,
+        request.params.id,
+      );
+      if (membership === null) {
+        throw workspaceAccessDeniedError();
+      }
+      requireAdministrativeRole(membership.role, "read_migration_artifact");
+
       const artifact = await options.repository.getLatestMigrationArtifact(
+        principal.userId,
         request.params.id,
       );
       if (artifact === null) {
@@ -151,7 +183,21 @@ export function registerDatabaseRoutes(
       },
     },
     async (request, reply) => {
+      const principal = request.principal;
+      if (principal === undefined) {
+        throw new ApiError(401, "AUTHENTICATION_REQUIRED", "Authentication required");
+      }
+      const membership = await options.repository.getProjectWorkspaceMembership(
+        principal.userId,
+        request.params.id,
+      );
+      if (membership === null) {
+        throw workspaceAccessDeniedError();
+      }
+      requireAdministrativeRole(membership.role, "read_database_instance");
+
       const database = await options.repository.getDatabaseInstance(
+        principal.userId,
         request.params.id,
         request.params.databaseId,
       );
@@ -173,7 +219,21 @@ export function registerDatabaseRoutes(
       },
     },
     async (request, reply) => {
+      const principal = request.principal;
+      if (principal === undefined) {
+        throw new ApiError(401, "AUTHENTICATION_REQUIRED", "Authentication required");
+      }
+      const membership = await options.repository.getProjectWorkspaceMembership(
+        principal.userId,
+        request.params.id,
+      );
+      if (membership === null) {
+        throw workspaceAccessDeniedError();
+      }
+      requireAdministrativeRole(membership.role, "control_database_instance");
+
       const result = await options.repository.requestDatabaseAction(
+        principal.userId,
         request.params.id,
         request.params.databaseId,
         request.body,

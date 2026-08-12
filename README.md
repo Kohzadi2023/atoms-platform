@@ -88,6 +88,35 @@ schema at `packages/db/prisma/schema.prisma`.
 
 ## Phase 2 services
 
+## Authentication and workspace authorization
+
+The Control API now enforces authenticated bearer tokens on every endpoint
+except `/healthz` and `/readyz`.
+
+- Token verification is strict OIDC/JWT with JWKS signature validation.
+- Required claim checks include issuer, audience, expiration, not-before, and
+  subject (`sub`).
+- Unsigned or unverified tokens are rejected.
+- The internal user ID is derived from the verified `sub` claim.
+- Cross-workspace resource requests are non-enumerating and return `404`.
+- Known-workspace role violations return structured `403` errors.
+
+New identity endpoints:
+
+- `GET /v1/me`
+- `GET /v1/workspaces`
+- `GET /v1/workspaces/:workspaceId`
+
+Auth configuration placeholders are documented in `.env.example`:
+
+- `AUTH_REQUIRED`
+- `AUTH_ISSUER_URL`
+- `AUTH_AUDIENCE`
+- `AUTH_JWKS_URL`
+
+See `docs/control-api-security-matrix.md` for route-to-role permissions,
+workspace isolation behavior, and error semantics.
+
 Configure `.env` with OpenAI, E2B, PostgreSQL, Redis, S3-compatible storage,
 ClamAV, and preview values. Point a
 wildcard DNS record for `*.PREVIEW_BASE_DOMAIN` at the preview gateway. For local

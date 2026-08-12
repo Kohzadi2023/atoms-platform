@@ -1,10 +1,13 @@
 import {
+  AuthenticatedUserSchema,
   CreateProjectInputSchema,
   CreateRunInputSchema,
   FileContentInputSchema,
   ProjectFileListResponseSchema,
   FileContentQuerySchema,
   FileContentResponseSchema,
+  GetWorkspaceResponseSchema,
+  ListWorkspacesResponseSchema,
   ProjectResponseSchema,
   RunArtifactListResponseSchema,
   RunActionInputSchema,
@@ -16,7 +19,7 @@ import {
   type RunAction,
 } from "@atoms/contracts";
 import cors from "@fastify/cors";
-import Fastify, { type FastifyInstance } from "fastify";
+import Fastify, { type FastifyInstance, type FastifyRequest } from "fastify";
 import {
   serializerCompiler,
   validatorCompiler,
@@ -35,6 +38,10 @@ import {
 } from "./domain.js";
 import { ApiError, RepositoryConflictError } from "./errors.js";
 import {
+  requireAdministrativeRole,
+  workspaceAccessDeniedError,
+} from "./authorization.js";
+import {
   registerDatabaseRoutes,
   type DatabaseRoutesOptions,
 } from "./database-routes.js";
@@ -42,6 +49,11 @@ import {
   registerAttachmentRoutes,
   type AttachmentRoutesOptions,
 } from "./attachment-routes.js";
+import {
+  type Authenticator,
+  InvalidAccessTokenError,
+  parseBearerToken,
+} from "./auth.js";
 import type {
   ControlRepository,
   CreateRunWithIdempotencyResult,
@@ -84,6 +96,8 @@ const ErrorResponseSchema = z
 
 const errorResponses = {
   400: ErrorResponseSchema,
+  401: ErrorResponseSchema,
+  403: ErrorResponseSchema,
   404: ErrorResponseSchema,
   409: ErrorResponseSchema,
   500: ErrorResponseSchema,
@@ -106,6 +120,8 @@ export interface BuildControlApiOptions {
   readonly sseMaxConnectionMs?: number;
   readonly now?: () => Date;
   readonly corsOrigins?: readonly string[];
+  readonly authRequired?: boolean;
+  readonly authenticator?: Authenticator;
   readonly databaseOperations?: DatabaseRoutesOptions;
   readonly attachmentOperations?: AttachmentRoutesOptions;
 }
@@ -117,14 +133,139 @@ export async function buildControlApi(
   app.setValidatorCompiler(validatorCompiler);
   app.setSerializerCompiler(serializerCompiler);
   const corsOrigins = options.corsOrigins ?? [];
+  const authRequired = options.authRequired ?? true;
+  if (authRequired && options.authenticator === undefined) {
+    throw new Error("Authenticator is required when AUTH_REQUIRED is true");
+  }
+
   await app.register(cors, {
     origin: corsOrigins.length === 0 ? false : [...corsOrigins],
     methods: ["GET", "POST", "PUT", "OPTIONS"],
-    allowedHeaders: ["content-type", "last-event-id", "idempotency-key"],
+    allowedHeaders: [
+      "authorization",
+      "content-type",
+      "last-event-id",
+      "idempotency-key",
+    ],
   });
 
   const api = app.withTypeProvider<ZodTypeProvider>();
   const now = options.now ?? (() => new Date());
+  const syntheticPrincipal = {
+    userId: "user-test",
+    subject: "user-test",
+    issuer: "urn:atoms:auth-disabled",
+    audience: ["atoms-control-api"],
+    issuedAt: Math.floor(now().getTime() / 1_000),
+    notBefore: Math.floor(now().getTime() / 1_000),
+    expiresAt: Math.floor(now().getTime() / 1_000) + 3600,
+  } as const;
+
+  app.get("/healthz", async (_request, reply) =>
+    reply.code(200).send({ status: "ok" }),
+  );
+  app.get("/readyz", async (_request, reply) =>
+    reply.code(200).send({ status: "ready" }),
+  );
+
+  app.addHook("onRequest", async (request) => {
+    if (
+      request.url === "/healthz" ||
+      request.url.startsWith("/healthz?") ||
+      request.url === "/readyz" ||
+      request.url.startsWith("/readyz?")
+    ) {
+      return;
+    }
+    if (!authRequired) {
+      request.principal = syntheticPrincipal;
+      return;
+    }
+    const accessToken = parseBearerToken(request.headers.authorization);
+    if (accessToken === null) {
+      throw new ApiError(
+        401,
+        "AUTHENTICATION_REQUIRED",
+        "A valid bearer access token is required",
+      );
+    }
+    try {
+      request.principal = await options.authenticator!.authenticate(accessToken);
+    } catch (error) {
+      if (error instanceof InvalidAccessTokenError) {
+        throw new ApiError(
+          401,
+          "INVALID_ACCESS_TOKEN",
+          "Access token verification failed",
+        );
+      }
+      throw error;
+    }
+  });
+
+  api.get(
+    "/v1/me",
+    {
+      schema: {
+        operationId: "getMe",
+        response: { 200: AuthenticatedUserSchema, ...errorResponses },
+      },
+    },
+    async (request, reply) => {
+      const principal = requirePrincipal(request);
+      const memberships = await options.repository.listWorkspaceMemberships(
+        principal.userId,
+      );
+      return reply.code(200).send({
+        userId: principal.userId,
+        subject: principal.subject,
+        memberships: [...memberships],
+      });
+    },
+  );
+
+  api.get(
+    "/v1/workspaces",
+    {
+      schema: {
+        operationId: "listWorkspaces",
+        response: { 200: ListWorkspacesResponseSchema, ...errorResponses },
+      },
+    },
+    async (request, reply) => {
+      const principal = requirePrincipal(request);
+      const memberships = await options.repository.listWorkspaceMemberships(
+        principal.userId,
+      );
+      return reply.code(200).send({
+        items: memberships.map((membership) => membership.workspace),
+      });
+    },
+  );
+
+  const WorkspaceIdParamsSchema = z.object({ workspaceId: z.string().uuid() }).strict();
+
+  api.get(
+    "/v1/workspaces/:workspaceId",
+    {
+      schema: {
+        operationId: "getWorkspaceMembership",
+        params: WorkspaceIdParamsSchema,
+        response: { 200: GetWorkspaceResponseSchema, ...errorResponses },
+      },
+    },
+    async (request, reply) => {
+      const principal = requirePrincipal(request);
+      const membership = await options.repository.getWorkspaceMembership(
+        principal.userId,
+        request.params.workspaceId,
+      );
+      if (membership === null) {
+        throw workspaceAccessDeniedError(request.params.workspaceId);
+      }
+      return reply.code(200).send(membership);
+    },
+  );
 
   if (options.databaseOperations !== undefined) {
     registerDatabaseRoutes(api, {
@@ -149,6 +290,15 @@ export async function buildControlApi(
       },
     },
     async (request, reply) => {
+      const principal = requirePrincipal(request);
+      const membership = await options.repository.getWorkspaceMembership(
+        principal.userId,
+        request.body.workspaceId,
+      );
+      if (membership === null) {
+        throw workspaceAccessDeniedError(request.body.workspaceId);
+      }
+      requireAdministrativeRole(membership.role, "create_project");
       try {
         const project = await options.repository.createProject(request.body);
         return reply.code(201).send(toProjectResponse(project));
@@ -173,7 +323,11 @@ export async function buildControlApi(
       },
     },
     async (request, reply) => {
-      const project = await options.repository.getProject(request.params.id);
+      const principal = requirePrincipal(request);
+      const project = await options.repository.getProject(
+        principal.userId,
+        request.params.id,
+      );
       if (project === null) {
         throw new ApiError(404, "PROJECT_NOT_FOUND", "Project not found");
       }
@@ -193,9 +347,11 @@ export async function buildControlApi(
       },
     },
     async (request, reply) => {
+      const principal = requirePrincipal(request);
       let result: CreateRunWithIdempotencyResult;
       try {
         result = await options.repository.createRunWithIdempotency(
+          principal.userId,
           request.params.id,
           request.body.prompt,
           request.headers["idempotency-key"],
@@ -267,7 +423,8 @@ export async function buildControlApi(
       },
     },
     async (request, reply) => {
-      const run = await options.repository.getRun(request.params.runId);
+      const principal = requirePrincipal(request);
+      const run = await options.repository.getRun(principal.userId, request.params.runId);
       if (run === null) {
         throw new ApiError(404, "RUN_NOT_FOUND", "Run not found");
       }
@@ -285,11 +442,12 @@ export async function buildControlApi(
       },
     },
     async (request, reply) => {
-      const run = await options.repository.getRun(request.params.runId);
+      const principal = requirePrincipal(request);
+      const run = await options.repository.getRun(principal.userId, request.params.runId);
       if (run === null) {
         throw new ApiError(404, "RUN_NOT_FOUND", "Run not found");
       }
-      const artifacts = await options.repository.listRunArtifacts(run.id);
+      const artifacts = await options.repository.listRunArtifacts(principal.userId, run.id);
       return reply.code(200).send({
         items: artifacts.map(toRunArtifactResponse),
       });
@@ -307,7 +465,8 @@ export async function buildControlApi(
       },
     },
     async (request, reply) => {
-      const run = await options.repository.getRun(request.params.runId);
+      const principal = requirePrincipal(request);
+      const run = await options.repository.getRun(principal.userId, request.params.runId);
       if (run === null) {
         throw new ApiError(404, "RUN_NOT_FOUND", "Run not found");
       }
@@ -335,6 +494,7 @@ export async function buildControlApi(
       try {
         while (!disconnected && Date.now() - connectedAt < maxConnectionMs) {
           const events = await options.repository.listRunEventsAfter(
+            principal.userId,
             run.id,
             cursor,
             100,
@@ -362,7 +522,7 @@ export async function buildControlApi(
             continue;
           }
 
-          const latestRun = await options.repository.getRun(run.id);
+          const latestRun = await options.repository.getRun(principal.userId, run.id);
           if (
             latestRun === null ||
             TERMINAL_RUN_STATUSES.has(latestRun.status)
@@ -395,7 +555,11 @@ export async function buildControlApi(
       },
     },
     async (request, reply) => {
-      const current = await options.repository.getRun(request.params.runId);
+      const principal = requirePrincipal(request);
+      const current = await options.repository.getRun(
+        principal.userId,
+        request.params.runId,
+      );
       if (current === null) {
         throw new ApiError(404, "RUN_NOT_FOUND", "Run not found");
       }
@@ -411,13 +575,14 @@ export async function buildControlApi(
         now(),
       );
       const updated = await options.repository.transitionRun(
+        principal.userId,
         current.id,
         current.status,
         current.controlVersion,
         transition.patch,
       );
       if (updated === null) {
-        const latest = await options.repository.getRun(current.id);
+        const latest = await options.repository.getRun(principal.userId, current.id);
         throw concurrencyError(latest);
       }
 
@@ -462,7 +627,11 @@ export async function buildControlApi(
       },
     },
     async (request, reply) => {
-      const files = await options.repository.listProjectFiles(request.params.id);
+      const principal = requirePrincipal(request);
+      const files = await options.repository.listProjectFiles(
+        principal.userId,
+        request.params.id,
+      );
       if (files === null) {
         throw new ApiError(404, "PROJECT_NOT_FOUND", "Project not found");
       }
@@ -483,7 +652,9 @@ export async function buildControlApi(
       },
     },
     async (request, reply) => {
+      const principal = requirePrincipal(request);
       const file = await options.repository.getProjectFile(
+        principal.userId,
         request.params.id,
         request.query.filePath,
         request.query.version,
@@ -506,7 +677,9 @@ export async function buildControlApi(
       },
     },
     async (request, reply) => {
+      const principal = requirePrincipal(request);
       const result = await options.repository.putProjectFile(
+        principal.userId,
         request.params.id,
         request.body,
       );
@@ -589,6 +762,13 @@ function parseLastEventId(value: string | undefined): number {
     );
   }
   return parsed;
+}
+
+function requirePrincipal(request: FastifyRequest) {
+  if (request.principal === undefined) {
+    throw new ApiError(401, "AUTHENTICATION_REQUIRED", "Authentication required");
+  }
+  return request.principal;
 }
 
 function assertClientPreconditions(

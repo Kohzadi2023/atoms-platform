@@ -835,6 +835,48 @@ test("cross-workspace requests are non-enumerating across route families", async
   }
 });
 
+test("workspace membership endpoint is non-enumerating for unknown memberships", async () => {
+  const { app } = await fixture();
+  try {
+    const denied = await app.inject({
+      method: "GET",
+      url: `/v1/workspaces/${WORKSPACE_B}`,
+      headers: authHeader(TOKENS.member),
+    });
+    assert.equal(denied.statusCode, 404);
+    assert.equal(denied.json().error.code, "WORKSPACE_ACCESS_DENIED");
+
+    const allowed = await app.inject({
+      method: "GET",
+      url: `/v1/workspaces/${WORKSPACE_A}`,
+      headers: authHeader(TOKENS.member),
+    });
+    assert.equal(allowed.statusCode, 200);
+    assert.equal(allowed.json().workspace.id, WORKSPACE_A);
+  } finally {
+    await app.close();
+  }
+});
+
+test("cross-workspace run creation returns project not found", async () => {
+  const { app } = await fixture();
+  try {
+    const response = await app.inject({
+      method: "POST",
+      url: `/v1/projects/${PROJECT_B}/runs`,
+      headers: {
+        ...authHeader(TOKENS.member),
+        "idempotency-key": "cross-workspace-run-create-v1",
+      },
+      payload: { prompt: "Should be denied" },
+    });
+    assert.equal(response.statusCode, 404);
+    assert.equal(response.json().error.code, "PROJECT_NOT_FOUND");
+  } finally {
+    await app.close();
+  }
+});
+
 test("deterministic test authenticator injection succeeds for identity endpoints", async () => {
   const { app } = await fixture();
   try {

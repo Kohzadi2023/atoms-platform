@@ -11,6 +11,7 @@ import {
 } from "jose";
 
 import {
+  createDeterministicTestAuthenticator,
   InvalidAccessTokenError,
   OidcJwtAuthenticator,
   parseBearerToken,
@@ -107,6 +108,26 @@ test("bearer token parsing is strict", () => {
   assert.equal(parseBearerToken("Bearer"), null);
   assert.equal(parseBearerToken("Bearer token extra"), null);
   assert.equal(parseBearerToken("Bearer token-123"), "token-123");
+});
+
+test("deterministic test authenticator returns injected principal", async () => {
+  const authenticator = createDeterministicTestAuthenticator({
+    accessToken: "fixture-token",
+    principal: {
+      userId: "user-fixture",
+      subject: "sub-fixture",
+      audience: ["atoms-control-api"],
+    },
+  });
+
+  const principal = await authenticator.authenticate("fixture-token");
+  assert.equal(principal.userId, "user-fixture");
+  assert.equal(principal.subject, "sub-fixture");
+
+  await assert.rejects(
+    authenticator.authenticate("unknown-fixture-token"),
+    InvalidAccessTokenError,
+  );
 });
 
 async function generateSigningKeys(kid: string): Promise<{

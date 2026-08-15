@@ -467,23 +467,20 @@ export class PrismaControlRepository implements ControlRepository {
     sequence: number,
     limit: number,
   ): Promise<readonly RunEventRecord[]> {
-    const authorized = await this.#prisma.agentRun.findFirst({
+    const events = await this.#prisma.runEvent.findMany({
       where: {
-        id: runId,
-        project: {
-          workspace: {
-            memberships: {
-              some: { userId },
+        runId,
+        sequence: { gt: sequence },
+        run: {
+          project: {
+            workspace: {
+              memberships: {
+                some: { userId },
+              },
             },
           },
         },
       },
-      select: { id: true },
-    });
-    if (authorized === null) return [];
-
-    const events = await this.#prisma.runEvent.findMany({
-      where: { runId, sequence: { gt: sequence } },
       orderBy: { sequence: "asc" },
       take: limit,
     });
@@ -494,23 +491,20 @@ export class PrismaControlRepository implements ControlRepository {
     userId: string,
     runId: string,
   ): Promise<readonly RunArtifactRecord[]> {
-    const authorized = await this.#prisma.agentRun.findFirst({
+    const events = await this.#prisma.runEvent.findMany({
       where: {
-        id: runId,
-        project: {
-          workspace: {
-            memberships: {
-              some: { userId },
+        runId,
+        eventType: "artifact.created",
+        run: {
+          project: {
+            workspace: {
+              memberships: {
+                some: { userId },
+              },
             },
           },
         },
       },
-      select: { id: true },
-    });
-    if (authorized === null) return [];
-
-    const events = await this.#prisma.runEvent.findMany({
-      where: { runId, eventType: "artifact.created" },
       orderBy: { sequence: "asc" },
     });
     const normalized = events.map((event) => ({

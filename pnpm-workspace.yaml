@@ -11,7 +11,7 @@ allowBuilds:
 
 overrides:
   nanoid: 3.3.18
-  dompurify: 3.4.12
+  dompurify: 3.4.13
   e2b>undici: 8.9.0
   e2b>undici8: npm:undici@8.9.0
   "fast-uri@<3.1.5": 3.1.5
@@ -75,6 +75,6 @@ minimumReleaseAgeExclude:
   - react@19.2.8
   - react-dom@19.2.8
   - tailwindcss@4.3.3
-  - dompurify@3.4.12
+  - dompurify@3.4.13
   - postcss@8.5.25
   - sharp@0.35.3

@@ -247,6 +247,22 @@ Step 5 CI hardening update (2026-08-03):
   `phase3-preflight-live-evidence` (live path) artifacts to support audit
   review of preconditions and gate outcomes.
 
+Step 5 protected staging execution update (2026-08-04):
+
+- Baseline manual workflow run completed successfully with durability evidence.
+- Live manual workflow run failed in `provider-exit` preflight gate:
+  - Run: `Phase 3 staging / CHG-2026-08-04-PHASE3-LIVE #2`
+  - URL: `https://github.com/Kohzadi2023/atoms-platform/actions/runs/30917176997`
+  - Failed checks: `SUPABASE_ORGANIZATION_SLUG`, `VAULT_ADDR`, `VAULT_TOKEN`
+- Live preflight artifact was still uploaded (`phase3-preflight-live-evidence`),
+  and the failure remained fail-closed before any provider destructive/billable
+  operations.
+
+Next action:
+
+- Populate missing protected environment secrets/variables in `phase3-staging`
+  and re-run the same workflow inputs for the live path.
+
 ### Step 5 unblock prerequisites
 
 To execute Step 5 safely, all of the following are required:

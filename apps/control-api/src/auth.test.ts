@@ -72,6 +72,15 @@ test("OIDC authenticator verifies signature and claims", async () => {
       InvalidAccessTokenError,
     );
 
+    const missingNotBeforeToken = await createToken(signingKeys.privateKey, {
+      sub: "user-123",
+      nbf: null,
+    });
+    await assert.rejects(
+      authenticator.authenticate(missingNotBeforeToken),
+      InvalidAccessTokenError,
+    );
+
     const attackerKeys = await generateSigningKeys("kid-attacker");
     const invalidSignatureToken = await createToken(attackerKeys.privateKey, {
       sub: "user-123",
@@ -149,18 +158,20 @@ async function createToken(
     readonly iss?: string;
     readonly aud?: string;
     readonly exp?: number;
-    readonly nbf?: number;
+    readonly nbf?: number | null;
   },
 ): Promise<string> {
   const issuedAt = Math.floor(Date.now() / 1_000);
-  const payload = new SignJWT({})
+  let payload = new SignJWT({})
     .setProtectedHeader({ alg: "RS256", typ: "JWT" })
     .setSubject(claims.sub)
     .setIssuer(claims.iss ?? ISSUER)
     .setAudience(claims.aud ?? AUDIENCE)
-    .setIssuedAt(issuedAt)
-    .setNotBefore(claims.nbf ?? issuedAt - 5)
     .setExpirationTime(claims.exp ?? issuedAt + 300);
+  payload = payload.setIssuedAt(issuedAt);
+  if (claims.nbf !== null) {
+    payload = payload.setNotBefore(claims.nbf ?? issuedAt - 5);
+  }
   return payload.sign(privateKey);
 }
 

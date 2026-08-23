@@ -6,7 +6,7 @@ export interface AuthenticatedPrincipal {
   readonly issuer: string;
   readonly audience: readonly string[];
   readonly issuedAt: number | null;
-  readonly notBefore: number | null;
+  readonly notBefore: number;
   readonly expiresAt: number;
 }
 
@@ -53,6 +53,9 @@ export class OidcJwtAuthenticator implements Authenticator {
       if (typeof payload.exp !== "number") {
         throw new InvalidAccessTokenError("Token expiration claim is missing");
       }
+      if (typeof payload.nbf !== "number") {
+        throw new InvalidAccessTokenError("Token not-before claim is missing");
+      }
 
       const audience = Array.isArray(payload.aud)
         ? payload.aud
@@ -66,7 +69,7 @@ export class OidcJwtAuthenticator implements Authenticator {
         issuer: payload.iss ?? this.#issuer,
         audience,
         issuedAt: typeof payload.iat === "number" ? payload.iat : null,
-        notBefore: typeof payload.nbf === "number" ? payload.nbf : null,
+        notBefore: payload.nbf,
         expiresAt: payload.exp,
       };
     } catch (error) {

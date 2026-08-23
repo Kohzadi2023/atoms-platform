@@ -1,6 +1,7 @@
 import {
   AttachmentListResponseSchema,
   AttachmentUploadIntentResponseSchema,
+  ListWorkspacesResponseSchema,
   FileContentResponseSchema,
   IdempotencyKeySchema,
   ProjectAttachmentSchema,
@@ -22,6 +23,7 @@ import {
   type RunArtifactListResponse,
   type RunEventEnvelope,
   type RunResponse,
+  type ListWorkspacesResponse,
 } from "@atoms/contracts";
 import type { ZodType } from "zod";
 
@@ -41,13 +43,20 @@ export class ControlApiError extends Error {
 
 export interface ControlApiClientOptions {
   readonly baseUrl: string;
+  readonly accessTokenProvider?: () => string | undefined | Promise<string | undefined>;
 }
 
 export class ControlApiClient {
   readonly #baseUrl: string;
+  readonly #accessTokenProvider: () => string | undefined | Promise<string | undefined>;
 
   constructor(options: ControlApiClientOptions) {
     this.#baseUrl = options.baseUrl.replace(/\/+$/u, "");
+    this.#accessTokenProvider = options.accessTokenProvider ?? (() => undefined);
+  }
+
+  listWorkspaces(): Promise<ListWorkspacesResponse> {
+    return this.#request("/v1/workspaces", ListWorkspacesResponseSchema);
   }
 
   createProject(input: CreateProjectInput): Promise<ProjectResponse> {
@@ -191,10 +200,10 @@ export class ControlApiClient {
       const response = await fetch(
         `${this.#baseUrl}/v1/runs/${encodeURIComponent(input.runId)}/events`,
         {
-          headers: {
+          headers: await this.#headers({
             Accept: "text/event-stream",
             "Last-Event-ID": String(cursor),
-          },
+          }),
           cache: "no-store",
           credentials: "omit",
           signal: input.signal,
@@ -232,12 +241,21 @@ export class ControlApiClient {
     headers.set("Accept", "application/json");
     const response = await fetch(`${this.#baseUrl}${path}`, {
       ...init,
-      headers,
+      headers: await this.#headers(headers),
       cache: "no-store",
       credentials: "omit",
     });
     if (!response.ok) throw await toControlApiError(response);
     return schema.parse(await response.json());
+  }
+
+  async #headers(init: HeadersInit): Promise<Headers> {
+    const headers = new Headers(init);
+    const accessToken = await this.#accessTokenProvider();
+    if (accessToken !== undefined && accessToken.trim().length > 0) {
+      headers.set("Authorization", `Bearer ${accessToken}`);
+    }
+    return headers;
   }
 }
 

@@ -7,6 +7,7 @@ import type {
   ProjectFileSummary,
   ProjectResponse,
   ProjectAttachment,
+  WorkspaceSummary,
   RunActionInput,
   RunAction,
   RunArtifactResponse,
@@ -72,9 +73,7 @@ import { CodeEditor } from "./code-editor";
 
 const CONTROL_API_URL =
   process.env.NEXT_PUBLIC_CONTROL_API_URL ?? "http://localhost:3001";
-const DEFAULT_WORKSPACE_ID =
-  process.env.NEXT_PUBLIC_DEFAULT_WORKSPACE_ID ??
-  "00000000-0000-4000-8000-000000000001";
+const CONTROL_API_ACCESS_TOKEN = process.env.NEXT_PUBLIC_CONTROL_API_ACCESS_TOKEN;
 const PREVIEW_BASE_DOMAIN =
   process.env.NEXT_PUBLIC_PREVIEW_BASE_DOMAIN ?? "preview.localhost";
 const ACTIVE_RUN_STORAGE_KEY = "atoms.active-run.v1";
@@ -97,12 +96,17 @@ type MobilePane = "agents" | "project";
 
 export function WorkspaceShell() {
   const api = useMemo(
-    () => new ControlApiClient({ baseUrl: CONTROL_API_URL }),
+    () =>
+      new ControlApiClient({
+        baseUrl: CONTROL_API_URL,
+        accessTokenProvider: () => CONTROL_API_ACCESS_TOKEN,
+      }),
     [],
   );
   const [mobilePane, setMobilePane] = useState<MobilePane>("agents");
   const [activeTab, setActiveTab] = useState<WorkspaceTab>("preview");
-  const [workspaceId, setWorkspaceId] = useState(DEFAULT_WORKSPACE_ID);
+  const [workspaces, setWorkspaces] = useState<readonly WorkspaceSummary[]>([]);
+  const [workspaceId, setWorkspaceId] = useState("");
   const [projectName, setProjectName] = useState("Customer operations portal");
   const [projectSlug, setProjectSlug] = useState("customer-operations-portal");
   const [prompt, setPrompt] = useState(
@@ -137,6 +141,27 @@ export function WorkspaceShell() {
   const uploadIntentsRef = useRef(
     new Map<string, AttachmentUploadIntentResponse>(),
   );
+
+  useEffect(() => {
+    let active = true;
+    void api
+      .listWorkspaces()
+      .then((response) => {
+        if (!active) return;
+        setWorkspaces(response.items);
+        setWorkspaceId((current) =>
+          response.items.some((workspace) => workspace.id === current)
+            ? current
+            : response.items[0]?.id ?? "",
+        );
+      })
+      .catch((caught: unknown) => {
+        if (active) setError(`Could not load workspaces: ${toMessage(caught)}`);
+      });
+    return () => {
+      active = false;
+    };
+  }, [api]);
 
   const effectiveStatus = projection.inferredRunStatus ?? run?.status;
   const terminal =
@@ -587,15 +612,24 @@ export function WorkspaceShell() {
               className="mt-4 space-y-4 rounded-2xl border border-[#252d3a] bg-[#0d121a] p-4 shadow-2xl shadow-black/20"
               onSubmit={createProjectRun}
             >
-              <Field label="Workspace ID" hint="Use the seeded local workspace or an existing tenant UUID.">
-                <input
+              <Field label="Workspace">
+                <select
                   className={inputClass}
                   value={workspaceId}
                   onChange={(event) => setWorkspaceId(event.target.value)}
                   required
-                  pattern="[0-9a-fA-F-]{36}"
-                  aria-describedby="workspace-hint"
-                />
+                  disabled={workspaces.length === 0}
+                >
+                  {workspaces.length === 0 ? (
+                    <option value="">No authorized workspaces</option>
+                  ) : (
+                    workspaces.map((workspace) => (
+                      <option key={workspace.id} value={workspace.id}>
+                        {workspace.name} ({workspace.slug})
+                      </option>
+                    ))
+                  )}
+                </select>
               </Field>
               <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-1 xl:grid-cols-2">
                 <Field label="Project name">

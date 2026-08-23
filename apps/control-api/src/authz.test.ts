@@ -389,6 +389,7 @@ class MemoryControlRepository implements ControlRepository {
           agent: "Sarah",
           artifactType: "seo-package",
         },
+        content: null,
         createdAt: NOW,
       },
     ];

@@ -58,7 +58,12 @@ import {
   type FormEvent,
 } from "react";
 
-import { ControlApiClient, ControlApiError } from "../lib/control-api";
+import { createDevelopmentAccessTokenProvider } from "../lib/browser-auth";
+import {
+  ControlApiClient,
+  ControlApiError,
+  type ControlApiAccessTokenProvider,
+} from "../lib/control-api";
 import {
   AGENT_ORDER,
   availableRunActions,
@@ -73,7 +78,11 @@ import { CodeEditor } from "./code-editor";
 
 const CONTROL_API_URL =
   process.env.NEXT_PUBLIC_CONTROL_API_URL ?? "http://localhost:3001";
-const CONTROL_API_ACCESS_TOKEN = process.env.NEXT_PUBLIC_CONTROL_API_ACCESS_TOKEN;
+const DEVELOPMENT_ACCESS_TOKEN_PROVIDER =
+  createDevelopmentAccessTokenProvider({
+    nodeEnv: process.env.NODE_ENV,
+    configuredToken: process.env.NEXT_PUBLIC_CONTROL_API_ACCESS_TOKEN,
+  });
 const PREVIEW_BASE_DOMAIN =
   process.env.NEXT_PUBLIC_PREVIEW_BASE_DOMAIN ?? "preview.localhost";
 const ACTIVE_RUN_STORAGE_KEY = "atoms.active-run.v1";
@@ -94,14 +103,20 @@ const WORKSPACE_TABS = [
 type WorkspaceTab = (typeof WORKSPACE_TABS)[number]["id"];
 type MobilePane = "agents" | "project";
 
-export function WorkspaceShell() {
+export interface WorkspaceShellProps {
+  readonly accessTokenProvider?: ControlApiAccessTokenProvider;
+}
+
+export function WorkspaceShell({
+  accessTokenProvider = DEVELOPMENT_ACCESS_TOKEN_PROVIDER,
+}: WorkspaceShellProps = {}) {
   const api = useMemo(
     () =>
       new ControlApiClient({
         baseUrl: CONTROL_API_URL,
-        accessTokenProvider: () => CONTROL_API_ACCESS_TOKEN,
+        accessTokenProvider,
       }),
-    [],
+    [accessTokenProvider],
   );
   const [mobilePane, setMobilePane] = useState<MobilePane>("agents");
   const [activeTab, setActiveTab] = useState<WorkspaceTab>("preview");

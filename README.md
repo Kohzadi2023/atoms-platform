@@ -114,6 +114,16 @@ Auth configuration placeholders are documented in `.env.example`:
 - `AUTH_AUDIENCE`
 - `AUTH_JWKS_URL`
 
+The static development authenticator is disabled by default. To use the local
+seeded workspace, generate a random token of at least 32 characters and set
+`AUTH_DEV_AUTHENTICATOR_ENABLED=true`, `AUTH_DEV_ACCESS_TOKEN=<token>`,
+`AUTH_DEV_USER_ID=local-demo-user`, and
+`NEXT_PUBLIC_CONTROL_API_ACCESS_TOKEN=<same-token>` in an untracked local env
+file. The `NEXT_PUBLIC_*` token is browser-visible and is rejected by production
+builds. A production identity SDK must supply a short-lived user token through
+the `WorkspaceShell` `accessTokenProvider`; this repository does not enable a
+shared production browser token.
+
 See `docs/control-api-security-matrix.md` for route-to-role permissions,
 workspace isolation behavior, and error semantics.
 

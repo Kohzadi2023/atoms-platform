@@ -61,8 +61,13 @@ const EnvironmentSchema = z
       .enum(["true", "false"])
       .default("false")
       .transform((value) => value === "true"),
-    AUTH_DEV_ACCESS_TOKEN: z.string().trim().min(12).default("dev-access-token"),
-    AUTH_DEV_USER_ID: z.string().trim().min(1).max(191).default("dev-user"),
+    AUTH_DEV_ACCESS_TOKEN: z.string().trim().min(32).optional(),
+    AUTH_DEV_USER_ID: z
+      .string()
+      .trim()
+      .min(1)
+      .max(191)
+      .default("local-demo-user"),
   })
   .passthrough()
   .superRefine((environment, context) => {

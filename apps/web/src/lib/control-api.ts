@@ -41,14 +41,19 @@ export class ControlApiError extends Error {
   }
 }
 
+export type ControlApiAccessTokenProvider = () =>
+  | string
+  | undefined
+  | Promise<string | undefined>;
+
 export interface ControlApiClientOptions {
   readonly baseUrl: string;
-  readonly accessTokenProvider?: () => string | undefined | Promise<string | undefined>;
+  readonly accessTokenProvider?: ControlApiAccessTokenProvider;
 }
 
 export class ControlApiClient {
   readonly #baseUrl: string;
-  readonly #accessTokenProvider: () => string | undefined | Promise<string | undefined>;
+  readonly #accessTokenProvider: ControlApiAccessTokenProvider;
 
   constructor(options: ControlApiClientOptions) {
     this.#baseUrl = options.baseUrl.replace(/\/+$/u, "");

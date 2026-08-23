@@ -38,3 +38,21 @@ test("production startup rejects explicit development authenticator", () => {
     /cannot be used in production/u,
   );
 });
+
+test("development authenticator requires an explicit access token", () => {
+  assert.throws(
+    () =>
+      resolveAuthRuntimeOptions({
+        NODE_ENV: "development",
+        AUTH_REQUIRED: true,
+        AUTH_ISSUER_URL: undefined,
+        AUTH_AUDIENCE: undefined,
+        AUTH_JWKS_URL: undefined,
+        AUTH_ALLOWED_ALGORITHMS: ["RS256"],
+        AUTH_DEV_AUTHENTICATOR_ENABLED: true,
+        AUTH_DEV_ACCESS_TOKEN: undefined,
+        AUTH_DEV_USER_ID: "local-demo-user",
+      }),
+    /AUTH_DEV_ACCESS_TOKEN is required/u,
+  );
+});

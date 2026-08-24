@@ -94,8 +94,9 @@ The Control API now enforces authenticated bearer tokens on every endpoint
 except `/healthz` and `/readyz`.
 
 - Token verification is strict OIDC/JWT with JWKS signature validation.
-- Required claim checks include issuer, audience, expiration, not-before, and
-  subject (`sub`).
+- Required claim checks include issuer, audience, expiration, and subject
+  (`sub`). Not-before (`nbf`) is validated when the issuer supplies it;
+  Supabase access tokens may omit that optional claim.
 - Unsigned or unverified tokens are rejected.
 - The internal user ID is derived from the verified `sub` claim.
 - Cross-workspace resource requests are non-enumerating and return `404`.
@@ -113,6 +114,34 @@ Auth configuration placeholders are documented in `.env.example`:
 - `AUTH_ISSUER_URL`
 - `AUTH_AUDIENCE`
 - `AUTH_JWKS_URL`
+- `AUTH_ALLOWED_ALGORITHMS`
+
+Production identity is provided by Supabase Auth. Configure the project with an
+asymmetric signing key (ES256 is recommended), then set:
+
+- `AUTH_ISSUER_URL=https://<project-ref>.supabase.co/auth/v1`
+- `AUTH_AUDIENCE=authenticated`
+- `AUTH_JWKS_URL=https://<project-ref>.supabase.co/auth/v1/.well-known/jwks.json`
+- `AUTH_ALLOWED_ALGORITHMS=ES256` (or the single asymmetric algorithm actually
+  selected for the project)
+- `NEXT_PUBLIC_SUPABASE_URL` and `NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY`
+
+The web app uses the Supabase browser client for password sign-in, automatic
+session refresh, local-session sign-out, and short-lived access-token delivery
+to REST and SSE requests. Browser session state gates only the user experience;
+the Control API independently verifies every JWT and applies workspace roles.
+The publishable key is safe for a public client, but secret and service-role
+keys must never use a `NEXT_PUBLIC_` variable.
+
+Because Next.js embeds `NEXT_PUBLIC_*` values during compilation, container
+builds must pass the four public settings as build arguments. The web Dockerfile
+declares arguments for the Control API URL, Supabase URL, Supabase publishable
+key, and preview base domain. The generated Content Security Policy permits Auth
+traffic only to the configured Supabase origin.
+
+Atoms is invite-only. A Supabase user's UUID (`sub`) must match the `userId` of
+an existing `memberships` row before a workspace is visible. This keeps account
+creation separate from tenant and role assignment.
 
 The static development authenticator is disabled by default. To use the local
 seeded workspace, generate a random token of at least 32 characters and set
@@ -120,9 +149,8 @@ seeded workspace, generate a random token of at least 32 characters and set
 `AUTH_DEV_USER_ID=local-demo-user`, and
 `NEXT_PUBLIC_CONTROL_API_ACCESS_TOKEN=<same-token>` in an untracked local env
 file. The `NEXT_PUBLIC_*` token is browser-visible and is rejected by production
-builds. A production identity SDK must supply a short-lived user token through
-the `WorkspaceShell` `accessTokenProvider`; this repository does not enable a
-shared production browser token.
+builds. Outside development, missing or partial Supabase browser configuration
+fails closed and the workspace is not rendered.
 
 See `docs/control-api-security-matrix.md` for route-to-role permissions,
 workspace isolation behavior, and error semantics.

@@ -35,6 +35,7 @@ import {
   Gauge,
   GitBranch,
   LoaderCircle,
+  LogOut,
   MonitorPlay,
   Paperclip,
   Pause,
@@ -105,10 +106,20 @@ type MobilePane = "agents" | "project";
 
 export interface WorkspaceShellProps {
   readonly accessTokenProvider?: ControlApiAccessTokenProvider;
+  readonly identityLabel?: string;
+  readonly signingOut?: boolean;
+  readonly onSignOut?: () => void;
+  readonly authenticationError?: string;
+  readonly onDismissAuthenticationError?: () => void;
 }
 
 export function WorkspaceShell({
   accessTokenProvider = DEVELOPMENT_ACCESS_TOKEN_PROVIDER,
+  identityLabel,
+  signingOut = false,
+  onSignOut,
+  authenticationError,
+  onDismissAuthenticationError,
 }: WorkspaceShellProps = {}) {
   const api = useMemo(
     () =>
@@ -587,6 +598,32 @@ export function WorkspaceShell({
           <span className="hidden rounded-full border border-[#2b3442] px-2.5 py-1 text-[#98a5b7] sm:inline-flex">
             CAD 4 build target
           </span>
+          {identityLabel !== undefined ? (
+            <span
+              className="hidden max-w-52 truncate rounded-full border border-[#2b3442] px-2.5 py-1 text-[#b6c0ce] md:inline-flex"
+              title={identityLabel}
+            >
+              {identityLabel}
+            </span>
+          ) : null}
+          {onSignOut !== undefined ? (
+            <button
+              className="inline-flex items-center gap-1.5 rounded-lg border border-[#39414d] bg-[#11161e] px-2.5 py-1 text-[#c0cad8] hover:border-[#4a5565] hover:text-white disabled:cursor-not-allowed disabled:opacity-55"
+              type="button"
+              disabled={signingOut}
+              aria-label="Sign out of Atoms"
+              onClick={onSignOut}
+            >
+              {signingOut ? (
+                <LoaderCircle className="animate-spin" size={13} />
+              ) : (
+                <LogOut size={13} />
+              )}
+              <span className="hidden sm:inline">
+                {signingOut ? "Signing out" : "Sign out"}
+              </span>
+            </button>
+          ) : null}
         </div>
       </header>
 
@@ -895,6 +932,13 @@ export function WorkspaceShell({
           <div className="sr-only" aria-live="polite" aria-atomic="true">
             {notice ?? error ?? (effectiveStatus === undefined ? "Ready" : `Run ${effectiveStatus}`)}
           </div>
+          {authenticationError !== undefined ? (
+            <Feedback
+              kind="error"
+              message={authenticationError}
+              onClose={onDismissAuthenticationError ?? (() => undefined)}
+            />
+          ) : null}
           {error !== undefined ? <Feedback kind="error" message={error} onClose={() => setError(undefined)} /> : null}
           {notice !== undefined ? <Feedback kind="notice" message={notice} onClose={() => setNotice(undefined)} /> : null}
         </section>

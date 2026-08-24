@@ -6,7 +6,7 @@ export interface AuthenticatedPrincipal {
   readonly issuer: string;
   readonly audience: readonly string[];
   readonly issuedAt: number | null;
-  readonly notBefore: number;
+  readonly notBefore: number | null;
   readonly expiresAt: number;
 }
 
@@ -53,10 +53,6 @@ export class OidcJwtAuthenticator implements Authenticator {
       if (typeof payload.exp !== "number") {
         throw new InvalidAccessTokenError("Token expiration claim is missing");
       }
-      if (typeof payload.nbf !== "number") {
-        throw new InvalidAccessTokenError("Token not-before claim is missing");
-      }
-
       const audience = Array.isArray(payload.aud)
         ? payload.aud
         : payload.aud === undefined
@@ -69,7 +65,9 @@ export class OidcJwtAuthenticator implements Authenticator {
         issuer: payload.iss ?? this.#issuer,
         audience,
         issuedAt: typeof payload.iat === "number" ? payload.iat : null,
-        notBefore: payload.nbf,
+        // `jwtVerify` enforces nbf when it is present. Supabase access tokens
+        // intentionally allow this claim to be absent.
+        notBefore: typeof payload.nbf === "number" ? payload.nbf : null,
         expiresAt: payload.exp,
       };
     } catch (error) {

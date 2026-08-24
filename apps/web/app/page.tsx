@@ -1,5 +1,5 @@
-import { WorkspaceShell } from "../src/components/workspace-shell";
+import { SupabaseAuthGate } from "../src/components/supabase-auth-gate";
 
 export default function HomePage() {
-  return <WorkspaceShell />;
+  return <SupabaseAuthGate />;
 }

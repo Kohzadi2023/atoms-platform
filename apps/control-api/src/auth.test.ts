@@ -76,10 +76,10 @@ test("OIDC authenticator verifies signature and claims", async () => {
       sub: "user-123",
       nbf: null,
     });
-    await assert.rejects(
-      authenticator.authenticate(missingNotBeforeToken),
-      InvalidAccessTokenError,
+    const withoutNotBefore = await authenticator.authenticate(
+      missingNotBeforeToken,
     );
+    assert.equal(withoutNotBefore.notBefore, null);
 
     const attackerKeys = await generateSigningKeys("kid-attacker");
     const invalidSignatureToken = await createToken(attackerKeys.privateKey, {
@@ -106,6 +106,38 @@ test("OIDC authenticator verifies signature and claims", async () => {
       authenticator.authenticate(unsignedToken),
       InvalidAccessTokenError,
     );
+  } finally {
+    await jwksServer.close();
+  }
+});
+
+test("OIDC authenticator accepts a Supabase-shaped ES256 access token", async () => {
+  const issuer = "https://project-ref.supabase.co/auth/v1";
+  const signingKeys = await generateSigningKeys("kid-supabase", "ES256");
+  const jwksServer = await startJwksServer(signingKeys.publicJwk);
+
+  try {
+    const authenticator = new OidcJwtAuthenticator({
+      issuer,
+      audience: "authenticated",
+      jwksUrl: jwksServer.url,
+      allowedAlgorithms: ["ES256"],
+    });
+    const accessToken = await createToken(
+      signingKeys.privateKey,
+      {
+        sub: "0f7cc860-e046-4fc7-bfab-80b17ae7e71d",
+        iss: issuer,
+        aud: "authenticated",
+        nbf: null,
+      },
+      "ES256",
+    );
+
+    const principal = await authenticator.authenticate(accessToken);
+    assert.equal(principal.userId, "0f7cc860-e046-4fc7-bfab-80b17ae7e71d");
+    assert.deepEqual(principal.audience, ["authenticated"]);
+    assert.equal(principal.notBefore, null);
   } finally {
     await jwksServer.close();
   }
@@ -139,14 +171,19 @@ test("deterministic test authenticator returns injected principal", async () => 
   );
 });
 
-async function generateSigningKeys(kid: string): Promise<{
+type TestSigningAlgorithm = "ES256" | "RS256";
+
+async function generateSigningKeys(
+  kid: string,
+  algorithm: TestSigningAlgorithm = "RS256",
+): Promise<{
   readonly privateKey: KeyObject | webcrypto.CryptoKey;
   readonly publicJwk: JWK;
 }> {
-  const { publicKey, privateKey } = await generateKeyPair("RS256");
+  const { publicKey, privateKey } = await generateKeyPair(algorithm);
   const publicJwk = await exportJWK(publicKey);
   publicJwk.kid = kid;
-  publicJwk.alg = "RS256";
+  publicJwk.alg = algorithm;
   publicJwk.use = "sig";
   return { privateKey, publicJwk };
 }
@@ -160,10 +197,11 @@ async function createToken(
     readonly exp?: number;
     readonly nbf?: number | null;
   },
+  algorithm: TestSigningAlgorithm = "RS256",
 ): Promise<string> {
   const issuedAt = Math.floor(Date.now() / 1_000);
   let payload = new SignJWT({})
-    .setProtectedHeader({ alg: "RS256", typ: "JWT" })
+    .setProtectedHeader({ alg: algorithm, typ: "JWT" })
     .setSubject(claims.sub)
     .setIssuer(claims.iss ?? ISSUER)
     .setAudience(claims.aud ?? AUDIENCE)

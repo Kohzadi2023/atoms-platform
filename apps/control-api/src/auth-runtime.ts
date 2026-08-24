@@ -18,7 +18,7 @@ export const AuthEnvironmentSchema = z
     AUTH_JWKS_URL: z.string().trim().url().optional(),
     AUTH_ALLOWED_ALGORITHMS: z
       .string()
-      .default("RS256")
+      .default("ES256")
       .transform((value) =>
         value
           .split(",")

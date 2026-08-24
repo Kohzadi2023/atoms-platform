@@ -10,11 +10,12 @@
   - Issuer (`iss`)
   - Audience (`aud`)
   - Expiration (`exp`)
-  - Not-before (`nbf`)
+  - Not-before (`nbf`) when the issuer supplies it; `jose` validates it when present
   - Subject (`sub`)
   - Explicit algorithm allowlist
 - Unsigned tokens (`alg=none`) or decode-only flows are rejected.
 - Principal user identity is derived from verified `sub`.
+- Supabase Auth user UUIDs are used directly as membership `userId` values.
 
 ## Identity endpoints
 

@@ -12,8 +12,10 @@
   },
   "scripts": {
     "build": "turbo run build",
-    "ci:verify": "pnpm verify && pnpm test:phase3-environment-protection && pnpm sql:lint && pnpm audit --audit-level high && pnpm secrets:scan",
-    "dev": "turbo run dev",
+    "ci:verify": "pnpm verify && pnpm test:local-development && pnpm test:phase3-environment-protection && pnpm sql:lint && pnpm audit --audit-level high && pnpm secrets:scan",
+    "dev": "pnpm dev:check && node --env-file-if-exists=.env node_modules/turbo/bin/turbo run dev --env-mode=loose",
+    "dev:check": "node --env-file-if-exists=.env scripts/check-local-development.mjs",
+    "dev:web": "node --env-file-if-exists=.env node_modules/turbo/bin/turbo run dev --filter=@atoms/web --env-mode=loose",
     "demo:phase2": "node scripts/demo-phase2.mjs",
     "demo:phase3": "node scripts/demo-phase3.mjs",
     "test": "turbo run test",
@@ -37,6 +39,7 @@
     "db:migrate:dev": "pnpm prisma migrate dev",
     "db:migrate:deploy": "pnpm prisma migrate deploy",
     "db:seed:local": "pnpm --filter @atoms/db seed:local",
+    "test:local-development": "node --test scripts/check-local-development.test.mjs",
     "test:phase3-environment-protection": "node --test scripts/validate-phase3-staging-inputs.test.mjs scripts/verify-phase3-environment-protection.test.mjs"
   },
   "devDependencies": {

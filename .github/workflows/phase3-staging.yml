@@ -37,6 +37,7 @@ on:
           - apac
 
 permissions:
+  actions: read
   contents: read
 
 concurrency:
@@ -194,6 +195,11 @@ jobs:
         with:
           node-version: 24
           cache: pnpm
+      - name: Verify protected live-provider environment policy
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+          PHASE3_STAGING_ENVIRONMENT: phase3-staging
+        run: pnpm staging:phase3:environment-protection
       - run: pnpm install --frozen-lockfile
       - name: Start isolated ephemeral Vault
         shell: bash

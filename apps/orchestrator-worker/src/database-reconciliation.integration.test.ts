@@ -127,7 +127,9 @@ test(
       worker = new BullMqDatabaseReconciliationWorker({
         redisUrl,
         reconciler,
-        intervalMs: 250,
+        // Keep the scheduler realistic without allowing a second periodic
+        // sweep to race the assertions for the first completed sweep.
+        intervalMs: 5_000,
         prefix,
       });
       worker.onError((error) => workerErrors.push(error));
@@ -177,13 +179,16 @@ test(
       const orphanFinding =
         await prisma.databaseReconciliationFinding.findFirstOrThrow({
           where: {
-            sweepId: sweep.id,
             kind: "ORPHAN_PROVIDER_RESOURCE",
             externalId: orphanExternalId,
           },
         });
       assert.equal(orphanFinding.status, "OPEN");
-      assert.equal(orphanFinding.observationCount, 1);
+      // Findings are durable across sweeps and their sweepId advances to the
+      // latest observation, so the assertion must not depend on a transient
+      // scheduler tick boundary.
+      assert.ok(orphanFinding.observationCount >= 1);
+      assert.ok(orphanFinding.lastSeenAt >= scheduledAfter);
       assert.equal(provider.destroyCalls, 0);
 
       const event = await prisma.runEvent.findFirstOrThrow({

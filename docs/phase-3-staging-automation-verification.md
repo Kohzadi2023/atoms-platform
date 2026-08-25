@@ -4,8 +4,9 @@ Recorded: 2026-08-01
 
 This checkpoint implements the executable staging exit gates for Phase 3. It
 does not record a live provider pass. No Supabase project, Vault secret, or E2B
-sandbox was created during this verification because the protected staging
-credentials and approval boundary were not available in the local runner.
+sandbox was created during this verification because the environment-scoped
+staging credentials and live confirmations were not available in the local
+runner.
 
 ## Reproducible results
 
@@ -43,14 +44,14 @@ The four skipped tests are executable guards, not recorded passes:
 
 The PostgreSQL/Redis scenario is wired into the staging/CI service matrix and
 requires a dedicated ephemeral database confirmation. The full provider exit
-is available only through the protected `phase3-staging` environment and also
-requires the exact billable/destructive confirmations described in the
-runbook.
+is available only through the `phase3-staging` environment and also requires
+the exact solo-operator, billable, and destructive confirmations described in
+the runbook.
 
 ## What constitutes a live Phase 3 exit
 
-Phase 3 is staging-validated only after a protected workflow run produces both
-artifacts from real dependencies:
+Phase 3 is staging-validated only after a controlled, environment-scoped
+workflow run produces both artifacts from real dependencies:
 
 - `phase3-durability-evidence.json` from PostgreSQL 17 and Redis 8; and
 - a schema-valid `phase3-provider-evidence.json` whose ten gates are all
@@ -58,4 +59,5 @@ artifacts from real dependencies:
   measured cost remains at or below CAD 4.
 
 Workflow definitions, local unit tests, skipped live tests, or credentials
-present without environment approval are not substitutes for those artifacts.
+present without the exact live confirmations are not substitutes for those
+artifacts.

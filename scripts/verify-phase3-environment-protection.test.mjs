@@ -3,22 +3,17 @@ import test from "node:test";
 
 import {
   EnvironmentProtectionError,
+  SOLO_OPERATOR_CONFIRMATION,
   buildEnvironmentApiUrl,
   evaluateEnvironmentProtection,
   verifyEnvironmentProtection,
 } from "./verify-phase3-environment-protection.mjs";
 
-function protectedEnvironment(overrides = {}) {
+function stagingEnvironment(overrides = {}) {
   return {
     name: "phase3-staging",
-    can_admins_bypass: false,
-    protection_rules: [
-      {
-        type: "required_reviewers",
-        prevent_self_review: true,
-        reviewers: [{ type: "User", reviewer: { id: 123, login: "redacted" } }],
-      },
-    ],
+    can_admins_bypass: true,
+    protection_rules: [],
     ...overrides,
   };
 }
@@ -34,52 +29,53 @@ test("buildEnvironmentApiUrl encodes repository and environment path segments", 
   );
 });
 
-test("evaluateEnvironmentProtection accepts the complete fail-closed policy", () => {
-  assert.deepEqual(evaluateEnvironmentProtection(protectedEnvironment(), "phase3-staging"), {
-    ok: true,
-    violations: [],
-  });
+test("evaluateEnvironmentProtection accepts an explicit solo-operator run", () => {
+  assert.deepEqual(
+    evaluateEnvironmentProtection(
+      stagingEnvironment(),
+      "phase3-staging",
+      SOLO_OPERATOR_CONFIRMATION,
+    ),
+    {
+      ok: true,
+      violations: [],
+    },
+  );
 });
 
-test("evaluateEnvironmentProtection rejects a missing reviewer rule", () => {
+test("evaluateEnvironmentProtection rejects a missing solo acknowledgement", () => {
   const result = evaluateEnvironmentProtection(
-    protectedEnvironment({ protection_rules: [] }),
+    stagingEnvironment(),
     "phase3-staging",
+    undefined,
   );
 
   assert.equal(result.ok, false);
-  assert.deepEqual(result.violations, ["a required-reviewer rule is not configured"]);
+  assert.deepEqual(result.violations, ["the exact solo-operator confirmation is missing"]);
 });
 
-test("evaluateEnvironmentProtection rejects empty reviewers and self-review", () => {
+test("evaluateEnvironmentProtection rejects a near-match solo acknowledgement", () => {
   const result = evaluateEnvironmentProtection(
-    protectedEnvironment({
-      protection_rules: [
-        {
-          type: "required_reviewers",
-          prevent_self_review: false,
-          reviewers: [],
-        },
-      ],
-    }),
+    stagingEnvironment(),
     "phase3-staging",
+    `${SOLO_OPERATOR_CONFIRMATION}_TYPO`,
+  );
+
+  assert.equal(result.ok, false);
+  assert.deepEqual(result.violations, ["the exact solo-operator confirmation is missing"]);
+});
+
+test("evaluateEnvironmentProtection always rejects the wrong environment", () => {
+  const result = evaluateEnvironmentProtection(
+    stagingEnvironment({ name: "production" }),
+    "phase3-staging",
+    SOLO_OPERATOR_CONFIRMATION,
   );
 
   assert.equal(result.ok, false);
   assert.deepEqual(result.violations, [
-    "the required-reviewer rule has no reviewers",
-    "self-review prevention is not enabled",
+    "the returned environment name does not match the requested environment",
   ]);
-});
-
-test("evaluateEnvironmentProtection rejects administrator bypass", () => {
-  const result = evaluateEnvironmentProtection(
-    protectedEnvironment({ can_admins_bypass: true }),
-    "phase3-staging",
-  );
-
-  assert.equal(result.ok, false);
-  assert.deepEqual(result.violations, ["administrator bypass is not disabled"]);
 });
 
 test("verifyEnvironmentProtection does not expose response bodies on HTTP failure", async () => {
@@ -89,6 +85,7 @@ test("verifyEnvironmentProtection does not expose response bodies on HTTP failur
     verifyEnvironmentProtection({
       environmentName: "phase3-staging",
       repository: "atoms/platform",
+      soloOperatorConfirmation: SOLO_OPERATOR_CONFIRMATION,
       token: "github-token-value",
       fetchImpl: async (_url, options) => {
         assert.equal(options.headers.Authorization, "Bearer github-token-value");
@@ -113,10 +110,11 @@ test("verifyEnvironmentProtection returns only policy status", async () => {
   const result = await verifyEnvironmentProtection({
     environmentName: "phase3-staging",
     repository: "atoms/platform",
+    soloOperatorConfirmation: SOLO_OPERATOR_CONFIRMATION,
     fetchImpl: async () => ({
       ok: true,
       status: 200,
-      json: async () => protectedEnvironment(),
+      json: async () => stagingEnvironment(),
     }),
   });
 

@@ -22,6 +22,10 @@ on:
         description: Type PROVISION_MIGRATE_AND_DESTROY_SUPABASE_STAGING_DATABASE for a live provider run
         required: false
         type: string
+      solo_operator_confirmation:
+        description: Type I_ACCEPT_SOLO_PHASE3_PROVIDER_EXIT_WITHOUT_REVIEWER for a live solo run
+        required: false
+        type: string
       measured_variable_cost_cad:
         description: Measured variable cost in CAD, with at most six decimals
         required: true
@@ -65,6 +69,7 @@ jobs:
           PHASE3_STAGING_CHANGE_TICKET: ${{ inputs.change_ticket }}
           PHASE3_STAGING_MEASURED_COST_CAD: ${{ inputs.measured_variable_cost_cad }}
           PHASE3_STAGING_DESTRUCTIVE_CONFIRMATION: ${{ inputs.destructive_confirmation }}
+          PHASE3_SOLO_OPERATOR_CONFIRMATION: ${{ inputs.solo_operator_confirmation }}
         run: node scripts/validate-phase3-staging-inputs.mjs
       - name: Write durability preflight audit
         env:
@@ -195,10 +200,11 @@ jobs:
         with:
           node-version: 24
           cache: pnpm
-      - name: Verify protected live-provider environment policy
+      - name: Verify live-provider environment and solo-operator policy
         env:
           GITHUB_TOKEN: ${{ github.token }}
           PHASE3_STAGING_ENVIRONMENT: phase3-staging
+          PHASE3_SOLO_OPERATOR_CONFIRMATION: ${{ inputs.solo_operator_confirmation }}
         run: pnpm staging:phase3:environment-protection
       - run: pnpm install --frozen-lockfile
       - name: Start isolated ephemeral Vault

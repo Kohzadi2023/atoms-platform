@@ -1,9 +1,12 @@
+import { SOLO_OPERATOR_CONFIRMATION } from "./verify-phase3-environment-protection.mjs";
+
 const workflowConfirmation = process.env.PHASE3_WORKFLOW_CONFIRMATION;
 const liveProviderRequested = process.env.PHASE3_RUN_LIVE_PROVIDER === "true";
 const changeTicket = process.env.PHASE3_STAGING_CHANGE_TICKET ?? "";
 const measuredCostCad = process.env.PHASE3_STAGING_MEASURED_COST_CAD ?? "";
 const destructiveConfirmation =
   process.env.PHASE3_STAGING_DESTRUCTIVE_CONFIRMATION;
+const soloOperatorConfirmation = process.env.PHASE3_SOLO_OPERATOR_CONFIRMATION;
 
 if (workflowConfirmation !== "RUN_PHASE3_STAGING") {
   throw new Error("Workflow confirmation must exactly equal RUN_PHASE3_STAGING");
@@ -19,6 +22,9 @@ const [whole = "0", fractional = ""] = measuredCostCad.split(".");
 const measuredMicros =
   BigInt(whole) * 1_000_000n + BigInt(fractional.padEnd(6, "0"));
 if (liveProviderRequested) {
+  if (soloOperatorConfirmation !== SOLO_OPERATOR_CONFIRMATION) {
+    throw new Error("Live provider execution requires the exact solo-operator confirmation");
+  }
   if (
     destructiveConfirmation !==
     "PROVISION_MIGRATE_AND_DESTROY_SUPABASE_STAGING_DATABASE"
@@ -31,5 +37,5 @@ if (liveProviderRequested) {
 }
 
 console.log(
-  `Phase 3 staging preflight passed (${liveProviderRequested ? "full provider exit" : "migration and durability only"})`,
+  `Phase 3 staging preflight passed (${liveProviderRequested ? "solo-operator provider exit" : "migration and durability only"})`,
 );

@@ -3,7 +3,8 @@
 This slice turns the Phase 3 exit runbook into executable, fail-closed staging
 gates. It does not claim a live pass by itself: PostgreSQL/Redis evidence is
 created only on a service-backed runner, and provider evidence is created only
-after protected-environment approval and explicit billable/destructive input.
+after environment-scoped credentials and explicit solo-operator, billable, and
+destructive inputs are present.
 
 ## Automated gates
 
@@ -23,8 +24,8 @@ after protected-environment approval and explicit billable/destructive input.
 
 The durability integration uses an isolated fake provider inventory with real
 PostgreSQL and Redis so ordinary CI cannot create a billable resource. The
-protected provider exit then uses the real Supabase adapter, Vault adapter, E2B
-adapter, Prisma repository, and reconciler together.
+environment-scoped provider exit then uses the real Supabase adapter, Vault
+adapter, E2B adapter, Prisma repository, and reconciler together.
 
 ## Workflow safety boundary
 
@@ -36,7 +37,8 @@ The manual workflow requires all of the following before provider access:
    `PROVISION_MIGRATE_AND_DESTROY_SUPABASE_STAGING_DATABASE`;
 4. normalized change-ticket identifier;
 5. measured CAD cost no greater than 4, with at most six decimals;
-6. approval of the protected `phase3-staging` GitHub Environment;
+6. exact solo-operator acknowledgement
+   `I_ACCEPT_SOLO_PHASE3_PROVIDER_EXIT_WITHOUT_REVIEWER`;
 7. all Supabase, Vault, and E2B credentials present only in that job;
 8. count-only cross-organization and customer-project inventory controls.
 

@@ -8,10 +8,10 @@ This checklist is the operator-facing companion to
 
 ## A. Preflight (required)
 
-1. Confirm protected GitHub environment exists:
+1. Confirm the environment-scoped GitHub boundary exists:
    - Name: `phase3-staging`
-   - Required reviewer enabled
-   - Self-approval disabled
+   - Required reviewers are optional for the approved solo-operator policy
+   - Every live run still requires the exact solo-operator acknowledgement
 2. Confirm required secrets/variables are configured in that environment:
    - `SUPABASE_ACCESS_TOKEN`
    - `SUPABASE_ORGANIZATION_SLUG`
@@ -21,8 +21,9 @@ This checklist is the operator-facing companion to
    - Optional overrides: `PHASE3_STAGING_MIN_OTHER_ORG_CONTROLS` and
      `PHASE3_STAGING_MIN_CUSTOMER_CONTROLS` (both default to `1`)
    - Do not configure `VAULT_ADDR`, `VAULT_TOKEN`, or `VAULT_KV_MOUNT` for this
-     workflow. The protected job creates an isolated Vault dev server, generates
-     and masks a per-job token, and removes the server after evidence capture.
+     workflow. The environment-scoped job creates an isolated Vault dev server,
+     generates and masks a per-job token, and removes the server after evidence
+     capture.
 3. Confirm control inventory exists before any live run:
    - At least one visible project in another organization
    - At least one customer-named project in the staging organization
@@ -54,15 +55,17 @@ Pass criteria:
 - Evidence artifact is generated and uploaded by the workflow/job.
 - No secret values appear in logs or artifacts.
 
-## C. Live provider-backed exit (protected staging only)
+## C. Live provider-backed exit (environment-scoped staging only)
 
 Trigger the manual staging workflow (`.github/workflows/phase3-staging.yml`) with:
 
 - `run_live_provider=true`
 - confirmation 1: `RUN_PHASE3_STAGING`
 - confirmation 2: `PROVISION_MIGRATE_AND_DESTROY_SUPABASE_STAGING_DATABASE`
+- confirmation 3: `I_ACCEPT_SOLO_PHASE3_PROVIDER_EXIT_WITHOUT_REVIEWER`
 
-Then approve environment access when prompted.
+The solo-operator acknowledgement replaces a reviewer prompt; it does not
+replace the separate change-ticket, cost, or destructive confirmations.
 
 Before triggering the workflow, run local fail-fast checks:
 
@@ -78,7 +81,7 @@ pnpm staging:phase3:preflight:live:json
 
 Pass criteria:
 
-- Workflow reaches completion without bypassing approval gates.
+- Workflow reaches completion after all explicit confirmation gates pass.
 - Evidence includes provision -> health -> migrate/seed -> reconciliation path.
 - Workflow uploads `phase3-preflight-evidence` (durability) and, when live is requested,
   `phase3-preflight-live-evidence` artifacts with preflight JSON.

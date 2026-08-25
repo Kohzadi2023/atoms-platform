@@ -59,11 +59,12 @@ an explicit staging change ticket and cost approval.
 
 1. Dispatch `.github/workflows/phase3-staging.yml` with
    `run_live_provider=true` from an approved change ticket.
-2. Type both exact confirmations: `RUN_PHASE3_STAGING` and
-   `PROVISION_MIGRATE_AND_DESTROY_SUPABASE_STAGING_DATABASE`.
-3. After the protected `phase3-staging` environment reviewer approves access,
-   the test creates one platform-pattern resource in the isolated staging
-   organization and migrates the locked fixture through Vault and E2B.
+2. Type all three exact confirmations: `RUN_PHASE3_STAGING`,
+   `PROVISION_MIGRATE_AND_DESTROY_SUPABASE_STAGING_DATABASE`, and
+   `I_ACCEPT_SOLO_PHASE3_PROVIDER_EXIT_WITHOUT_REVIEWER`.
+3. After the solo-operator, cost, and destructive checks pass, the test creates
+   one platform-pattern resource in the isolated staging organization and
+   migrates the locked fixture through Vault and E2B.
 4. Leave normal worker cleanup disabled; the test runs two report-only sweeps.
 5. Verify an OPEN finding, two observations, and zero delete requests.
 6. The staging harness advances only its isolated audit clock beyond the test
@@ -112,10 +113,12 @@ A checkpoint is staging-validated only when every mandatory row has real
 evidence. `not run` is an acceptable local-development report but is not a
 staging pass.
 
-## 7. Protected workflow setup
+## 7. Environment-scoped workflow setup
 
-Create a GitHub Environment named `phase3-staging`, require a reviewer, and
-disable self-approval. Configure only that environment with:
+Create a GitHub Environment named `phase3-staging`. Required reviewers and
+self-review prevention are optional under the approved solo-operator policy;
+the workflow instead requires the exact solo acknowledgement on every live
+run. Configure only that environment with:
 
 | Kind | Name |
 | --- | --- |

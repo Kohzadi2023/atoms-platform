@@ -1,6 +1,8 @@
 import { pathToFileURL } from "node:url";
 
 const API_VERSION = "2022-11-28";
+export const SOLO_OPERATOR_CONFIRMATION =
+  "I_ACCEPT_SOLO_PHASE3_PROVIDER_EXIT_WITHOUT_REVIEWER";
 
 export class EnvironmentProtectionError extends Error {
   constructor(message) {
@@ -45,7 +47,11 @@ export function buildEnvironmentApiUrl({
   )}/environments/${encodeURIComponent(normalizedEnvironmentName)}`;
 }
 
-export function evaluateEnvironmentProtection(payload, expectedEnvironmentName) {
+export function evaluateEnvironmentProtection(
+  payload,
+  expectedEnvironmentName,
+  soloOperatorConfirmation,
+) {
   const violations = [];
   const environmentName = requireNonEmpty(
     expectedEnvironmentName,
@@ -60,25 +66,8 @@ export function evaluateEnvironmentProtection(payload, expectedEnvironmentName) 
     violations.push("the returned environment name does not match the requested environment");
   }
 
-  const protectionRules = Array.isArray(payload.protection_rules)
-    ? payload.protection_rules
-    : [];
-  const reviewerRule = protectionRules.find((rule) => rule?.type === "required_reviewers");
-
-  if (!reviewerRule) {
-    violations.push("a required-reviewer rule is not configured");
-  } else {
-    if (!Array.isArray(reviewerRule.reviewers) || reviewerRule.reviewers.length === 0) {
-      violations.push("the required-reviewer rule has no reviewers");
-    }
-
-    if (reviewerRule.prevent_self_review !== true) {
-      violations.push("self-review prevention is not enabled");
-    }
-  }
-
-  if (payload.can_admins_bypass !== false) {
-    violations.push("administrator bypass is not disabled");
+  if (soloOperatorConfirmation !== SOLO_OPERATOR_CONFIRMATION) {
+    violations.push("the exact solo-operator confirmation is missing");
   }
 
   return {
@@ -92,6 +81,7 @@ export async function verifyEnvironmentProtection({
   environmentName,
   fetchImpl = globalThis.fetch,
   repository,
+  soloOperatorConfirmation,
   token,
 }) {
   if (typeof fetchImpl !== "function") {
@@ -130,10 +120,14 @@ export async function verifyEnvironmentProtection({
     throw new EnvironmentProtectionError("GitHub returned invalid environment metadata.");
   }
 
-  const result = evaluateEnvironmentProtection(payload, environmentName);
+  const result = evaluateEnvironmentProtection(
+    payload,
+    environmentName,
+    soloOperatorConfirmation,
+  );
   if (!result.ok) {
     throw new EnvironmentProtectionError(
-      `The live provider environment is not safely protected: ${result.violations.join("; ")}.`,
+      `The live provider environment policy failed: ${result.violations.join("; ")}.`,
     );
   }
 
@@ -147,11 +141,12 @@ export async function main(environment = process.env) {
     apiUrl: environment.GITHUB_API_URL,
     environmentName,
     repository: environment.GITHUB_REPOSITORY,
+    soloOperatorConfirmation: environment.PHASE3_SOLO_OPERATOR_CONFIRMATION,
     token: environment.GITHUB_TOKEN,
   });
 
   console.log(
-    `Phase 3 environment protection verified for ${environmentName}: reviewer approval required, self-review blocked, and administrator bypass disabled.`,
+    `Phase 3 environment policy verified for ${environmentName}: explicit solo-operator acknowledgement accepted.`,
   );
 }
 
@@ -163,8 +158,8 @@ if (invokedDirectly) {
     const message =
       error instanceof EnvironmentProtectionError
         ? error.message
-        : "An unexpected environment protection error occurred.";
-    console.error(`Phase 3 environment protection check failed: ${message}`);
+        : "An unexpected environment policy error occurred.";
+    console.error(`Phase 3 environment policy check failed: ${message}`);
     process.exitCode = 1;
   });
 }

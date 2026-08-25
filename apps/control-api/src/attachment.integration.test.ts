@@ -33,6 +33,7 @@ test(
     const prisma = createPrismaClient(databaseUrl);
     const attachments = new PrismaAttachmentRepository(prisma);
     const control = new PrismaControlRepository(prisma);
+    const userId = `integration-user-${randomUUID().slice(0, 8)}`;
     const workspaceId = randomUUID();
     const prefix = `atoms-attachments-${randomUUID().replaceAll("-", "")}`;
     const scanQueue = new BullMqAttachmentScanQueue({ redisUrl, prefix });
@@ -49,6 +50,13 @@ test(
           slug: `attachment-${workspaceId.slice(0, 8)}`,
         },
       });
+      await prisma.membership.create({
+        data: {
+          workspaceId,
+          userId,
+          role: "OWNER",
+        },
+      });
       const project = await control.createProject({
         workspaceId,
         name: "Clean snapshot",
@@ -56,6 +64,7 @@ test(
       });
       const attachmentId = randomUUID();
       const created = await attachments.createAttachment({
+        userId,
         projectId: project.id,
         attachmentId,
         metadata: {
@@ -67,6 +76,7 @@ test(
       });
       assert.equal(created.kind, "ok");
       const quarantined = await attachments.completeUpload({
+        userId,
         projectId: project.id,
         attachmentId,
         etag: "etag-integration",
@@ -84,7 +94,7 @@ test(
         },
       });
 
-      const run = await control.createRun(project.id, "Build it", [attachmentId]);
+      const run = await control.createRun(userId, project.id, "Build it", [attachmentId]);
       assert.ok(run);
       const snapshot = await prisma.agentRunAttachment.findUniqueOrThrow({
         where: {
@@ -100,7 +110,7 @@ test(
         slug: "other-project",
       });
       await assert.rejects(
-        control.createRun(otherProject.id, "Cross tenant project input", [
+        control.createRun(userId, otherProject.id, "Cross tenant project input", [
           attachmentId,
         ]),
         RepositoryAttachmentError,
@@ -114,6 +124,7 @@ test(
       const quotaResults = await Promise.all(
         Array.from({ length: 6 }, async (_value, index) =>
           attachments.createAttachment({
+            userId,
             projectId: quotaProject.id,
             attachmentId: randomUUID(),
             metadata: {

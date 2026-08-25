@@ -1,4 +1,7 @@
 export { buildControlApi, type BuildControlApiOptions } from "./app.js";
+export * from "./auth.js";
+export * from "./auth-runtime.js";
+export * from "./authorization.js";
 export * from "./attachment-domain.js";
 export * from "./attachment-queue.js";
 export * from "./attachment-repository.js";

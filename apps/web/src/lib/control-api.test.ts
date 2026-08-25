@@ -39,6 +39,26 @@ test("createRun sends the shared idempotency header and payload", async (context
   });
 });
 
+test("requests send the access token supplied by the provider", async (context) => {
+  let authorization: string | null = null;
+  const originalFetch = globalThis.fetch;
+  context.after(() => {
+    globalThis.fetch = originalFetch;
+  });
+  globalThis.fetch = async (_input, init = {}) => {
+    authorization = new Headers(init.headers).get("authorization");
+    return jsonResponse({ items: [] });
+  };
+
+  const client = new ControlApiClient({
+    baseUrl: "http://control.test",
+    accessTokenProvider: () => "access-token",
+  });
+  await client.listWorkspaces();
+
+  assert.equal(authorization, "Bearer access-token");
+});
+
 test("approve action sends its scope and concurrency preconditions", async (context) => {
   let body: unknown;
   const originalFetch = globalThis.fetch;

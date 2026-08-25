@@ -18,23 +18,30 @@ export type CompleteAttachmentResult =
 
 export interface AttachmentRepository {
   createAttachment(input: {
+    readonly userId: string;
     readonly projectId: string;
     readonly attachmentId: string;
     readonly metadata: CreateAttachmentUploadIntentInput;
     readonly uploadExpiresAt: Date;
   }): Promise<CreateAttachmentResult>;
-  listAttachments(projectId: string): Promise<readonly AttachmentRecord[] | null>;
+  listAttachments(
+    userId: string,
+    projectId: string,
+  ): Promise<readonly AttachmentRecord[] | null>;
   getAttachment(
+    userId: string,
     projectId: string,
     attachmentId: string,
   ): Promise<AttachmentRecord | null>;
   completeUpload(input: {
+    readonly userId: string;
     readonly projectId: string;
     readonly attachmentId: string;
     readonly etag: string | null;
     readonly now: Date;
   }): Promise<CompleteAttachmentResult>;
   failAttachment(input: {
+    readonly userId: string;
     readonly projectId: string;
     readonly attachmentId: string;
     readonly expectedStatus: "AWAITING_UPLOAD" | "QUARANTINED";
@@ -51,6 +58,7 @@ export class PrismaAttachmentRepository implements AttachmentRepository {
   }
 
   createAttachment(input: {
+    readonly userId: string;
     readonly projectId: string;
     readonly attachmentId: string;
     readonly metadata: CreateAttachmentUploadIntentInput;
@@ -58,7 +66,15 @@ export class PrismaAttachmentRepository implements AttachmentRepository {
   }): Promise<CreateAttachmentResult> {
     return this.#prisma.$transaction(async (transaction) => {
       const project = await transaction.project.findFirst({
-        where: { id: input.projectId, archivedAt: null },
+        where: {
+          id: input.projectId,
+          archivedAt: null,
+          workspace: {
+            memberships: {
+              some: { userId: input.userId },
+            },
+          },
+        },
         select: { id: true, workspaceId: true },
       });
       if (project === null) return { kind: "project_not_found" };
@@ -93,10 +109,19 @@ export class PrismaAttachmentRepository implements AttachmentRepository {
   }
 
   async listAttachments(
+    userId: string,
     projectId: string,
   ): Promise<readonly AttachmentRecord[] | null> {
     const project = await this.#prisma.project.findFirst({
-      where: { id: projectId, archivedAt: null },
+      where: {
+        id: projectId,
+        archivedAt: null,
+        workspace: {
+          memberships: {
+            some: { userId },
+          },
+        },
+      },
       select: { id: true },
     });
     if (project === null) return null;
@@ -108,16 +133,28 @@ export class PrismaAttachmentRepository implements AttachmentRepository {
   }
 
   async getAttachment(
+    userId: string,
     projectId: string,
     attachmentId: string,
   ): Promise<AttachmentRecord | null> {
     const attachment = await this.#prisma.projectAttachment.findFirst({
-      where: { id: attachmentId, projectId },
+      where: {
+        id: attachmentId,
+        projectId,
+        project: {
+          workspace: {
+            memberships: {
+              some: { userId },
+            },
+          },
+        },
+      },
     });
     return attachment === null ? null : toAttachmentRecord(attachment);
   }
 
   completeUpload(input: {
+    readonly userId: string;
     readonly projectId: string;
     readonly attachmentId: string;
     readonly etag: string | null;
@@ -125,7 +162,17 @@ export class PrismaAttachmentRepository implements AttachmentRepository {
   }): Promise<CompleteAttachmentResult> {
     return this.#prisma.$transaction(async (transaction) => {
       const current = await transaction.projectAttachment.findFirst({
-        where: { id: input.attachmentId, projectId: input.projectId },
+        where: {
+          id: input.attachmentId,
+          projectId: input.projectId,
+          project: {
+            workspace: {
+              memberships: {
+                some: { userId: input.userId },
+              },
+            },
+          },
+        },
       });
       if (current === null) return { kind: "not_found" };
       if (current.status !== "AWAITING_UPLOAD") {
@@ -161,6 +208,7 @@ export class PrismaAttachmentRepository implements AttachmentRepository {
   }
 
   async failAttachment(input: {
+    readonly userId: string;
     readonly projectId: string;
     readonly attachmentId: string;
     readonly expectedStatus: "AWAITING_UPLOAD" | "QUARANTINED";
@@ -170,6 +218,13 @@ export class PrismaAttachmentRepository implements AttachmentRepository {
       where: {
         id: input.attachmentId,
         projectId: input.projectId,
+        project: {
+          workspace: {
+            memberships: {
+              some: { userId: input.userId },
+            },
+          },
+        },
         status: input.expectedStatus,
       },
       data: { status: "FAILED", failureCode: input.failureCode },

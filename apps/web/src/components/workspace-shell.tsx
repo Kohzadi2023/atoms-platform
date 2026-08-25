@@ -7,6 +7,7 @@ import type {
   ProjectFileSummary,
   ProjectResponse,
   ProjectAttachment,
+  WorkspaceSummary,
   RunActionInput,
   RunAction,
   RunArtifactResponse,
@@ -34,6 +35,7 @@ import {
   Gauge,
   GitBranch,
   LoaderCircle,
+  LogOut,
   MonitorPlay,
   Paperclip,
   Pause,
@@ -57,7 +59,12 @@ import {
   type FormEvent,
 } from "react";
 
-import { ControlApiClient, ControlApiError } from "../lib/control-api";
+import { createDevelopmentAccessTokenProvider } from "../lib/browser-auth";
+import {
+  ControlApiClient,
+  ControlApiError,
+  type ControlApiAccessTokenProvider,
+} from "../lib/control-api";
 import {
   AGENT_ORDER,
   availableRunActions,
@@ -72,9 +79,11 @@ import { CodeEditor } from "./code-editor";
 
 const CONTROL_API_URL =
   process.env.NEXT_PUBLIC_CONTROL_API_URL ?? "http://localhost:3001";
-const DEFAULT_WORKSPACE_ID =
-  process.env.NEXT_PUBLIC_DEFAULT_WORKSPACE_ID ??
-  "00000000-0000-4000-8000-000000000001";
+const DEVELOPMENT_ACCESS_TOKEN_PROVIDER =
+  createDevelopmentAccessTokenProvider({
+    nodeEnv: process.env.NODE_ENV,
+    configuredToken: process.env.NEXT_PUBLIC_CONTROL_API_ACCESS_TOKEN,
+  });
 const PREVIEW_BASE_DOMAIN =
   process.env.NEXT_PUBLIC_PREVIEW_BASE_DOMAIN ?? "preview.localhost";
 const ACTIVE_RUN_STORAGE_KEY = "atoms.active-run.v1";
@@ -95,14 +104,35 @@ const WORKSPACE_TABS = [
 type WorkspaceTab = (typeof WORKSPACE_TABS)[number]["id"];
 type MobilePane = "agents" | "project";
 
-export function WorkspaceShell() {
+export interface WorkspaceShellProps {
+  readonly accessTokenProvider?: ControlApiAccessTokenProvider;
+  readonly identityLabel?: string;
+  readonly signingOut?: boolean;
+  readonly onSignOut?: () => void;
+  readonly authenticationError?: string;
+  readonly onDismissAuthenticationError?: () => void;
+}
+
+export function WorkspaceShell({
+  accessTokenProvider = DEVELOPMENT_ACCESS_TOKEN_PROVIDER,
+  identityLabel,
+  signingOut = false,
+  onSignOut,
+  authenticationError,
+  onDismissAuthenticationError,
+}: WorkspaceShellProps = {}) {
   const api = useMemo(
-    () => new ControlApiClient({ baseUrl: CONTROL_API_URL }),
-    [],
+    () =>
+      new ControlApiClient({
+        baseUrl: CONTROL_API_URL,
+        accessTokenProvider,
+      }),
+    [accessTokenProvider],
   );
   const [mobilePane, setMobilePane] = useState<MobilePane>("agents");
   const [activeTab, setActiveTab] = useState<WorkspaceTab>("preview");
-  const [workspaceId, setWorkspaceId] = useState(DEFAULT_WORKSPACE_ID);
+  const [workspaces, setWorkspaces] = useState<readonly WorkspaceSummary[]>([]);
+  const [workspaceId, setWorkspaceId] = useState("");
   const [projectName, setProjectName] = useState("Customer operations portal");
   const [projectSlug, setProjectSlug] = useState("customer-operations-portal");
   const [prompt, setPrompt] = useState(
@@ -137,6 +167,27 @@ export function WorkspaceShell() {
   const uploadIntentsRef = useRef(
     new Map<string, AttachmentUploadIntentResponse>(),
   );
+
+  useEffect(() => {
+    let active = true;
+    void api
+      .listWorkspaces()
+      .then((response) => {
+        if (!active) return;
+        setWorkspaces(response.items);
+        setWorkspaceId((current) =>
+          response.items.some((workspace) => workspace.id === current)
+            ? current
+            : response.items[0]?.id ?? "",
+        );
+      })
+      .catch((caught: unknown) => {
+        if (active) setError(`Could not load workspaces: ${toMessage(caught)}`);
+      });
+    return () => {
+      active = false;
+    };
+  }, [api]);
 
   const effectiveStatus = projection.inferredRunStatus ?? run?.status;
   const terminal =
@@ -547,6 +598,32 @@ export function WorkspaceShell() {
           <span className="hidden rounded-full border border-[#2b3442] px-2.5 py-1 text-[#98a5b7] sm:inline-flex">
             CAD 4 build target
           </span>
+          {identityLabel !== undefined ? (
+            <span
+              className="hidden max-w-52 truncate rounded-full border border-[#2b3442] px-2.5 py-1 text-[#b6c0ce] md:inline-flex"
+              title={identityLabel}
+            >
+              {identityLabel}
+            </span>
+          ) : null}
+          {onSignOut !== undefined ? (
+            <button
+              className="inline-flex items-center gap-1.5 rounded-lg border border-[#39414d] bg-[#11161e] px-2.5 py-1 text-[#c0cad8] hover:border-[#4a5565] hover:text-white disabled:cursor-not-allowed disabled:opacity-55"
+              type="button"
+              disabled={signingOut}
+              aria-label="Sign out of Atoms"
+              onClick={onSignOut}
+            >
+              {signingOut ? (
+                <LoaderCircle className="animate-spin" size={13} />
+              ) : (
+                <LogOut size={13} />
+              )}
+              <span className="hidden sm:inline">
+                {signingOut ? "Signing out" : "Sign out"}
+              </span>
+            </button>
+          ) : null}
         </div>
       </header>
 
@@ -587,15 +664,24 @@ export function WorkspaceShell() {
               className="mt-4 space-y-4 rounded-2xl border border-[#252d3a] bg-[#0d121a] p-4 shadow-2xl shadow-black/20"
               onSubmit={createProjectRun}
             >
-              <Field label="Workspace ID" hint="Use the seeded local workspace or an existing tenant UUID.">
-                <input
+              <Field label="Workspace">
+                <select
                   className={inputClass}
                   value={workspaceId}
                   onChange={(event) => setWorkspaceId(event.target.value)}
                   required
-                  pattern="[0-9a-fA-F-]{36}"
-                  aria-describedby="workspace-hint"
-                />
+                  disabled={workspaces.length === 0}
+                >
+                  {workspaces.length === 0 ? (
+                    <option value="">No authorized workspaces</option>
+                  ) : (
+                    workspaces.map((workspace) => (
+                      <option key={workspace.id} value={workspace.id}>
+                        {workspace.name} ({workspace.slug})
+                      </option>
+                    ))
+                  )}
+                </select>
               </Field>
               <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-1 xl:grid-cols-2">
                 <Field label="Project name">
@@ -846,6 +932,13 @@ export function WorkspaceShell() {
           <div className="sr-only" aria-live="polite" aria-atomic="true">
             {notice ?? error ?? (effectiveStatus === undefined ? "Ready" : `Run ${effectiveStatus}`)}
           </div>
+          {authenticationError !== undefined ? (
+            <Feedback
+              kind="error"
+              message={authenticationError}
+              onClose={onDismissAuthenticationError ?? (() => undefined)}
+            />
+          ) : null}
           {error !== undefined ? <Feedback kind="error" message={error} onClose={() => setError(undefined)} /> : null}
           {notice !== undefined ? <Feedback kind="notice" message={notice} onClose={() => setNotice(undefined)} /> : null}
         </section>

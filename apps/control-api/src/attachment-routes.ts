@@ -52,12 +52,17 @@ export function registerAttachmentRoutes(
       },
     },
     async (request, reply) => {
+      const principal = request.principal;
+      if (principal === undefined) {
+        throw new ApiError(401, "AUTHENTICATION_REQUIRED", "Authentication required");
+      }
       const attachmentId = createId();
       const createdAt = now();
       const expiresAt = new Date(
         createdAt.getTime() + ATTACHMENT_UPLOAD_TTL_SECONDS * 1_000,
       );
       const created = await options.repository.createAttachment({
+        userId: principal.userId,
         projectId: request.params.id,
         attachmentId,
         metadata: request.body,
@@ -92,6 +97,7 @@ export function registerAttachmentRoutes(
         });
       } catch (error) {
         await options.repository.failAttachment({
+          userId: principal.userId,
           projectId: request.params.id,
           attachmentId,
           expectedStatus: "AWAITING_UPLOAD",
@@ -117,7 +123,12 @@ export function registerAttachmentRoutes(
       },
     },
     async (request, reply) => {
+      const principal = request.principal;
+      if (principal === undefined) {
+        throw new ApiError(401, "AUTHENTICATION_REQUIRED", "Authentication required");
+      }
       const attachment = await options.repository.getAttachment(
+        principal.userId,
         request.params.id,
         request.params.attachmentId,
       );
@@ -133,6 +144,7 @@ export function registerAttachmentRoutes(
       }
       if (attachment.uploadExpiresAt <= now()) {
         await options.repository.completeUpload({
+          userId: principal.userId,
           projectId: request.params.id,
           attachmentId: attachment.id,
           etag: null,
@@ -175,6 +187,7 @@ export function registerAttachmentRoutes(
         (suppliedEtag !== undefined && suppliedEtag !== storedEtag)
       ) {
         await options.repository.failAttachment({
+          userId: principal.userId,
           projectId: request.params.id,
           attachmentId: attachment.id,
           expectedStatus: "AWAITING_UPLOAD",
@@ -191,6 +204,7 @@ export function registerAttachmentRoutes(
       }
 
       const completed = await options.repository.completeUpload({
+        userId: principal.userId,
         projectId: request.params.id,
         attachmentId: attachment.id,
         etag: storedEtag ?? null,
@@ -220,6 +234,7 @@ export function registerAttachmentRoutes(
         });
       } catch {
         await options.repository.failAttachment({
+          userId: principal.userId,
           projectId: request.params.id,
           attachmentId: completed.attachment.id,
           expectedStatus: "QUARANTINED",
@@ -248,7 +263,12 @@ export function registerAttachmentRoutes(
       },
     },
     async (request, reply) => {
+      const principal = request.principal;
+      if (principal === undefined) {
+        throw new ApiError(401, "AUTHENTICATION_REQUIRED", "Authentication required");
+      }
       const attachments = await options.repository.listAttachments(
+        principal.userId,
         request.params.id,
       );
       if (attachments === null) {
@@ -270,7 +290,12 @@ export function registerAttachmentRoutes(
       },
     },
     async (request, reply) => {
+      const principal = request.principal;
+      if (principal === undefined) {
+        throw new ApiError(401, "AUTHENTICATION_REQUIRED", "Authentication required");
+      }
       const attachment = await options.repository.getAttachment(
+        principal.userId,
         request.params.id,
         request.params.attachmentId,
       );

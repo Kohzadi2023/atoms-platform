@@ -31,6 +31,12 @@ pnpm db:seed:local
 pnpm verify
 ```
 
+Before starting the application, configure the provider keys and one
+authentication mode in the untracked `.env` file. For the local seeded user,
+generate one random token with at least 32 characters and assign the same value
+to `AUTH_DEV_ACCESS_TOKEN` and `NEXT_PUBLIC_CONTROL_API_ACCESS_TOKEN`. Keep
+`AUTH_DEV_AUTHENTICATOR_ENABLED=true`; never reuse or deploy that token.
+
 The root `pnpm prisma ...` command always uses `prisma.config.ts` and the master
 schema at `packages/db/prisma/schema.prisma`.
 
@@ -161,7 +167,22 @@ wildcard DNS record for `*.PREVIEW_BASE_DOMAIN` at the preview gateway. For loca
 development, a wildcard-loopback domain such as `preview.localhost` can be used
 where the browser resolves its subdomains to `127.0.0.1`.
 
-Run the four processes separately:
+Validate the root `.env` without printing any configured value, then start all
+four processes with that environment:
+
+```bash
+pnpm dev:check
+pnpm dev
+```
+
+The Agent Hub is then available at `http://localhost:3000`; the Control API and
+preview-gateway health endpoints are available at `http://localhost:3001/healthz`
+and `http://localhost:3002/healthz`. `pnpm dev` loads the repository-root `.env`
+before Turbo starts package-local processes. To inspect only the frontend shell
+without starting the API, worker, or gateway, run `pnpm dev:web`.
+
+For process-level troubleshooting, each service can still be started separately
+after exporting the root `.env` into that shell:
 
 ```bash
 pnpm --filter @atoms/control-api dev

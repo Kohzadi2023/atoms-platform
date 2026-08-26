@@ -58,11 +58,14 @@ docker compose up -d
 pnpm install --frozen-lockfile
 pnpm db:migrate:deploy
 pnpm db:seed:local
-pnpm --filter @atoms/control-api dev
-pnpm --filter @atoms/orchestrator-worker dev
-pnpm --filter @atoms/preview-gateway dev
-pnpm --filter @atoms/web dev
+pnpm dev:check
+pnpm dev
 ```
+
+`pnpm dev` loads the repository-root `.env` and passes it to all Turbo dev
+processes. The web workspace is available at `http://localhost:3000`. Use
+`pnpm dev:web` when only the frontend shell is needed; full run execution still
+requires the configured OpenAI and E2B provider keys.
 
 The deterministic seed creates workspace
 `00000000-0000-4000-8000-000000000001`, which is also the non-secret default

@@ -12,5 +12,7 @@ dist-test
 .env
 .env.*
 !.env.example
+deploy/staging/staging.env
+deploy/staging/secrets
 coverage
 *.log

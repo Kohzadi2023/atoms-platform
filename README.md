@@ -204,6 +204,24 @@ docker build -f apps/orchestrator-worker/Dockerfile -t atoms-worker .
 docker build -f apps/preview-gateway/Dockerfile -t atoms-preview-gateway .
 ```
 
+The first provider-neutral staging deployment slice is in
+`deploy/staging/compose.yaml`. It runs all application and persistence services
+on one Docker host, keeps infrastructure ports private, binds future public
+entry points to loopback, applies Prisma migrations before rollout, and reads
+runtime credentials only from permission-restricted files outside the
+repository. Validate a populated deployment contract before any build or
+rollout:
+
+```bash
+pnpm staging:deploy:preflight -- \
+  --env-file /etc/atoms/staging/staging.env \
+  --secrets-dir /etc/atoms/staging/secrets
+```
+
+See `docs/staging-deployment.md` for the public-env allowlist, secret-file
+contract, Compose commands, rollback boundary, and the Issue #22 gates that
+must be recorded before a live deployment.
+
 See `docs/phase-2-validation-preview.md` for the lifecycle and security boundary,
 `docs/secure-attachments.md` for the upload/scan/model-input boundary, and
 `docs/event-catalogue.md` for replayable Phase 2 event payloads.

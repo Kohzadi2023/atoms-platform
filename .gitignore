@@ -11,5 +11,7 @@ coverage/
 .env
 .env.*
 !.env.example
+deploy/staging/staging.env
+deploy/staging/secrets/
 
 packages/db/src/generated/

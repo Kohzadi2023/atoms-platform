@@ -204,16 +204,20 @@ docker build -f apps/orchestrator-worker/Dockerfile -t atoms-worker .
 docker build -f apps/preview-gateway/Dockerfile -t atoms-preview-gateway .
 ```
 
-The first provider-neutral staging deployment slice is in
+The provider-neutral staging deployment contract is in
 `deploy/staging/compose.yaml`. It runs all application and persistence services
-on one Docker host, keeps infrastructure ports private, binds future public
-entry points to loopback, applies Prisma migrations before rollout, and reads
-runtime credentials only from permission-restricted files outside the
-repository. Validate a populated deployment contract before any build or
-rollout:
+on one Docker host, keeps every application and infrastructure port private,
+and publishes only the Caddy HTTP/HTTPS ingress. Caddy routes the exact web/API
+names and wildcard signed previews with an externally issued certificate.
+Prisma migrations run before application rollout, and runtime credentials stay
+in permission-restricted files outside the repository. Validate a populated
+deployment contract before any build or rollout:
 
 ```bash
 pnpm staging:deploy:preflight -- \
+  --env-file /etc/atoms/staging/staging.env \
+  --secrets-dir /etc/atoms/staging/secrets
+pnpm staging:deploy:compose:validate -- \
   --env-file /etc/atoms/staging/staging.env \
   --secrets-dir /etc/atoms/staging/secrets
 ```

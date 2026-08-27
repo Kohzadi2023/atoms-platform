@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { spawnSync } from "node:child_process";
-import { chmod, readFile, writeFile } from "node:fs/promises";
+import { chmod, copyFile, readFile, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import test from "node:test";
 import { fileURLToPath } from "node:url";
@@ -14,9 +14,12 @@ import {
 const preflightPath = fileURLToPath(
   new URL("./check-staging-deployment.mjs", import.meta.url),
 );
+const composeValidationPath = fileURLToPath(
+  new URL("./validate-staging-compose.mjs", import.meta.url),
+);
 
-async function fixtureForTest(t) {
-  const fixture = await createStagingDeploymentFixture();
+async function fixtureForTest(t, options) {
+  const fixture = await createStagingDeploymentFixture(options);
   t.after(() => fixture.cleanup());
   return fixture;
 }
@@ -36,8 +39,55 @@ test("accepts a complete secret-safe staging contract", async (t) => {
       publicEnvironmentFiles: 1,
       serviceEnvironmentFiles: 4,
       opaqueSecretFiles: 7,
+      tlsFiles: 2,
     },
   });
+});
+
+test("rejects a certificate without the required wildcard preview SAN", async (t) => {
+  const fixture = await fixtureForTest(t, {
+    tlsDnsNames: [
+      "app.staging.atoms.dev",
+      "api.staging.atoms.dev",
+      "preview.staging.atoms.dev",
+    ],
+  });
+
+  const result = await validateStagingDeployment({
+    environmentFile: fixture.environmentFile,
+    secretsDirectory: fixture.secretsDirectory,
+  });
+
+  assert.equal(result.ok, false);
+  assert.match(result.violations.join("\n"), /wildcard SAN/u);
+});
+
+test("rejects a TLS private key that does not match the certificate", async (t) => {
+  const fixture = await fixtureForTest(t);
+  const otherFixture = await fixtureForTest(t);
+  const targetKey = join(fixture.secretsDirectory, "tls-private-key.pem");
+  await copyFile(join(otherFixture.secretsDirectory, "tls-private-key.pem"), targetKey);
+  await chmod(targetKey, 0o600);
+
+  const result = await validateStagingDeployment({
+    environmentFile: fixture.environmentFile,
+    secretsDirectory: fixture.secretsDirectory,
+  });
+
+  assert.equal(result.ok, false);
+  assert.match(result.violations.join("\n"), /certificate and private key must match/u);
+});
+
+test("rejects a TLS certificate too close to expiry", async (t) => {
+  const fixture = await fixtureForTest(t, { tlsDays: 1 });
+
+  const result = await validateStagingDeployment({
+    environmentFile: fixture.environmentFile,
+    secretsDirectory: fixture.secretsDirectory,
+  });
+
+  assert.equal(result.ok, false);
+  assert.match(result.violations.join("\n"), /remain valid for at least seven days/u);
 });
 
 test("rejects a service env file readable by group or others", async (t) => {
@@ -128,6 +178,33 @@ test("rejects placeholder domains, non-HTTPS origins, and abbreviated image tags
   assert.match(output, /ATOMS_CONTROL_API_ORIGIN must use a DNS hostname/u);
 });
 
+test("rejects nonstandard ingress ports and app names under the preview wildcard", async (t) => {
+  const fixture = await fixtureForTest(t);
+  const content = await readFile(fixture.environmentFile, "utf8");
+  await writeFile(
+    fixture.environmentFile,
+    content
+      .replace(
+        "ATOMS_WEB_ORIGIN=https://app.staging.atoms.dev",
+        "ATOMS_WEB_ORIGIN=https://app.preview.staging.atoms.dev",
+      )
+      .replace(
+        "ATOMS_CONTROL_API_ORIGIN=https://api.staging.atoms.dev",
+        "ATOMS_CONTROL_API_ORIGIN=https://api.staging.atoms.dev:8443",
+      ),
+  );
+
+  const result = await validateStagingDeployment({
+    environmentFile: fixture.environmentFile,
+    secretsDirectory: fixture.secretsDirectory,
+  });
+  const output = result.violations.join("\n");
+
+  assert.equal(result.ok, false);
+  assert.match(output, /default HTTPS port/u);
+  assert.match(output, /outside the wildcard preview domain/u);
+});
+
 test("requires all live provider credentials in the worker-only env file", async (t) => {
   const fixture = await fixtureForTest(t);
   const workerEnvironmentPath = join(fixture.secretsDirectory, "worker.env");
@@ -187,6 +264,7 @@ test("CLI diagnostics identify contracts without printing credential values", as
     process.execPath,
     [
       preflightPath,
+      "--",
       "--env-file",
       fixture.environmentFile,
       "--secrets-dir",
@@ -209,4 +287,16 @@ test("CLI diagnostics identify contracts without printing credential values", as
   ]) {
     assert.doesNotMatch(output, new RegExp(secret, "u"));
   }
+});
+
+test("Compose validation rejects partial path arguments before invoking Docker", () => {
+  const result = spawnSync(
+    process.execPath,
+    [composeValidationPath, "--", "--env-file", "--secrets-dir", "/tmp/not-used"],
+    { encoding: "utf8" },
+  );
+
+  assert.notEqual(result.status, 0);
+  assert.match(result.stderr, /--env-file requires a path/u);
+  assert.doesNotMatch(result.stderr, /Docker/u);
 });

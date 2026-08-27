@@ -112,6 +112,7 @@ async function main(arguments_ = process.argv.slice(2)) {
         "--no-deps",
         "-T",
         "reverse-proxy",
+        "caddy",
         "validate",
         "--config",
         "/etc/caddy/Caddyfile",

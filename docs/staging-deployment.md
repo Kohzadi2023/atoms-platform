@@ -20,11 +20,14 @@ and its browser-safe publishable key. The preflight rejects every variable
 outside that allowlist.
 
 Runtime credentials live in an absolute directory outside the repository. The
-directory must grant no group or other access, and every file must be a regular
-file with no group or other permission bits. Symlinks are rejected. Compose
-mounts the service env and TLS files as file-backed secrets, and Node 24 loads
-each service env at process start. Their values therefore do not appear in
-image layers, build arguments, or Docker's configured container environment.
+directory must be exactly `0700`, every mounted file must be immutable mode
+`0444`, and symlinks are rejected. The apparently broad file read bits are
+contained by the owner-only directory on the host; they are required because
+Compose preserves host ownership for file-backed secrets while the images run
+with different non-root users. Compose mounts only the files granted to each
+service, and Node 24 loads each service env at process start. Their values
+therefore do not appear in image layers, build arguments, or Docker's configured
+container environment.
 
 The manifest publishes only TCP 80, TCP 443, and UDP 443 from the Caddy ingress.
 Web, Control API, and preview gateway ports exist only on an internal ingress
@@ -138,11 +141,13 @@ REDIS_URL=redis://:<encoded-password>@redis:6379
 PREVIEW_SIGNING_SECRET=<same-worker-signing-secret>
 ```
 
-Set the directory and files to owner-only access after delivery:
+Keep the directory owner-only and make every mounted file read-only after
+delivery. Do not loosen the directory mode: it is the host-side confidentiality
+boundary for the `0444` files.
 
 ```bash
 sudo chmod 0700 /etc/atoms/staging/secrets
-sudo chmod 0600 /etc/atoms/staging/secrets/*
+sudo chmod 0444 /etc/atoms/staging/secrets/*
 ```
 
 ## Fail-closed validation

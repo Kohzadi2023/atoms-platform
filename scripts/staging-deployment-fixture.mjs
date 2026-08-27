@@ -154,7 +154,7 @@ async function writeTlsMaterial(directory, dnsNames, days) {
   if (result.error !== undefined || result.status !== 0) {
     throw new Error("OpenSSL could not create the isolated staging TLS fixture");
   }
-  await Promise.all([chmod(certificatePath, 0o600), chmod(privateKeyPath, 0o600)]);
+  await Promise.all([chmod(certificatePath, 0o444), chmod(privateKeyPath, 0o444)]);
 }
 
 export function environmentText(environment) {
@@ -170,5 +170,5 @@ async function writeSecureEnvironment(directory, fileName, environment) {
 async function writeSecureFile(directory, fileName, content) {
   const path = join(directory, fileName);
   await writeFile(path, content, { mode: 0o600 });
-  await chmod(path, 0o600);
+  await chmod(path, 0o444);
 }

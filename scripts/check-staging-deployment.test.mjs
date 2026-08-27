@@ -66,8 +66,9 @@ test("rejects a TLS private key that does not match the certificate", async (t) 
   const fixture = await fixtureForTest(t);
   const otherFixture = await fixtureForTest(t);
   const targetKey = join(fixture.secretsDirectory, "tls-private-key.pem");
-  await copyFile(join(otherFixture.secretsDirectory, "tls-private-key.pem"), targetKey);
   await chmod(targetKey, 0o600);
+  await copyFile(join(otherFixture.secretsDirectory, "tls-private-key.pem"), targetKey);
+  await chmod(targetKey, 0o444);
 
   const result = await validateStagingDeployment({
     environmentFile: fixture.environmentFile,
@@ -90,7 +91,7 @@ test("rejects a TLS certificate too close to expiry", async (t) => {
   assert.match(result.violations.join("\n"), /remain valid for at least seven days/u);
 });
 
-test("rejects a service env file readable by group or others", async (t) => {
+test("rejects a writable service secret file", async (t) => {
   const fixture = await fixtureForTest(t);
   await chmod(join(fixture.secretsDirectory, "worker.env"), 0o644);
 
@@ -100,7 +101,7 @@ test("rejects a service env file readable by group or others", async (t) => {
   });
 
   assert.equal(result.ok, false);
-  assert.match(result.violations.join("\n"), /worker\.env permissions/u);
+  assert.match(result.violations.join("\n"), /worker\.env permissions must be exactly 0444/u);
 });
 
 test("rejects development credentials in the public deployment env without leaking them", async (t) => {
@@ -127,15 +128,15 @@ test("rejects mismatched service credentials without exposing either value", asy
   const mismatchedPassword = "mismatched-redis-passphrase-0123456789";
   const workerEnvironmentPath = join(fixture.secretsDirectory, "worker.env");
   const workerEnvironment = await readFile(workerEnvironmentPath, "utf8");
+  await chmod(workerEnvironmentPath, 0o600);
   await writeFile(
     workerEnvironmentPath,
     workerEnvironment.replace(
       fixture.values.redisUrl,
       `redis://:${encodeURIComponent(mismatchedPassword)}@redis:6379`,
     ),
-    { mode: 0o600 },
   );
-  await chmod(workerEnvironmentPath, 0o600);
+  await chmod(workerEnvironmentPath, 0o444);
 
   const result = await validateStagingDeployment({
     environmentFile: fixture.environmentFile,
@@ -209,15 +210,15 @@ test("requires all live provider credentials in the worker-only env file", async
   const fixture = await fixtureForTest(t);
   const workerEnvironmentPath = join(fixture.secretsDirectory, "worker.env");
   const content = await readFile(workerEnvironmentPath, "utf8");
+  await chmod(workerEnvironmentPath, 0o600);
   await writeFile(
     workerEnvironmentPath,
     content
       .split("\n")
       .filter((line) => !line.startsWith("SUPABASE_ACCESS_TOKEN="))
       .join("\n"),
-    { mode: 0o600 },
   );
-  await chmod(workerEnvironmentPath, 0o600);
+  await chmod(workerEnvironmentPath, 0o444);
 
   const result = await validateStagingDeployment({
     environmentFile: fixture.environmentFile,
@@ -231,15 +232,15 @@ test("requires all live provider credentials in the worker-only env file", async
 test("rejects duplicate environment assignments", async (t) => {
   const fixture = await fixtureForTest(t);
   const migrationPath = join(fixture.secretsDirectory, "migration.env");
+  await chmod(migrationPath, 0o600);
   await writeFile(
     migrationPath,
     environmentText({
       DATABASE_URL: fixture.values.databaseUrl,
       DATABASE_URL_DUPLICATE_SENTINEL: fixture.values.databaseUrl,
     }).replace("DATABASE_URL_DUPLICATE_SENTINEL", "DATABASE_URL"),
-    { mode: 0o600 },
   );
-  await chmod(migrationPath, 0o600);
+  await chmod(migrationPath, 0o444);
 
   const result = await validateStagingDeployment({
     environmentFile: fixture.environmentFile,
@@ -253,12 +254,12 @@ test("rejects duplicate environment assignments", async (t) => {
 test("CLI diagnostics identify contracts without printing credential values", async (t) => {
   const fixture = await fixtureForTest(t);
   const workerEnvironmentPath = join(fixture.secretsDirectory, "worker.env");
+  await chmod(workerEnvironmentPath, 0o600);
   await writeFile(
     workerEnvironmentPath,
     `${await readFile(workerEnvironmentPath, "utf8")}UNSUPPORTED_PRIVATE_VALUE=${fixture.values.vaultCredential}\n`,
-    { mode: 0o600 },
   );
-  await chmod(workerEnvironmentPath, 0o600);
+  await chmod(workerEnvironmentPath, 0o444);
 
   const result = spawnSync(
     process.execPath,

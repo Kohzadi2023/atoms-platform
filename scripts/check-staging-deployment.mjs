@@ -230,8 +230,10 @@ async function loadFile(path, label, secret, violations) {
     violations.push(`${label} must be a regular file, not a symlink`);
     return undefined;
   }
-  if (secret && (metadata.mode & 0o077) !== 0) {
-    violations.push(`${label} permissions must not grant group or other access`);
+  if (secret && (metadata.mode & 0o7777) !== 0o444) {
+    violations.push(
+      `${label} permissions must be exactly 0444 inside the owner-only secrets directory`,
+    );
   }
   if (metadata.size > 65_536) {
     violations.push(`${label} exceeds the 64 KiB deployment limit`);
@@ -257,9 +259,9 @@ async function validateSecretDirectory(path, violations) {
     violations.push("the staging secrets directory must be a real directory");
     return;
   }
-  if ((metadata.mode & 0o077) !== 0) {
+  if ((metadata.mode & 0o7777) !== 0o700) {
     violations.push(
-      "the staging secrets directory permissions must not grant group or other access",
+      "the staging secrets directory permissions must be exactly 0700",
     );
   }
   try {

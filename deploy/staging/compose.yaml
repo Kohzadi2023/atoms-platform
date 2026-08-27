@@ -186,7 +186,9 @@ services:
         done
         mc mb --ignore-existing "staging/${ATOMS_S3_BUCKET:?ATOMS_S3_BUCKET is required}" >/dev/null
         mc anonymous set none "staging/${ATOMS_S3_BUCKET}" >/dev/null
-        mc admin user add staging "$${access_key}" "$${secret_key}" >/dev/null
+        if ! mc admin user info staging "$${access_key}" >/dev/null 2>&1; then
+          mc admin user add staging "$${access_key}" "$${secret_key}" >/dev/null
+        fi
         cat > /tmp/atoms-attachments-policy.json <<'POLICY'
         {
           "Version": "2012-10-17",
@@ -216,6 +218,8 @@ services:
         POLICY
         mc admin policy create staging atoms-attachments-rw /tmp/atoms-attachments-policy.json >/dev/null
         mc admin policy attach staging atoms-attachments-rw --user "$${access_key}" >/dev/null
+        mc alias set application http://minio:9000 "$${access_key}" "$${secret_key}" >/dev/null
+        mc stat "application/${ATOMS_S3_BUCKET}" >/dev/null
     secrets:
       - minio_root_user
       - minio_root_password
@@ -487,8 +491,14 @@ networks:
 
 volumes:
   atoms_postgres_data:
+    name: ${COMPOSE_PROJECT_NAME:?COMPOSE_PROJECT_NAME is required}_atoms_postgres_data
+    external: true
   atoms_redis_data:
+    name: ${COMPOSE_PROJECT_NAME:?COMPOSE_PROJECT_NAME is required}_atoms_redis_data
+    external: true
   atoms_minio_data:
+    name: ${COMPOSE_PROJECT_NAME:?COMPOSE_PROJECT_NAME is required}_atoms_minio_data
+    external: true
   atoms_clamav_data:
   atoms_web_cache:
   atoms_caddy_data:

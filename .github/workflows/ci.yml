@@ -22,7 +22,7 @@ jobs:
           node-version: 24
           cache: pnpm
       - run: pnpm install --frozen-lockfile
-      - name: Validate the secret-safe staging manifest and TLS ingress
+      - name: Validate the staging manifest, TLS ingress, and persistence contract
         run: pnpm staging:deploy:compose:validate
       - run: pnpm run ci:verify
 

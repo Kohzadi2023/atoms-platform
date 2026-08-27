@@ -5,6 +5,11 @@ import { fileURLToPath } from "node:url";
 
 import { validateStagingDeployment } from "./check-staging-deployment.mjs";
 import { createStagingDeploymentFixture } from "./staging-deployment-fixture.mjs";
+import {
+  PERSISTENT_VOLUME_ROLES,
+  persistentVolumeLabels,
+  persistentVolumeName,
+} from "./staging-persistence-contract.mjs";
 
 const composeFile = fileURLToPath(
   new URL("../deploy/staging/compose.yaml", import.meta.url),
@@ -60,8 +65,11 @@ async function main(arguments_ = process.argv.slice(2)) {
           ...requestedDeployment,
           async cleanup() {},
         };
+  const validationProjectName = `atoms-staging-validation-${randomUUID().replaceAll("-", "").slice(0, 12)}`;
   const composeArguments = [
     "compose",
+    "--project-name",
+    validationProjectName,
     "--env-file",
     fixture.environmentFile,
     "-f",
@@ -69,8 +77,9 @@ async function main(arguments_ = process.argv.slice(2)) {
   ];
   const composeEnvironment = {
     ...process.env,
-    COMPOSE_PROJECT_NAME: `atoms-staging-validation-${randomUUID().replaceAll("-", "").slice(0, 12)}`,
+    COMPOSE_PROJECT_NAME: validationProjectName,
   };
+  const validationVolumes = [];
   let dockerAvailable = true;
 
   try {
@@ -101,6 +110,26 @@ async function main(arguments_ = process.argv.slice(2)) {
       if (diagnostics.length > 0) console.error(diagnostics);
       process.exitCode = 1;
       return;
+    }
+
+    for (const role of PERSISTENT_VOLUME_ROLES) {
+      const volumeName = persistentVolumeName(validationProjectName, role);
+      const labelArguments = Object.entries(
+        persistentVolumeLabels(validationProjectName, role),
+      )
+        .sort(([left], [right]) => left.localeCompare(right))
+        .flatMap(([label, value]) => ["--label", `${label}=${value}`]);
+      const volumeResult = spawnSync(
+        "docker",
+        ["volume", "create", ...labelArguments, volumeName],
+        { encoding: "utf8", env: composeEnvironment },
+      );
+      if (volumeResult.status !== 0) {
+        console.error("Docker could not create the isolated validation volumes.");
+        process.exitCode = 1;
+        return;
+      }
+      validationVolumes.push(volumeName);
     }
 
     const caddyResult = spawnSync(
@@ -139,6 +168,17 @@ async function main(arguments_ = process.argv.slice(2)) {
       if (cleanupResult.status !== 0 && process.exitCode !== 1) {
         console.error("The isolated staging validation project could not be removed.");
         process.exitCode = 1;
+      }
+      for (const volumeName of validationVolumes) {
+        const volumeCleanupResult = spawnSync(
+          "docker",
+          ["volume", "rm", volumeName],
+          { encoding: "utf8", env: composeEnvironment },
+        );
+        if (volumeCleanupResult.status !== 0 && process.exitCode !== 1) {
+          console.error("An isolated staging validation volume could not be removed.");
+          process.exitCode = 1;
+        }
       }
     }
     await fixture.cleanup();

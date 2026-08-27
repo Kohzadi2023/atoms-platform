@@ -222,9 +222,24 @@ pnpm staging:deploy:compose:validate -- \
   --secrets-dir /etc/atoms/staging/secrets
 ```
 
+After the Issue #22 live gates are recorded, bootstrap the external PostgreSQL,
+Redis, and MinIO volumes plus the migration state with an explicit change
+ticket and confirmation. The command refuses a dirty or revision-mismatched
+checkout and writes no passing evidence unless dependency health, bucket
+initialization, `prisma migrate deploy`, and `prisma migrate status` all pass:
+
+```bash
+pnpm staging:deploy:persistence:bootstrap -- \
+  --env-file /etc/atoms/staging/staging.env \
+  --secrets-dir /etc/atoms/staging/secrets \
+  --change-ticket GH-22 \
+  --evidence-out /var/lib/atoms/staging/evidence/persistence-bootstrap.json \
+  --confirmation BOOTSTRAP_ATOMS_STAGING_PERSISTENCE
+```
+
 See `docs/staging-deployment.md` for the public-env allowlist, secret-file
-contract, Compose commands, rollback boundary, and the Issue #22 gates that
-must be recorded before a live deployment.
+contract, persistence bootstrap, Compose commands, rollback boundary, and the
+Issue #22 gates that must be recorded before a live deployment.
 
 See `docs/phase-2-validation-preview.md` for the lifecycle and security boundary,
 `docs/secure-attachments.md` for the upload/scan/model-input boundary, and

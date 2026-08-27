@@ -1,3 +1,4 @@
+import { X509Certificate, createPrivateKey } from "node:crypto";
 import { lstat, readFile, realpath } from "node:fs/promises";
 import { isIP } from "node:net";
 import { isAbsolute, relative, resolve } from "node:path";
@@ -15,9 +16,6 @@ const PUBLIC_VARIABLES = [
   "ATOMS_WEB_ORIGIN",
   "ATOMS_CONTROL_API_ORIGIN",
   "ATOMS_PREVIEW_BASE_DOMAIN",
-  "ATOMS_WEB_PORT",
-  "ATOMS_CONTROL_API_PORT",
-  "ATOMS_PREVIEW_GATEWAY_PORT",
   "ATOMS_SUPABASE_URL",
   "ATOMS_SUPABASE_PUBLISHABLE_KEY",
   "ATOMS_AUTH_ISSUER_URL",
@@ -82,6 +80,9 @@ const OPAQUE_SECRET_FILES = [
   "s3-secret-access-key",
   "minio-kms-secret-key",
 ];
+
+const TLS_FILES = ["tls-certificate.pem", "tls-private-key.pem"];
+const MINIMUM_TLS_VALIDITY_MS = 7 * 24 * 60 * 60 * 1_000;
 
 const ASYMMETRIC_JWT_ALGORITHMS = new Set([
   "RS256",
@@ -161,7 +162,18 @@ export async function validateStagingDeployment(options = {}) {
     );
   }
 
+  const tlsFiles = {};
+  for (const fileName of TLS_FILES) {
+    tlsFiles[fileName] = await loadFile(
+      resolve(secretsDirectory, fileName),
+      fileName,
+      true,
+      violations,
+    );
+  }
+
   validatePublicEnvironment(publicEnvironment, violations);
+  validateTlsContract(publicEnvironment, tlsFiles, violations);
   validateSecretContract(
     publicEnvironment,
     secretEnvironments,
@@ -176,6 +188,7 @@ export async function validateStagingDeployment(options = {}) {
       publicEnvironmentFiles: 1,
       serviceEnvironmentFiles: Object.keys(SECRET_ENVIRONMENTS).length,
       opaqueSecretFiles: OPAQUE_SECRET_FILES.length,
+      tlsFiles: TLS_FILES.length,
     },
   };
 }
@@ -217,8 +230,10 @@ async function loadFile(path, label, secret, violations) {
     violations.push(`${label} must be a regular file, not a symlink`);
     return undefined;
   }
-  if (secret && (metadata.mode & 0o077) !== 0) {
-    violations.push(`${label} permissions must not grant group or other access`);
+  if (secret && (metadata.mode & 0o7777) !== 0o444) {
+    violations.push(
+      `${label} permissions must be exactly 0444 inside the owner-only secrets directory`,
+    );
   }
   if (metadata.size > 65_536) {
     violations.push(`${label} exceeds the 64 KiB deployment limit`);
@@ -244,9 +259,9 @@ async function validateSecretDirectory(path, violations) {
     violations.push("the staging secrets directory must be a real directory");
     return;
   }
-  if ((metadata.mode & 0o077) !== 0) {
+  if ((metadata.mode & 0o7777) !== 0o700) {
     violations.push(
-      "the staging secrets directory permissions must not grant group or other access",
+      "the staging secrets directory permissions must be exactly 0700",
     );
   }
   try {
@@ -329,6 +344,12 @@ function validatePublicEnvironment(environment, violations) {
     "ATOMS_CONTROL_API_ORIGIN",
     violations,
   );
+  if (webOrigin?.port !== "") {
+    violations.push("ATOMS_WEB_ORIGIN must use the default HTTPS port");
+  }
+  if (apiOrigin?.port !== "") {
+    violations.push("ATOMS_CONTROL_API_ORIGIN must use the default HTTPS port");
+  }
   const supabaseOrigin = validateHttpsOrigin(
     environment.ATOMS_SUPABASE_URL,
     "ATOMS_SUPABASE_URL",
@@ -360,9 +381,12 @@ function validatePublicEnvironment(environment, violations) {
   }
   if (
     previewDomain.length > 0 &&
-    [webOrigin?.hostname, apiOrigin?.hostname].includes(previewDomain)
+    [webOrigin?.hostname, apiOrigin?.hostname].some(
+      (hostname) =>
+        hostname === previewDomain || hostname?.endsWith(`.${previewDomain}`),
+    )
   ) {
-    violations.push("the wildcard preview base domain must be distinct from web and API");
+    violations.push("web and Control API names must be outside the wildcard preview domain");
   }
 
   const issuer = validateHttpsUrl(
@@ -412,23 +436,6 @@ function validatePublicEnvironment(environment, violations) {
     algorithms.some((algorithm) => !ASYMMETRIC_JWT_ALGORITHMS.has(algorithm))
   ) {
     violations.push("ATOMS_AUTH_ALLOWED_ALGORITHMS must contain only asymmetric JWT algorithms");
-  }
-
-  const ports = [
-    parsePort(environment.ATOMS_WEB_PORT, "ATOMS_WEB_PORT", violations),
-    parsePort(
-      environment.ATOMS_CONTROL_API_PORT,
-      "ATOMS_CONTROL_API_PORT",
-      violations,
-    ),
-    parsePort(
-      environment.ATOMS_PREVIEW_GATEWAY_PORT,
-      "ATOMS_PREVIEW_GATEWAY_PORT",
-      violations,
-    ),
-  ].filter((port) => port !== undefined);
-  if (new Set(ports).size !== ports.length) {
-    violations.push("staging loopback ports must be distinct");
   }
 
   validateIdentifier(
@@ -485,6 +492,72 @@ function validatePublicEnvironment(environment, violations) {
     allowedHosts.some((host) => !isHostname(host) || isReservedHostname(host))
   ) {
     violations.push("ATOMS_E2B_ALLOWED_HOSTS must contain valid public hostnames");
+  }
+}
+
+function validateTlsContract(publicEnvironment, tlsFiles, violations) {
+  const certificateText = tlsFiles["tls-certificate.pem"];
+  const privateKeyText = tlsFiles["tls-private-key.pem"];
+  let certificate;
+  let privateKey;
+
+  if (certificateText !== undefined) {
+    try {
+      certificate = new X509Certificate(certificateText);
+    } catch {
+      violations.push("tls-certificate.pem must contain a valid X.509 certificate");
+    }
+  }
+  if (privateKeyText !== undefined) {
+    try {
+      privateKey = createPrivateKey(privateKeyText);
+    } catch {
+      violations.push("tls-private-key.pem must contain an unencrypted private key");
+    }
+  }
+  if (certificate === undefined) return;
+
+  if (privateKey !== undefined) {
+    try {
+      if (!certificate.checkPrivateKey(privateKey)) {
+        violations.push("the TLS certificate and private key must match");
+      }
+    } catch {
+      violations.push("the TLS certificate and private key must match");
+    }
+  }
+
+  const now = Date.now();
+  const validFrom = Date.parse(certificate.validFrom);
+  const validTo = Date.parse(certificate.validTo);
+  if (!Number.isFinite(validFrom) || validFrom > now) {
+    violations.push("the TLS certificate is not valid yet");
+  }
+  if (!Number.isFinite(validTo) || validTo - now < MINIMUM_TLS_VALIDITY_MS) {
+    violations.push("the TLS certificate must remain valid for at least seven days");
+  }
+
+  for (const [name, origin] of [
+    ["ATOMS_WEB_ORIGIN", publicEnvironment.ATOMS_WEB_ORIGIN],
+    ["ATOMS_CONTROL_API_ORIGIN", publicEnvironment.ATOMS_CONTROL_API_ORIGIN],
+  ]) {
+    const hostname = hostnameFromUrl(origin);
+    if (hostname !== undefined && certificate.checkHost(hostname) === undefined) {
+      violations.push(`the TLS certificate must cover ${name}`);
+    }
+  }
+
+  const previewDomain = publicEnvironment.ATOMS_PREVIEW_BASE_DOMAIN?.toLowerCase();
+  if (previewDomain !== undefined && isHostname(previewDomain)) {
+    const wildcardName = `dns:*.${previewDomain}`;
+    const subjectAlternativeNames = (certificate.subjectAltName ?? "")
+      .split(/,\s*/u)
+      .map((value) => value.toLowerCase());
+    if (!subjectAlternativeNames.includes(wildcardName)) {
+      violations.push(
+        "the TLS certificate must contain a wildcard SAN for ATOMS_PREVIEW_BASE_DOMAIN",
+      );
+    }
   }
 }
 
@@ -718,10 +791,6 @@ function parseUrl(value, name, violations) {
   }
 }
 
-function parsePort(value, name, violations) {
-  return parseBoundedInteger(value, name, 1_024, 65_535, violations);
-}
-
 function parseBoundedInteger(value, name, minimum, maximum, violations) {
   if (!/^(?:0|[1-9]\d*)$/u.test(value ?? "")) {
     violations.push(`${name} must be an integer`);
@@ -733,6 +802,15 @@ function parseBoundedInteger(value, name, minimum, maximum, violations) {
     return undefined;
   }
   return parsed;
+}
+
+function hostnameFromUrl(value) {
+  if (value === undefined) return undefined;
+  try {
+    return new URL(value).hostname;
+  } catch {
+    return undefined;
+  }
 }
 
 function validateIdentifier(value, name, pattern, violations) {
@@ -797,20 +875,29 @@ function isInsideRepository(path) {
 }
 
 function parseArguments(arguments_) {
+  const normalizedArguments = arguments_[0] === "--" ? arguments_.slice(1) : arguments_;
   const options = {};
-  for (let index = 0; index < arguments_.length; index += 1) {
-    const argument = arguments_[index];
+  for (let index = 0; index < normalizedArguments.length; index += 1) {
+    const argument = normalizedArguments[index];
     if (argument === "--env-file") {
-      options.environmentFile = arguments_[index + 1];
+      options.environmentFile = readPathArgument(normalizedArguments, index, argument);
       index += 1;
     } else if (argument === "--secrets-dir") {
-      options.secretsDirectory = arguments_[index + 1];
+      options.secretsDirectory = readPathArgument(normalizedArguments, index, argument);
       index += 1;
     } else {
       throw new Error(`Unknown staging preflight argument: ${argument}`);
     }
   }
   return options;
+}
+
+function readPathArgument(arguments_, index, option) {
+  const value = arguments_[index + 1];
+  if (value === undefined || value.startsWith("--")) {
+    throw new Error(`${option} requires a path`);
+  }
+  return value;
 }
 
 export async function main(arguments_ = process.argv.slice(2)) {
@@ -830,7 +917,7 @@ export async function main(arguments_ = process.argv.slice(2)) {
     return result;
   }
   console.log(
-    `Staging deployment preflight passed (${String(result.checked.serviceEnvironmentFiles)} service env files and ${String(result.checked.opaqueSecretFiles)} opaque secret files validated).`,
+    `Staging deployment preflight passed (${String(result.checked.serviceEnvironmentFiles)} service env files, ${String(result.checked.opaqueSecretFiles)} opaque secret files, and ${String(result.checked.tlsFiles)} TLS files validated).`,
   );
   return result;
 }

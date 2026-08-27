@@ -1,41 +1,51 @@
 # Single-host staging deployment
 
-This is the first, provider-neutral deployment slice for Issue #22. It prepares
-the existing web, Control API, worker, preview gateway, PostgreSQL, Redis,
-MinIO, and ClamAV services for one Linux host with Docker Compose. The same
-manifest can run on an Azure VM or another approved Docker host.
+This provider-neutral deployment contract for Issue #22 prepares the existing
+web, Control API, worker, preview gateway, PostgreSQL, Redis, MinIO, and ClamAV
+services for one Linux host with Docker Compose. Caddy terminates externally
+issued TLS, redirects HTTP to HTTPS, and routes the two exact application names
+plus wildcard preview names. The same manifest can run on an Azure VM or
+another approved Docker host.
 
-This slice does **not** publish a URL, configure DNS/TLS, create cloud
-resources, or waive the live-provider gate in Issue #14. Before an actual
+This contract does **not** create a host, change DNS, issue a certificate,
+publish a URL, or waive the live-provider gate in Issue #14. Before an actual
 rollout, record the selected host and domains and either complete Issue #14 or
 record the explicit exception required by Issue #22.
 
 ## Security boundary
 
 `deploy/staging/staging.env.example` contains only public deployment metadata.
-The real public env file may contain domains, ports, a full Git SHA, the
-Supabase URL, and its browser-safe publishable key. The preflight rejects every
-variable outside that allowlist.
+The real public env file may contain domains, a full Git SHA, the Supabase URL,
+and its browser-safe publishable key. The preflight rejects every variable
+outside that allowlist.
 
 Runtime credentials live in an absolute directory outside the repository. The
-directory must grant no group or other access, and every file must be a regular
-file with no group or other permission bits. Symlinks are rejected. Compose
-mounts the four service env files as file-backed secrets, and Node 24 loads each
-file at process start. Their values therefore do not appear in image layers,
-build arguments, or Docker's configured container environment.
+directory must be exactly `0700`, every mounted file must be immutable mode
+`0444`, and symlinks are rejected. The apparently broad file read bits are
+contained by the owner-only directory on the host; they are required because
+Compose preserves host ownership for file-backed secrets while the images run
+with different non-root users. Compose mounts only the files granted to each
+service, and Node 24 loads each service env at process start. Their values
+therefore do not appear in image layers, build arguments, or Docker's configured
+container environment.
 
-The manifest publishes only these loopback listeners for a future TLS reverse
-proxy:
+The manifest publishes only TCP 80, TCP 443, and UDP 443 from the Caddy ingress.
+Web, Control API, and preview gateway ports exist only on an internal ingress
+network. PostgreSQL, Redis, MinIO, the MinIO console, and ClamAV also have no
+host-published ports. Application services use a separate network for required
+outbound provider traffic.
 
-| Listener | Container | Purpose |
-|---|---:|---|
-| `127.0.0.1:ATOMS_WEB_PORT` | 3000 | Agent Hub |
-| `127.0.0.1:ATOMS_CONTROL_API_PORT` | 3001 | Control API |
-| `127.0.0.1:ATOMS_PREVIEW_GATEWAY_PORT` | 3002 | Wildcard preview gateway |
+| Public name | Internal target | Contract |
+|---|---|---|
+| `ATOMS_WEB_ORIGIN` | `web:3000` | Exact Agent Hub HTTPS origin |
+| `ATOMS_CONTROL_API_ORIGIN` | `control-api:3001` | Exact Control API HTTPS origin |
+| `*.ATOMS_PREVIEW_BASE_DOMAIN` | `preview-gateway:3002` | Signed preview HTTP and WebSocket traffic |
 
-PostgreSQL, Redis, MinIO, the MinIO console, and ClamAV have no host-published
-ports. Infrastructure services use an internal Docker network. Application
-services get a second network for required outbound provider traffic.
+Caddy preserves the incoming host boundary used by preview-ticket validation
+and supports SSE and WebSocket proxying. It emits JSON access logs for the
+exact web/API names, while wildcard preview access logging is intentionally
+disabled so signed preview hostnames are not retained. Its admin API is
+disabled, and its health endpoint is reachable only inside its own container.
 
 ## Public environment
 
@@ -58,6 +68,19 @@ development access token in `staging.env`.
 Populate the following files through the host's approved secret-delivery
 mechanism. Do not place credential values in shell arguments, terminal output,
 source control, image build arguments, or tickets.
+
+TLS files:
+
+| File | Contract |
+|---|---|
+| `tls-certificate.pem` | PEM leaf certificate first, followed by any intermediate chain |
+| `tls-private-key.pem` | Matching, unencrypted PEM private key |
+
+The leaf certificate must already be valid, remain valid for at least seven
+days, cover the exact web and API hostnames, and include a wildcard SAN for
+`*.ATOMS_PREVIEW_BASE_DOMAIN`. Certificate issuance and renewal stay with the
+approved DNS/TLS provider; this repository does not accept a DNS provider token
+or run an ACME DNS challenge.
 
 Opaque single-line files:
 
@@ -118,28 +141,31 @@ REDIS_URL=redis://:<encoded-password>@redis:6379
 PREVIEW_SIGNING_SECRET=<same-worker-signing-secret>
 ```
 
-Set the directory and files to owner-only access after delivery:
+Keep the directory owner-only and make every mounted file read-only after
+delivery. Do not loosen the directory mode: it is the host-side confidentiality
+boundary for the `0444` files.
 
 ```bash
 sudo chmod 0700 /etc/atoms/staging/secrets
-sudo chmod 0600 /etc/atoms/staging/secrets/*
+sudo chmod 0444 /etc/atoms/staging/secrets/*
 ```
 
 ## Fail-closed validation
 
 Run the repository preflight before any image build or service mutation. It
 reports variable/file names only; it never includes configured values in its
-result.
+result. The repository validation command also asks Docker Compose to render
+the manifest and runs `caddy validate` in an isolated, disposable Compose
+project.
 
 ```bash
 pnpm staging:deploy:preflight -- \
   --env-file /etc/atoms/staging/staging.env \
   --secrets-dir /etc/atoms/staging/secrets
 
-docker compose \
+pnpm staging:deploy:compose:validate -- \
   --env-file /etc/atoms/staging/staging.env \
-  -f deploy/staging/compose.yaml \
-  config --quiet
+  --secrets-dir /etc/atoms/staging/secrets
 ```
 
 The preflight verifies:
@@ -149,6 +175,8 @@ The preflight verifies:
 - a public-env allowlist that excludes all runtime credentials and development
   auth switches;
 - directory/file type and permission rules;
+- TLS validity, certificate/private-key agreement, exact web/API SAN coverage,
+  and wildcard preview SAN coverage;
 - identical internal PostgreSQL and Redis URLs across the minimum required
   services;
 - agreement between infrastructure passwords, URLs, S3 credentials, preview
@@ -157,9 +185,11 @@ The preflight verifies:
 
 ## Controlled rollout
 
-After the Issue #22 gates are recorded, build from the exact checked-out SHA.
-No runtime secret is available during image compilation; only browser-public
-configuration is passed to the web build.
+After the Issue #22 gates are recorded, the DNS `A`/`AAAA` records for the web,
+API, and wildcard preview names must resolve to the selected host, and the host
+firewall must admit TCP 80/443 and UDP 443 as intended. Build from the exact
+checked-out SHA. No runtime secret is available during image compilation; only
+browser-public configuration is passed to the web build.
 
 ```bash
 docker compose \
@@ -186,8 +216,12 @@ approval-gated orphan deletion; the manifest hard-codes that switch to
 `false`.
 
 Do not run `docker compose down --volumes` during normal operations. Named
-volumes hold PostgreSQL, Redis append-only data, MinIO objects, ClamAV data, and
-the web cache.
+volumes hold PostgreSQL, Redis append-only data, MinIO objects, ClamAV data, the
+web cache, and Caddy state.
+
+For certificate renewal, install the replacement pair atomically, rerun both
+preflight commands, and recreate only `reverse-proxy`. Never restart ingress
+with an unvalidated or mismatched pair.
 
 ## Evidence and rollback boundary
 
@@ -197,6 +231,7 @@ the immediately previous images on the host. An application rollback changes
 Database migrations remain forward-only; a rollback is valid only after the
 previous application version has been verified against the migrated schema.
 
-DNS/TLS routing, authenticated smoke tests, restart durability, backup/restore,
-and a rehearsed rollback are later Issue #22 slices. This manifest alone is not
-evidence that those acceptance criteria passed.
+Actual DNS ownership, externally reachable TLS, authenticated smoke tests,
+restart durability, backup/restore, and a rehearsed rollback still require live
+evidence. This configuration alone is not evidence that those acceptance
+criteria passed.

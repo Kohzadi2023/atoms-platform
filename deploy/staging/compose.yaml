@@ -19,6 +19,61 @@ x-node-runtime: &node-runtime
       max-file: "5"
 
 services:
+  reverse-proxy:
+    image: caddy:2.10.2-alpine
+    restart: unless-stopped
+    read_only: true
+    environment:
+      ATOMS_WEB_ORIGIN: ${ATOMS_WEB_ORIGIN:?ATOMS_WEB_ORIGIN is required}
+      ATOMS_CONTROL_API_ORIGIN: ${ATOMS_CONTROL_API_ORIGIN:?ATOMS_CONTROL_API_ORIGIN is required}
+      ATOMS_PREVIEW_BASE_DOMAIN: ${ATOMS_PREVIEW_BASE_DOMAIN:?ATOMS_PREVIEW_BASE_DOMAIN is required}
+    ports:
+      - 80:80/tcp
+      - 443:443/tcp
+      - 443:443/udp
+    secrets:
+      - tls_certificate
+      - tls_private_key
+    volumes:
+      - ./Caddyfile:/etc/caddy/Caddyfile:ro
+      - atoms_caddy_data:/data
+      - atoms_caddy_config:/config
+    tmpfs:
+      - /tmp:rw,noexec,nosuid,nodev,size=16m
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+    cap_add:
+      - NET_BIND_SERVICE
+    pids_limit: 128
+    depends_on:
+      web:
+        condition: service_healthy
+      control-api:
+        condition: service_healthy
+      preview-gateway:
+        condition: service_healthy
+    healthcheck:
+      test:
+        - CMD
+        - wget
+        - --quiet
+        - --tries=1
+        - --spider
+        - http://127.0.0.1:2019/healthz
+      interval: 15s
+      timeout: 5s
+      retries: 5
+      start_period: 5s
+    networks:
+      - ingress
+    labels:
+      com.atoms.environment: staging
+      com.atoms.revision: ${ATOMS_IMAGE_TAG}
+    stop_grace_period: 30s
+    logging: *bounded-logs
+
   postgres:
     image: postgres:17-alpine
     restart: unless-stopped
@@ -256,8 +311,8 @@ services:
       - node
       - --env-file=/run/secrets/control_api_environment
       - apps/control-api/dist/main.js
-    ports:
-      - 127.0.0.1:${ATOMS_CONTROL_API_PORT:?ATOMS_CONTROL_API_PORT is required}:3001
+    expose:
+      - "3001"
     depends_on:
       postgres:
         condition: service_healthy
@@ -280,6 +335,7 @@ services:
     networks:
       - backend
       - egress
+      - ingress
     labels:
       com.atoms.environment: staging
       com.atoms.revision: ${ATOMS_IMAGE_TAG}
@@ -362,8 +418,8 @@ services:
       - node
       - --env-file=/run/secrets/preview_gateway_environment
       - apps/preview-gateway/dist/main.js
-    ports:
-      - 127.0.0.1:${ATOMS_PREVIEW_GATEWAY_PORT:?ATOMS_PREVIEW_GATEWAY_PORT is required}:3002
+    expose:
+      - "3002"
     depends_on:
       redis:
         condition: service_healthy
@@ -380,6 +436,7 @@ services:
     networks:
       - backend
       - egress
+      - ingress
     labels:
       com.atoms.environment: staging
       com.atoms.revision: ${ATOMS_IMAGE_TAG}
@@ -397,8 +454,8 @@ services:
         NEXT_PUBLIC_PREVIEW_BASE_DOMAIN: ${ATOMS_PREVIEW_BASE_DOMAIN:?ATOMS_PREVIEW_BASE_DOMAIN is required}
     environment:
       NODE_ENV: production
-    ports:
-      - 127.0.0.1:${ATOMS_WEB_PORT:?ATOMS_WEB_PORT is required}:3000
+    expose:
+      - "3000"
     depends_on:
       control-api:
         condition: service_healthy
@@ -416,12 +473,15 @@ services:
       - atoms_web_cache:/workspace/apps/web/.next/cache
     networks:
       - egress
+      - ingress
     labels:
       com.atoms.environment: staging
       com.atoms.revision: ${ATOMS_IMAGE_TAG}
 
 networks:
   backend:
+    internal: true
+  ingress:
     internal: true
   egress:
 
@@ -431,8 +491,14 @@ volumes:
   atoms_minio_data:
   atoms_clamav_data:
   atoms_web_cache:
+  atoms_caddy_data:
+  atoms_caddy_config:
 
 secrets:
+  tls_certificate:
+    file: ${ATOMS_STAGING_SECRETS_DIR:?ATOMS_STAGING_SECRETS_DIR is required}/tls-certificate.pem
+  tls_private_key:
+    file: ${ATOMS_STAGING_SECRETS_DIR:?ATOMS_STAGING_SECRETS_DIR is required}/tls-private-key.pem
   migration_environment:
     file: ${ATOMS_STAGING_SECRETS_DIR:?ATOMS_STAGING_SECRETS_DIR is required}/migration.env
   control_api_environment:

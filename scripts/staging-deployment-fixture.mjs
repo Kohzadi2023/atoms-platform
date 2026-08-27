@@ -1,8 +1,9 @@
+import { spawnSync } from "node:child_process";
 import { chmod, mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
-export async function createStagingDeploymentFixture() {
+export async function createStagingDeploymentFixture(options = {}) {
   const root = await mkdtemp(join(tmpdir(), "atoms-staging-deployment-"));
   const secretsDirectory = join(root, "secrets");
   await mkdir(secretsDirectory, { mode: 0o700 });
@@ -36,9 +37,6 @@ export async function createStagingDeploymentFixture() {
       ATOMS_WEB_ORIGIN: "https://app.staging.atoms.dev",
       ATOMS_CONTROL_API_ORIGIN: "https://api.staging.atoms.dev",
       ATOMS_PREVIEW_BASE_DOMAIN: "preview.staging.atoms.dev",
-      ATOMS_WEB_PORT: "3000",
-      ATOMS_CONTROL_API_PORT: "3001",
-      ATOMS_PREVIEW_GATEWAY_PORT: "3002",
       ATOMS_SUPABASE_URL: "https://fixture-project.supabase.co",
       ATOMS_SUPABASE_PUBLISHABLE_KEY:
         "sb_publishable_fixture_0123456789abcdef",
@@ -107,6 +105,15 @@ export async function createStagingDeploymentFixture() {
     ),
     writeSecureFile(secretsDirectory, "minio-kms-secret-key", values.kmsSecret),
   ]);
+  await writeTlsMaterial(
+    secretsDirectory,
+    options.tlsDnsNames ?? [
+      "app.staging.atoms.dev",
+      "api.staging.atoms.dev",
+      "*.preview.staging.atoms.dev",
+    ],
+    options.tlsDays ?? 30,
+  );
 
   return {
     root,
@@ -117,6 +124,37 @@ export async function createStagingDeploymentFixture() {
       await rm(root, { recursive: true, force: true });
     },
   };
+}
+
+async function writeTlsMaterial(directory, dnsNames, days) {
+  const certificatePath = join(directory, "tls-certificate.pem");
+  const privateKeyPath = join(directory, "tls-private-key.pem");
+  const result = spawnSync(
+    "openssl",
+    [
+      "req",
+      "-x509",
+      "-newkey",
+      "rsa:2048",
+      "-sha256",
+      "-nodes",
+      "-days",
+      String(days),
+      "-subj",
+      `/CN=${dnsNames[0]}`,
+      "-addext",
+      `subjectAltName=${dnsNames.map((name) => `DNS:${name}`).join(",")}`,
+      "-keyout",
+      privateKeyPath,
+      "-out",
+      certificatePath,
+    ],
+    { encoding: "utf8" },
+  );
+  if (result.error !== undefined || result.status !== 0) {
+    throw new Error("OpenSSL could not create the isolated staging TLS fixture");
+  }
+  await Promise.all([chmod(certificatePath, 0o444), chmod(privateKeyPath, 0o444)]);
 }
 
 export function environmentText(environment) {
@@ -132,5 +170,5 @@ async function writeSecureEnvironment(directory, fileName, environment) {
 async function writeSecureFile(directory, fileName, content) {
   const path = join(directory, fileName);
   await writeFile(path, content, { mode: 0o600 });
-  await chmod(path, 0o600);
+  await chmod(path, 0o444);
 }

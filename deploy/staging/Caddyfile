@@ -1,0 +1,43 @@
+{
+	admin off
+}
+
+(atoms_tls) {
+	tls /run/secrets/tls_certificate /run/secrets/tls_private_key
+	encode zstd gzip
+	header {
+		-Server
+		Strict-Transport-Security "max-age=31536000"
+		X-Content-Type-Options "nosniff"
+		Referrer-Policy "no-referrer"
+	}
+}
+
+(atoms_access_log) {
+	log {
+		output stdout
+		format json
+	}
+}
+
+http://127.0.0.1:2019 {
+	respond /healthz "ok" 200
+	respond 404
+}
+
+{$ATOMS_WEB_ORIGIN} {
+	import atoms_tls
+	import atoms_access_log
+	reverse_proxy web:3000
+}
+
+{$ATOMS_CONTROL_API_ORIGIN} {
+	import atoms_tls
+	import atoms_access_log
+	reverse_proxy control-api:3001
+}
+
+https://*.{$ATOMS_PREVIEW_BASE_DOMAIN} {
+	import atoms_tls
+	reverse_proxy preview-gateway:3002
+}

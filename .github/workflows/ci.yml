@@ -22,6 +22,8 @@ jobs:
           node-version: 24
           cache: pnpm
       - run: pnpm install --frozen-lockfile
+      - name: Validate the secret-safe staging deployment manifest
+        run: pnpm staging:deploy:compose:validate
       - run: pnpm run ci:verify
 
   migration-matrix:

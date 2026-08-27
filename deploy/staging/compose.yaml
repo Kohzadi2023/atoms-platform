@@ -1,0 +1,457 @@
+name: ${COMPOSE_PROJECT_NAME:-atoms-staging}
+
+x-node-runtime: &node-runtime
+  init: true
+  restart: unless-stopped
+  read_only: true
+  tmpfs:
+    - /tmp:rw,noexec,nosuid,nodev,size=64m
+  security_opt:
+    - no-new-privileges:true
+  cap_drop:
+    - ALL
+  pids_limit: 512
+  stop_grace_period: 30s
+  logging: &bounded-logs
+    driver: json-file
+    options:
+      max-size: 10m
+      max-file: "5"
+
+services:
+  postgres:
+    image: postgres:17-alpine
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: ${ATOMS_POSTGRES_DB:?ATOMS_POSTGRES_DB is required}
+      POSTGRES_USER: ${ATOMS_POSTGRES_USER:?ATOMS_POSTGRES_USER is required}
+      POSTGRES_PASSWORD_FILE: /run/secrets/postgres_password
+    secrets:
+      - postgres_password
+    healthcheck:
+      test:
+        - CMD-SHELL
+        - pg_isready -U "$${POSTGRES_USER}" -d "$${POSTGRES_DB}"
+      interval: 10s
+      timeout: 5s
+      retries: 12
+      start_period: 10s
+    volumes:
+      - atoms_postgres_data:/var/lib/postgresql/data
+    networks:
+      - backend
+    security_opt:
+      - no-new-privileges:true
+    stop_grace_period: 60s
+    logging: *bounded-logs
+
+  redis:
+    image: redis:8-alpine
+    restart: unless-stopped
+    entrypoint: ["/bin/sh", "-ec"]
+    command:
+      - |
+        umask 077
+        {
+          printf 'appendonly yes\nrequirepass '
+          cat /run/secrets/redis_password
+          printf '\n'
+        } > /run/atoms/redis.conf
+        chown redis:redis /run/atoms /run/atoms/redis.conf
+        chmod 0700 /run/atoms
+        chmod 0400 /run/atoms/redis.conf
+        exec /usr/local/bin/docker-entrypoint.sh redis-server /run/atoms/redis.conf
+    secrets:
+      - redis_password
+    healthcheck:
+      test:
+        - CMD-SHELL
+        - REDISCLI_AUTH="$$(cat /run/secrets/redis_password)" redis-cli ping | grep -qx PONG
+      interval: 10s
+      timeout: 5s
+      retries: 12
+      start_period: 5s
+    volumes:
+      - atoms_redis_data:/data
+    tmpfs:
+      - /run/atoms:rw,noexec,nosuid,nodev,size=1m,mode=0700
+    networks:
+      - backend
+    security_opt:
+      - no-new-privileges:true
+    stop_grace_period: 30s
+    logging: *bounded-logs
+
+  minio:
+    image: minio/minio:RELEASE.2025-09-07T16-13-09Z
+    restart: unless-stopped
+    entrypoint: ["/bin/sh", "-ec"]
+    command:
+      - |
+        export MINIO_ROOT_USER="$$(cat /run/secrets/minio_root_user)"
+        export MINIO_ROOT_PASSWORD="$$(cat /run/secrets/minio_root_password)"
+        export MINIO_KMS_SECRET_KEY="$$(cat /run/secrets/minio_kms_secret_key)"
+        export MINIO_KMS_AUTO_ENCRYPTION=on
+        export MINIO_API_CORS_ALLOW_ORIGIN="${ATOMS_WEB_ORIGIN:?ATOMS_WEB_ORIGIN is required}"
+        exec minio server /data --console-address :9001
+    secrets:
+      - minio_root_user
+      - minio_root_password
+      - minio_kms_secret_key
+    volumes:
+      - atoms_minio_data:/data
+    networks:
+      - backend
+    security_opt:
+      - no-new-privileges:true
+    stop_grace_period: 60s
+    logging: *bounded-logs
+
+  minio-init:
+    image: minio/mc:RELEASE.2025-08-13T08-35-41Z
+    restart: "no"
+    depends_on:
+      minio:
+        condition: service_started
+    entrypoint: ["/bin/sh", "-ec"]
+    command:
+      - |
+        root_user="$$(cat /run/secrets/minio_root_user)"
+        root_password="$$(cat /run/secrets/minio_root_password)"
+        access_key="$$(cat /run/secrets/s3_access_key_id)"
+        secret_key="$$(cat /run/secrets/s3_secret_access_key)"
+        attempt=1
+        until mc alias set staging http://minio:9000 "$${root_user}" "$${root_password}" >/dev/null 2>&1; do
+          if [ "$${attempt}" -ge 60 ]; then
+            echo "MinIO did not become ready" >&2
+            exit 1
+          fi
+          attempt=$$((attempt + 1))
+          sleep 2
+        done
+        mc mb --ignore-existing "staging/${ATOMS_S3_BUCKET:?ATOMS_S3_BUCKET is required}" >/dev/null
+        mc anonymous set none "staging/${ATOMS_S3_BUCKET}" >/dev/null
+        mc admin user add staging "$${access_key}" "$${secret_key}" >/dev/null
+        cat > /tmp/atoms-attachments-policy.json <<'POLICY'
+        {
+          "Version": "2012-10-17",
+          "Statement": [
+            {
+              "Effect": "Allow",
+              "Action": [
+                "s3:GetBucketLocation",
+                "s3:ListBucket",
+                "s3:ListBucketMultipartUploads"
+              ],
+              "Resource": ["arn:aws:s3:::${ATOMS_S3_BUCKET}"]
+            },
+            {
+              "Effect": "Allow",
+              "Action": [
+                "s3:AbortMultipartUpload",
+                "s3:DeleteObject",
+                "s3:GetObject",
+                "s3:ListMultipartUploadParts",
+                "s3:PutObject"
+              ],
+              "Resource": ["arn:aws:s3:::${ATOMS_S3_BUCKET}/*"]
+            }
+          ]
+        }
+        POLICY
+        mc admin policy create staging atoms-attachments-rw /tmp/atoms-attachments-policy.json >/dev/null
+        mc admin policy attach staging atoms-attachments-rw --user "$${access_key}" >/dev/null
+    secrets:
+      - minio_root_user
+      - minio_root_password
+      - s3_access_key_id
+      - s3_secret_access_key
+    networks:
+      - backend
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+    logging: *bounded-logs
+
+  clamav:
+    image: clamav/clamav:1.5.3
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD-SHELL", "clamdscan --ping 1"]
+      interval: 15s
+      timeout: 10s
+      retries: 20
+      start_period: 60s
+    volumes:
+      - atoms_clamav_data:/var/lib/clamav
+    networks:
+      - backend
+    security_opt:
+      - no-new-privileges:true
+    stop_grace_period: 60s
+    logging: *bounded-logs
+
+  migrate:
+    image: atoms-control-api:${ATOMS_IMAGE_TAG:?ATOMS_IMAGE_TAG is required}
+    build:
+      context: ../..
+      dockerfile: apps/control-api/Dockerfile
+    restart: "no"
+    secrets:
+      - migration_environment
+    environment:
+      NODE_ENV: production
+    command:
+      - node
+      - --env-file=/run/secrets/migration_environment
+      - node_modules/prisma/build/index.js
+      - --config
+      - ./prisma.config.ts
+      - migrate
+      - deploy
+    depends_on:
+      postgres:
+        condition: service_healthy
+    networks:
+      - backend
+    read_only: true
+    tmpfs:
+      - /tmp:rw,noexec,nosuid,nodev,size=64m
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+    labels:
+      com.atoms.environment: staging
+      com.atoms.revision: ${ATOMS_IMAGE_TAG}
+    logging: *bounded-logs
+
+  control-api:
+    <<: *node-runtime
+    image: atoms-control-api:${ATOMS_IMAGE_TAG:?ATOMS_IMAGE_TAG is required}
+    build:
+      context: ../..
+      dockerfile: apps/control-api/Dockerfile
+    secrets:
+      - control_api_environment
+    environment:
+      NODE_ENV: production
+      CONTROL_API_HOST: 0.0.0.0
+      CONTROL_API_PORT: "3001"
+      CONTROL_API_CORS_ORIGINS: ${ATOMS_WEB_ORIGIN:?ATOMS_WEB_ORIGIN is required}
+      AUTH_REQUIRED: "true"
+      AUTH_ISSUER_URL: ${ATOMS_AUTH_ISSUER_URL:?ATOMS_AUTH_ISSUER_URL is required}
+      AUTH_AUDIENCE: ${ATOMS_AUTH_AUDIENCE:?ATOMS_AUTH_AUDIENCE is required}
+      AUTH_JWKS_URL: ${ATOMS_AUTH_JWKS_URL:?ATOMS_AUTH_JWKS_URL is required}
+      AUTH_ALLOWED_ALGORITHMS: ${ATOMS_AUTH_ALLOWED_ALGORITHMS:?ATOMS_AUTH_ALLOWED_ALGORITHMS is required}
+      AUTH_DEV_AUTHENTICATOR_ENABLED: "false"
+      RUN_QUEUE_PREFIX: ${ATOMS_RUN_QUEUE_PREFIX:?ATOMS_RUN_QUEUE_PREFIX is required}
+      S3_BUCKET: ${ATOMS_S3_BUCKET:?ATOMS_S3_BUCKET is required}
+      S3_REGION: ${ATOMS_S3_REGION:?ATOMS_S3_REGION is required}
+      S3_ENDPOINT: http://minio:9000
+      S3_FORCE_PATH_STYLE: "true"
+      SUPABASE_CREDENTIAL_SECRET_REF: env://SUPABASE_ACCESS_TOKEN
+    command:
+      - node
+      - --env-file=/run/secrets/control_api_environment
+      - apps/control-api/dist/main.js
+    ports:
+      - 127.0.0.1:${ATOMS_CONTROL_API_PORT:?ATOMS_CONTROL_API_PORT is required}:3001
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      minio-init:
+        condition: service_completed_successfully
+      migrate:
+        condition: service_completed_successfully
+    healthcheck:
+      test:
+        - CMD
+        - node
+        - -e
+        - fetch('http://127.0.0.1:3001/readyz').then(r=>{if(!r.ok)process.exit(1)}).catch(()=>process.exit(1))
+      interval: 15s
+      timeout: 5s
+      retries: 12
+      start_period: 20s
+    networks:
+      - backend
+      - egress
+    labels:
+      com.atoms.environment: staging
+      com.atoms.revision: ${ATOMS_IMAGE_TAG}
+
+  orchestrator-worker:
+    <<: *node-runtime
+    image: atoms-orchestrator-worker:${ATOMS_IMAGE_TAG:?ATOMS_IMAGE_TAG is required}
+    build:
+      context: ../..
+      dockerfile: apps/orchestrator-worker/Dockerfile
+    secrets:
+      - worker_environment
+    environment:
+      NODE_ENV: production
+      E2B_ALLOWED_HOSTS: ${ATOMS_E2B_ALLOWED_HOSTS:?ATOMS_E2B_ALLOWED_HOSTS is required}
+      PREVIEW_BASE_DOMAIN: ${ATOMS_PREVIEW_BASE_DOMAIN:?ATOMS_PREVIEW_BASE_DOMAIN is required}
+      PREVIEW_PUBLIC_PROTOCOL: https
+      RUN_QUEUE_PREFIX: ${ATOMS_RUN_QUEUE_PREFIX:?ATOMS_RUN_QUEUE_PREFIX is required}
+      ORCHESTRATOR_CONCURRENCY: ${ATOMS_ORCHESTRATOR_CONCURRENCY:?ATOMS_ORCHESTRATOR_CONCURRENCY is required}
+      ATTACHMENT_SCAN_CONCURRENCY: ${ATOMS_ATTACHMENT_SCAN_CONCURRENCY:?ATOMS_ATTACHMENT_SCAN_CONCURRENCY is required}
+      S3_BUCKET: ${ATOMS_S3_BUCKET:?ATOMS_S3_BUCKET is required}
+      S3_REGION: ${ATOMS_S3_REGION:?ATOMS_S3_REGION is required}
+      S3_ENDPOINT: http://minio:9000
+      S3_FORCE_PATH_STYLE: "true"
+      CLAMAV_HOST: clamav
+      CLAMAV_PORT: "3310"
+      SUPABASE_MANAGEMENT_API_URL: ${ATOMS_SUPABASE_MANAGEMENT_API_URL:?ATOMS_SUPABASE_MANAGEMENT_API_URL is required}
+      DATABASE_OPERATION_CONCURRENCY: "1"
+      DATABASE_RECONCILIATION_INTERVAL_MS: "300000"
+      DATABASE_STALE_AFTER_MS: "1200000"
+      DATABASE_ORPHAN_GRACE_MS: "86400000"
+      DATABASE_ABANDONED_SWEEP_AFTER_MS: "1800000"
+      DATABASE_MAX_RECOVERY_ATTEMPTS: "3"
+      DATABASE_RECOVERY_BATCH_SIZE: "100"
+      DATABASE_APPROVED_ORPHAN_CLEANUP_ENABLED: "false"
+    command:
+      - node
+      - --env-file=/run/secrets/worker_environment
+      - apps/orchestrator-worker/dist/main.js
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      minio-init:
+        condition: service_completed_successfully
+      clamav:
+        condition: service_healthy
+      migrate:
+        condition: service_completed_successfully
+    healthcheck:
+      test: ["CMD", "node", "-e", "process.kill(1, 0)"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 30s
+    networks:
+      - backend
+      - egress
+    labels:
+      com.atoms.environment: staging
+      com.atoms.revision: ${ATOMS_IMAGE_TAG}
+
+  preview-gateway:
+    <<: *node-runtime
+    image: atoms-preview-gateway:${ATOMS_IMAGE_TAG:?ATOMS_IMAGE_TAG is required}
+    build:
+      context: ../..
+      dockerfile: apps/preview-gateway/Dockerfile
+    secrets:
+      - preview_gateway_environment
+    environment:
+      NODE_ENV: production
+      PREVIEW_BASE_DOMAIN: ${ATOMS_PREVIEW_BASE_DOMAIN:?ATOMS_PREVIEW_BASE_DOMAIN is required}
+      PREVIEW_UI_ORIGIN: ${ATOMS_WEB_ORIGIN:?ATOMS_WEB_ORIGIN is required}
+      PREVIEW_PUBLIC_PROTOCOL: https
+      PREVIEW_GATEWAY_HOST: 0.0.0.0
+      PREVIEW_GATEWAY_PORT: "3002"
+    command:
+      - node
+      - --env-file=/run/secrets/preview_gateway_environment
+      - apps/preview-gateway/dist/main.js
+    ports:
+      - 127.0.0.1:${ATOMS_PREVIEW_GATEWAY_PORT:?ATOMS_PREVIEW_GATEWAY_PORT is required}:3002
+    depends_on:
+      redis:
+        condition: service_healthy
+    healthcheck:
+      test:
+        - CMD
+        - node
+        - -e
+        - fetch('http://127.0.0.1:3002/healthz').then(r=>{if(!r.ok)process.exit(1)}).catch(()=>process.exit(1))
+      interval: 15s
+      timeout: 5s
+      retries: 12
+      start_period: 10s
+    networks:
+      - backend
+      - egress
+    labels:
+      com.atoms.environment: staging
+      com.atoms.revision: ${ATOMS_IMAGE_TAG}
+
+  web:
+    <<: *node-runtime
+    image: atoms-web:${ATOMS_IMAGE_TAG:?ATOMS_IMAGE_TAG is required}
+    build:
+      context: ../..
+      dockerfile: apps/web/Dockerfile
+      args:
+        NEXT_PUBLIC_CONTROL_API_URL: ${ATOMS_CONTROL_API_ORIGIN:?ATOMS_CONTROL_API_ORIGIN is required}
+        NEXT_PUBLIC_SUPABASE_URL: ${ATOMS_SUPABASE_URL:?ATOMS_SUPABASE_URL is required}
+        NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY: ${ATOMS_SUPABASE_PUBLISHABLE_KEY:?ATOMS_SUPABASE_PUBLISHABLE_KEY is required}
+        NEXT_PUBLIC_PREVIEW_BASE_DOMAIN: ${ATOMS_PREVIEW_BASE_DOMAIN:?ATOMS_PREVIEW_BASE_DOMAIN is required}
+    environment:
+      NODE_ENV: production
+    ports:
+      - 127.0.0.1:${ATOMS_WEB_PORT:?ATOMS_WEB_PORT is required}:3000
+    depends_on:
+      control-api:
+        condition: service_healthy
+    healthcheck:
+      test:
+        - CMD
+        - node
+        - -e
+        - fetch('http://127.0.0.1:3000').then(r=>{if(!r.ok)process.exit(1)}).catch(()=>process.exit(1))
+      interval: 15s
+      timeout: 5s
+      retries: 12
+      start_period: 20s
+    volumes:
+      - atoms_web_cache:/workspace/apps/web/.next/cache
+    networks:
+      - egress
+    labels:
+      com.atoms.environment: staging
+      com.atoms.revision: ${ATOMS_IMAGE_TAG}
+
+networks:
+  backend:
+    internal: true
+  egress:
+
+volumes:
+  atoms_postgres_data:
+  atoms_redis_data:
+  atoms_minio_data:
+  atoms_clamav_data:
+  atoms_web_cache:
+
+secrets:
+  migration_environment:
+    file: ${ATOMS_STAGING_SECRETS_DIR:?ATOMS_STAGING_SECRETS_DIR is required}/migration.env
+  control_api_environment:
+    file: ${ATOMS_STAGING_SECRETS_DIR:?ATOMS_STAGING_SECRETS_DIR is required}/control-api.env
+  worker_environment:
+    file: ${ATOMS_STAGING_SECRETS_DIR:?ATOMS_STAGING_SECRETS_DIR is required}/worker.env
+  preview_gateway_environment:
+    file: ${ATOMS_STAGING_SECRETS_DIR:?ATOMS_STAGING_SECRETS_DIR is required}/preview-gateway.env
+  postgres_password:
+    file: ${ATOMS_STAGING_SECRETS_DIR:?ATOMS_STAGING_SECRETS_DIR is required}/postgres-password
+  redis_password:
+    file: ${ATOMS_STAGING_SECRETS_DIR:?ATOMS_STAGING_SECRETS_DIR is required}/redis-password
+  minio_root_user:
+    file: ${ATOMS_STAGING_SECRETS_DIR:?ATOMS_STAGING_SECRETS_DIR is required}/minio-root-user
+  minio_root_password:
+    file: ${ATOMS_STAGING_SECRETS_DIR:?ATOMS_STAGING_SECRETS_DIR is required}/minio-root-password
+  s3_access_key_id:
+    file: ${ATOMS_STAGING_SECRETS_DIR:?ATOMS_STAGING_SECRETS_DIR is required}/s3-access-key-id
+  s3_secret_access_key:
+    file: ${ATOMS_STAGING_SECRETS_DIR:?ATOMS_STAGING_SECRETS_DIR is required}/s3-secret-access-key
+  minio_kms_secret_key:
+    file: ${ATOMS_STAGING_SECRETS_DIR:?ATOMS_STAGING_SECRETS_DIR is required}/minio-kms-secret-key

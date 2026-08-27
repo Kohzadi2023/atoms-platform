@@ -12,7 +12,7 @@
   },
   "scripts": {
     "build": "turbo run build",
-    "ci:verify": "pnpm verify && pnpm test:local-development && pnpm test:phase3-environment-protection && pnpm sql:lint && pnpm audit --audit-level high && pnpm secrets:scan",
+    "ci:verify": "pnpm verify && pnpm test:local-development && pnpm test:phase3-environment-protection && pnpm test:staging-deployment && pnpm sql:lint && pnpm audit --audit-level high && pnpm secrets:scan",
     "dev": "pnpm dev:check && node --env-file-if-exists=.env node_modules/turbo/bin/turbo run dev --env-mode=loose",
     "dev:check": "node --env-file-if-exists=.env scripts/check-local-development.mjs",
     "dev:web": "node --env-file-if-exists=.env node_modules/turbo/bin/turbo run dev --filter=@atoms/web --env-mode=loose",
@@ -33,6 +33,8 @@
     "staging:phase3:provider": "pnpm build && pnpm --filter @atoms/orchestrator-worker test:phase3-provider-exit:built",
     "staging:attachments:durability": "pnpm build && pnpm --filter @atoms/control-api test:attachments-durability:built",
     "staging:attachments:storage": "pnpm build && pnpm --filter @atoms/storage-provider test:storage-integration:built",
+    "staging:deploy:preflight": "node scripts/check-staging-deployment.mjs",
+    "staging:deploy:compose:validate": "node scripts/validate-staging-compose.mjs",
     "db:generate": "pnpm prisma generate",
     "db:validate": "pnpm prisma validate",
     "db:format": "pnpm prisma format",
@@ -40,7 +42,8 @@
     "db:migrate:deploy": "pnpm prisma migrate deploy",
     "db:seed:local": "pnpm --filter @atoms/db seed:local",
     "test:local-development": "node --test scripts/check-local-development.test.mjs",
-    "test:phase3-environment-protection": "node --test scripts/validate-phase3-staging-inputs.test.mjs scripts/verify-phase3-environment-protection.test.mjs"
+    "test:phase3-environment-protection": "node --test scripts/validate-phase3-staging-inputs.test.mjs scripts/verify-phase3-environment-protection.test.mjs",
+    "test:staging-deployment": "node --test scripts/check-staging-deployment.test.mjs"
   },
   "devDependencies": {
     "@types/node": "catalog:",

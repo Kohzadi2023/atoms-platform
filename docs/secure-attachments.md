@@ -50,6 +50,13 @@ Download URLs are issued only for `CLEAN` records and expire after five
 minutes. The versioned shapes live in `@atoms/contracts`; the rendered API
 description is `docs/attachments-openapi.yaml`.
 
+In staging, the storage adapter has two endpoints with intentionally different
+trust boundaries. `S3_ENDPOINT=http://minio:9000` is private and handles every
+server-side head/get/copy/delete operation. `S3_PUBLIC_ENDPOINT` is the exact
+HTTPS storage origin used only to calculate presigned browser PUT/GET URLs.
+Caddy routes only the configured bucket path to MinIO and does not retain access
+logs containing signed query capabilities.
+
 ## Local development
 
 `docker compose up -d` starts PostgreSQL, Redis, a pinned MinIO server, a

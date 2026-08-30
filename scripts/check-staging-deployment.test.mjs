@@ -17,6 +17,9 @@ const preflightPath = fileURLToPath(
 const composeValidationPath = fileURLToPath(
   new URL("./validate-staging-compose.mjs", import.meta.url),
 );
+const stagingComposePath = fileURLToPath(
+  new URL("../deploy/staging/compose.yaml", import.meta.url),
+);
 
 async function fixtureForTest(t, options) {
   const fixture = await createStagingDeploymentFixture(options);
@@ -37,11 +40,31 @@ test("accepts a complete secret-safe staging contract", async (t) => {
     violations: [],
     checked: {
       publicEnvironmentFiles: 1,
-      serviceEnvironmentFiles: 4,
+      serviceEnvironmentFiles: 5,
       opaqueSecretFiles: 7,
       tlsFiles: 2,
     },
   });
+});
+
+test("storage ingress is shared only by Caddy and MinIO", async () => {
+  const compose = await readFile(stagingComposePath, "utf8");
+  const services = compose.slice(
+    compose.indexOf("services:\n") + "services:\n".length,
+    compose.indexOf("\nnetworks:\n"),
+  );
+  const connectedServices = [];
+  let currentService;
+  for (const line of services.split("\n")) {
+    const service = /^  ([a-z0-9-]+):$/u.exec(line);
+    if (service !== null) currentService = service[1];
+    if (line === "      - storage-ingress" && currentService !== undefined) {
+      connectedServices.push(currentService);
+    }
+  }
+  connectedServices.sort();
+
+  assert.deepEqual(connectedServices, ["minio", "reverse-proxy"]);
 });
 
 test("rejects a certificate without the required wildcard preview SAN", async (t) => {
@@ -49,6 +72,7 @@ test("rejects a certificate without the required wildcard preview SAN", async (t
     tlsDnsNames: [
       "app.staging.atoms.dev",
       "api.staging.atoms.dev",
+      "storage.staging.atoms.dev",
       "preview.staging.atoms.dev",
     ],
   });
@@ -60,6 +84,27 @@ test("rejects a certificate without the required wildcard preview SAN", async (t
 
   assert.equal(result.ok, false);
   assert.match(result.violations.join("\n"), /wildcard SAN/u);
+});
+
+test("rejects a certificate without the exact storage SAN", async (t) => {
+  const fixture = await fixtureForTest(t, {
+    tlsDnsNames: [
+      "app.staging.atoms.dev",
+      "api.staging.atoms.dev",
+      "*.preview.staging.atoms.dev",
+    ],
+  });
+
+  const result = await validateStagingDeployment({
+    environmentFile: fixture.environmentFile,
+    secretsDirectory: fixture.secretsDirectory,
+  });
+
+  assert.equal(result.ok, false);
+  assert.match(
+    result.violations.join("\n"),
+    /TLS certificate must cover ATOMS_STORAGE_ORIGIN/u,
+  );
 });
 
 test("rejects a TLS private key that does not match the certificate", async (t) => {
@@ -229,6 +274,35 @@ test("requires all live provider credentials in the worker-only env file", async
   assert.match(result.violations.join("\n"), /worker\.env is missing SUPABASE_ACCESS_TOKEN/u);
 });
 
+test("requires distinct authenticated smoke identities", async (t) => {
+  const fixture = await fixtureForTest(t);
+  const smokeEnvironmentPath = join(
+    fixture.secretsDirectory,
+    "authenticated-smoke.env",
+  );
+  const content = await readFile(smokeEnvironmentPath, "utf8");
+  await chmod(smokeEnvironmentPath, 0o600);
+  await writeFile(
+    smokeEnvironmentPath,
+    content.replace(
+      "ATOMS_SMOKE_FOREIGN_EMAIL=foreign-smoke@staging.atoms.dev",
+      "ATOMS_SMOKE_FOREIGN_EMAIL=primary-smoke@staging.atoms.dev",
+    ),
+  );
+  await chmod(smokeEnvironmentPath, 0o444);
+
+  const result = await validateStagingDeployment({
+    environmentFile: fixture.environmentFile,
+    secretsDirectory: fixture.secretsDirectory,
+  });
+
+  assert.equal(result.ok, false);
+  assert.match(
+    result.violations.join("\n"),
+    /authenticated smoke identities must be different users/u,
+  );
+});
+
 test("rejects duplicate environment assignments", async (t) => {
   const fixture = await fixtureForTest(t);
   const migrationPath = join(fixture.secretsDirectory, "migration.env");
@@ -285,6 +359,8 @@ test("CLI diagnostics identify contracts without printing credential values", as
     fixture.values.e2bCredential,
     fixture.values.supabaseCredential,
     fixture.values.vaultCredential,
+    fixture.values.smokePrimaryPassword,
+    fixture.values.smokeForeignPassword,
   ]) {
     assert.doesNotMatch(output, new RegExp(secret, "u"));
   }

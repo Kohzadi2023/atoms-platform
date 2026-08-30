@@ -32,6 +32,7 @@ const EnvironmentSchema = z
     S3_BUCKET: z.string().trim().min(3).default("atoms-attachments"),
     S3_REGION: z.string().trim().min(1).default("us-east-1"),
     S3_ENDPOINT: z.string().url().optional(),
+    S3_PUBLIC_ENDPOINT: z.string().url().optional(),
     S3_FORCE_PATH_STYLE: z
       .enum(["true", "false"])
       .default("false")
@@ -126,6 +127,9 @@ async function main(): Promise<void> {
     ...(environment.S3_ENDPOINT === undefined
       ? {}
       : { endpoint: environment.S3_ENDPOINT }),
+    ...(environment.S3_PUBLIC_ENDPOINT === undefined
+      ? {}
+      : { signingEndpoint: environment.S3_PUBLIC_ENDPOINT }),
     ...(environment.S3_ACCESS_KEY_ID === undefined ||
     environment.S3_SECRET_ACCESS_KEY === undefined
       ? {}

@@ -239,6 +239,14 @@ pnpm staging:deploy:persistence:bootstrap -- \
   --confirmation BOOTSTRAP_ATOMS_STAGING_PERSISTENCE
 ```
 
+After live bootstrap, rollout, and authenticated-smoke evidence, the final
+Issue #22 operational split is available as
+`pnpm staging:deploy:recovery:rehearse`. It creates protected backups, restores
+them only into isolated Docker resources, proves restart durability, rehearses
+the retained previous application revision, and returns to the current SHA.
+See `docs/staging-recovery-rehearsal.md` for the three exact confirmations and
+maintenance-window boundary.
+
 See `docs/staging-deployment.md` for the public-env allowlist, secret-file
 contract, persistence bootstrap, Compose commands, rollback boundary, and the
 Issue #22 gates that must be recorded before a live deployment.

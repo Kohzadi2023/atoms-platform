@@ -292,6 +292,20 @@ The web build includes the exact storage origin in `connect-src`. This is
 required for browser upload/download but does not allow the storage hostname as
 a script, frame, image, or wildcard source.
 
+## Recovery rehearsal and final handoff
+
+After the authenticated smoke has produced passing mode-`0600` evidence for
+the exact deployed revision, run the independent recovery rehearsal documented
+in `docs/staging-recovery-rehearsal.md`. It creates protected PostgreSQL, Redis,
+and object-storage backups, validates them only in isolated temporary
+resources, proves persistent-service restart durability, rehearses the retained
+previous application revision, and always restores the current revision.
+
+The command requires three exact maintenance-window confirmations, the prior
+bootstrap and smoke evidence, a clean SHA pin, a retained previous revision,
+and an operator-verified successful `main` CI run ID. It never reverses a
+database migration or replaces/deletes a live external data volume.
+
 ## Evidence and rollback boundary
 
 Every application container is labeled with the full deployed revision. Keep
@@ -301,8 +315,9 @@ Database migrations remain forward-only; a rollback is valid only after the
 previous application version has been verified against the migrated schema.
 
 The bootstrap evidence proves only local host preflight, volume ownership,
-dependency health, bucket initialization, and migration status. Actual DNS
-ownership, externally reachable TLS, authenticated smoke tests, restart
-durability, backup/restore, and a rehearsed rollback still require live
-evidence. This configuration alone is not evidence that those acceptance
-criteria passed.
+dependency health, bucket initialization, and migration status. The
+authenticated smoke and recovery-rehearsal commands produce the remaining live
+application and operational evidence, but only when executed against the real
+deployed host. Configuration or CI success alone is not evidence that DNS,
+external TLS, authenticated behavior, restart durability, backup restore, or
+rollback passed.

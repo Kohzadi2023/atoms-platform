@@ -36,6 +36,7 @@
     "staging:deploy:preflight": "node scripts/check-staging-deployment.mjs",
     "staging:deploy:compose:validate": "node scripts/validate-staging-compose.mjs",
     "staging:deploy:persistence:bootstrap": "node scripts/bootstrap-staging-persistence.mjs",
+    "staging:deploy:recovery:rehearse": "node scripts/rehearse-staging-recovery.mjs",
     "staging:smoke:authenticated": "node scripts/smoke-staging-authenticated.mjs",
     "db:generate": "pnpm prisma generate",
     "db:validate": "pnpm prisma validate",
@@ -45,7 +46,7 @@
     "db:seed:local": "pnpm --filter @atoms/db seed:local",
     "test:local-development": "node --test scripts/check-local-development.test.mjs",
     "test:phase3-environment-protection": "node --test scripts/validate-phase3-staging-inputs.test.mjs scripts/verify-phase3-environment-protection.test.mjs",
-    "test:staging-deployment": "node --test scripts/check-staging-deployment.test.mjs scripts/bootstrap-staging-persistence.test.mjs scripts/smoke-staging-authenticated.test.mjs"
+    "test:staging-deployment": "node --test scripts/check-staging-deployment.test.mjs scripts/bootstrap-staging-persistence.test.mjs scripts/smoke-staging-authenticated.test.mjs scripts/rehearse-staging-recovery.test.mjs"
   },
   "devDependencies": {
     "@types/node": "catalog:",

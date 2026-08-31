@@ -37,6 +37,17 @@ http://127.0.0.1:2019 {
 	reverse_proxy control-api:3001
 }
 
+{$ATOMS_STORAGE_ORIGIN} {
+	import atoms_tls
+	@attachment_bucket path /{$ATOMS_S3_BUCKET} /{$ATOMS_S3_BUCKET}/*
+	handle @attachment_bucket {
+		reverse_proxy minio:9000
+	}
+	handle {
+		respond 404
+	}
+}
+
 https://*.{$ATOMS_PREVIEW_BASE_DOMAIN} {
 	import atoms_tls
 	reverse_proxy preview-gateway:3002

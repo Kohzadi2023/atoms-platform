@@ -48,17 +48,24 @@ export interface S3ObjectStorageProviderOptions {
   readonly bucket: string;
   readonly region: string;
   readonly endpoint?: string;
+  /**
+   * Browser-reachable endpoint used only when producing presigned URLs.
+   * Server-side object operations continue to use `endpoint`.
+   */
+  readonly signingEndpoint?: string;
   readonly forcePathStyle?: boolean;
   readonly accessKeyId?: string;
   readonly secretAccessKey?: string;
   readonly kmsKeyId?: string;
   readonly client?: S3Client;
+  readonly signingClient?: S3Client;
   readonly now?: () => Date;
 }
 
 export class S3ObjectStorageProvider implements ObjectStorageProvider {
   readonly #bucket: string;
   readonly #client: S3Client;
+  readonly #signingClient: S3Client;
   readonly #kmsKeyId: string | undefined;
   readonly #now: () => Date;
 
@@ -66,26 +73,37 @@ export class S3ObjectStorageProvider implements ObjectStorageProvider {
     this.#bucket = options.bucket;
     this.#kmsKeyId = options.kmsKeyId;
     this.#now = options.now ?? (() => new Date());
+    const clientOptions = {
+      region: options.region,
+      ...(options.forcePathStyle === undefined
+        ? {}
+        : { forcePathStyle: options.forcePathStyle }),
+      ...(options.accessKeyId === undefined ||
+      options.secretAccessKey === undefined
+        ? {}
+        : {
+            credentials: {
+              accessKeyId: options.accessKeyId,
+              secretAccessKey: options.secretAccessKey,
+            },
+          }),
+    };
     this.#client =
       options.client ??
       new S3Client({
-        region: options.region,
+        ...clientOptions,
         ...(options.endpoint === undefined
           ? {}
           : { endpoint: options.endpoint }),
-        ...(options.forcePathStyle === undefined
-          ? {}
-          : { forcePathStyle: options.forcePathStyle }),
-        ...(options.accessKeyId === undefined ||
-        options.secretAccessKey === undefined
-          ? {}
-          : {
-              credentials: {
-                accessKeyId: options.accessKeyId,
-                secretAccessKey: options.secretAccessKey,
-              },
-            }),
       });
+    this.#signingClient =
+      options.signingClient ??
+      (options.signingEndpoint === undefined
+        ? this.#client
+        : new S3Client({
+            ...clientOptions,
+            endpoint: options.signingEndpoint,
+          }));
   }
 
   async createUploadRequest(input: {
@@ -102,7 +120,7 @@ export class S3ObjectStorageProvider implements ObjectStorageProvider {
       ContentLength: input.sizeBytes,
       ...encryption.command,
     });
-    const url = await getSignedUrl(this.#client, command, {
+    const url = await getSignedUrl(this.#signingClient, command, {
       expiresIn: input.expiresInSeconds,
     });
     return {
@@ -132,7 +150,7 @@ export class S3ObjectStorageProvider implements ObjectStorageProvider {
       ResponseContentDisposition: `attachment; filename*=UTF-8''${encodeURIComponent(input.fileName)}`,
     });
     return {
-      url: await getSignedUrl(this.#client, command, {
+      url: await getSignedUrl(this.#signingClient, command, {
         expiresIn: input.expiresInSeconds,
       }),
       method: "GET",

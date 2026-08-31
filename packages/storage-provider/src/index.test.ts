@@ -3,6 +3,7 @@ import test from "node:test";
 
 import {
   ClamAvScanner,
+  S3ObjectStorageProvider,
   calculateSha256,
   detectAttachmentMimeType,
   type ClamAvTransport,
@@ -75,6 +76,62 @@ test("ClamAV adapter fails closed on an unknown response", async () => {
     transport: new FakeTransport("stream: UNKNOWN ERROR\0"),
   });
   await assert.rejects(scanner.scan(bytes([1])), /Unexpected ClamAV response/u);
+});
+
+test("S3 presigned requests use the public signing endpoint", async () => {
+  const provider = new S3ObjectStorageProvider({
+    bucket: "atoms-attachments",
+    region: "us-east-1",
+    endpoint: "http://minio:9000",
+    signingEndpoint: "https://storage.staging.atoms.dev",
+    forcePathStyle: true,
+    accessKeyId: "atoms-test-access-key",
+    secretAccessKey: "atoms-test-secret-key",
+    now: () => new Date("2026-08-30T00:00:00.000Z"),
+  });
+
+  const upload = await provider.createUploadRequest({
+    key: "quarantine/test.txt",
+    contentType: "text/plain",
+    sizeBytes: 5,
+    expiresInSeconds: 60,
+  });
+  const download = await provider.createDownloadRequest({
+    key: "clean/test.txt",
+    fileName: "test.txt",
+    expiresInSeconds: 60,
+  });
+
+  assert.equal(new URL(upload.url).origin, "https://storage.staging.atoms.dev");
+  assert.equal(
+    new URL(upload.url).pathname,
+    "/atoms-attachments/quarantine/test.txt",
+  );
+  assert.equal(new URL(download.url).origin, "https://storage.staging.atoms.dev");
+  assert.equal(
+    new URL(download.url).pathname,
+    "/atoms-attachments/clean/test.txt",
+  );
+});
+
+test("S3 presigned requests retain the private endpoint by default", async () => {
+  const provider = new S3ObjectStorageProvider({
+    bucket: "atoms-attachments",
+    region: "us-east-1",
+    endpoint: "http://minio:9000",
+    forcePathStyle: true,
+    accessKeyId: "atoms-test-access-key",
+    secretAccessKey: "atoms-test-secret-key",
+  });
+
+  const upload = await provider.createUploadRequest({
+    key: "quarantine/test.txt",
+    contentType: "text/plain",
+    sizeBytes: 5,
+    expiresInSeconds: 60,
+  });
+
+  assert.equal(new URL(upload.url).origin, "http://minio:9000");
 });
 
 class FakeTransport implements ClamAvTransport {

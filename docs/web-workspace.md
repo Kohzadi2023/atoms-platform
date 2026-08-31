@@ -79,6 +79,12 @@ scanner failure, timeout, or metadata mismatch is shown as an error. See
 `docs/secure-attachments.md` for the storage, scan, snapshot, and model-input
 invariants.
 
+Production builds receive `NEXT_PUBLIC_STORAGE_ORIGIN` as browser-public
+metadata. The generated CSP adds only its normalized origin to `connect-src`,
+alongside the exact Control API and Supabase origins; no wildcard storage source
+is permitted. Upload and download URLs remain short-lived signed capabilities
+returned by the Control API and are never copied into browser persistence.
+
 GitHub/Vercel deployment, public usage-cost aggregation, and destructive
 database actions remain unavailable in this UI. Their tabs explain the missing
 capability and expose no unsafe placeholder action.

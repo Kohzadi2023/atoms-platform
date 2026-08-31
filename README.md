@@ -131,6 +131,7 @@ asymmetric signing key (ES256 is recommended), then set:
 - `AUTH_ALLOWED_ALGORITHMS=ES256` (or the single asymmetric algorithm actually
   selected for the project)
 - `NEXT_PUBLIC_SUPABASE_URL` and `NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY`
+- `NEXT_PUBLIC_STORAGE_ORIGIN` for the exact presigned attachment data plane
 
 The web app uses the Supabase browser client for password sign-in, automatic
 session refresh, local-session sign-out, and short-lived access-token delivery
@@ -140,10 +141,11 @@ The publishable key is safe for a public client, but secret and service-role
 keys must never use a `NEXT_PUBLIC_` variable.
 
 Because Next.js embeds `NEXT_PUBLIC_*` values during compilation, container
-builds must pass the four public settings as build arguments. The web Dockerfile
+builds must pass the five public settings as build arguments. The web Dockerfile
 declares arguments for the Control API URL, Supabase URL, Supabase publishable
-key, and preview base domain. The generated Content Security Policy permits Auth
-traffic only to the configured Supabase origin.
+key, attachment storage origin, and preview base domain. The generated Content
+Security Policy permits browser connections only to the exact API, Supabase,
+and storage origins.
 
 Atoms is invite-only. A Supabase user's UUID (`sub`) must match the `userId` of
 an existing `memberships` row before a workspace is visible. This keeps account
@@ -207,8 +209,8 @@ docker build -f apps/preview-gateway/Dockerfile -t atoms-preview-gateway .
 The provider-neutral staging deployment contract is in
 `deploy/staging/compose.yaml`. It runs all application and persistence services
 on one Docker host, keeps every application and infrastructure port private,
-and publishes only the Caddy HTTP/HTTPS ingress. Caddy routes the exact web/API
-names and wildcard signed previews with an externally issued certificate.
+and publishes only the Caddy HTTP/HTTPS ingress. Caddy routes the exact
+web/API/storage names and wildcard signed previews with an externally issued certificate.
 Prisma migrations run before application rollout, and runtime credentials stay
 in permission-restricted files outside the repository. Validate a populated
 deployment contract before any build or rollout:
@@ -240,6 +242,8 @@ pnpm staging:deploy:persistence:bootstrap -- \
 See `docs/staging-deployment.md` for the public-env allowlist, secret-file
 contract, persistence bootstrap, Compose commands, rollback boundary, and the
 Issue #22 gates that must be recorded before a live deployment.
+The explicitly gated two-identity live acceptance run is documented in
+`docs/staging-authenticated-smoke.md`.
 
 See `docs/phase-2-validation-preview.md` for the lifecycle and security boundary,
 `docs/secure-attachments.md` for the upload/scan/model-input boundary, and

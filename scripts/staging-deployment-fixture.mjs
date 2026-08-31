@@ -22,6 +22,8 @@ export async function createStagingDeploymentFixture(options = {}) {
     e2bCredential: "configured-e2b-credential-0123456789abcdef",
     supabaseCredential: "configured-supabase-credential-0123456789abcdef",
     vaultCredential: "configured-vault-credential-0123456789abcdef",
+    smokePrimaryPassword: "primary-smoke-password-0123456789abcdef",
+    smokeForeignPassword: "foreign-smoke-password-0123456789abcdef",
   };
   values.databaseUrl = `postgresql://atoms:${encodeURIComponent(values.databasePassword)}@postgres:5432/atoms?schema=public`;
   values.redisUrl = `redis://:${encodeURIComponent(values.redisPassword)}@redis:6379`;
@@ -36,6 +38,7 @@ export async function createStagingDeploymentFixture(options = {}) {
       ATOMS_STAGING_SECRETS_DIR: secretsDirectory,
       ATOMS_WEB_ORIGIN: "https://app.staging.atoms.dev",
       ATOMS_CONTROL_API_ORIGIN: "https://api.staging.atoms.dev",
+      ATOMS_STORAGE_ORIGIN: "https://storage.staging.atoms.dev",
       ATOMS_PREVIEW_BASE_DOMAIN: "preview.staging.atoms.dev",
       ATOMS_SUPABASE_URL: "https://fixture-project.supabase.co",
       ATOMS_SUPABASE_PUBLISHABLE_KEY:
@@ -87,6 +90,13 @@ export async function createStagingDeploymentFixture(options = {}) {
     REDIS_URL: values.redisUrl,
     PREVIEW_SIGNING_SECRET: values.previewSigningSecret,
   });
+  await writeSecureEnvironment(secretsDirectory, "authenticated-smoke.env", {
+    ATOMS_SMOKE_PRIMARY_EMAIL: "primary-smoke@staging.atoms.dev",
+    ATOMS_SMOKE_PRIMARY_PASSWORD: values.smokePrimaryPassword,
+    ATOMS_SMOKE_FOREIGN_EMAIL: "foreign-smoke@staging.atoms.dev",
+    ATOMS_SMOKE_FOREIGN_PASSWORD: values.smokeForeignPassword,
+    ATOMS_SMOKE_FOREIGN_PROJECT_ID: "00000000-0000-4000-8000-000000000099",
+  });
 
   await Promise.all([
     writeSecureFile(secretsDirectory, "postgres-password", values.databasePassword),
@@ -110,6 +120,7 @@ export async function createStagingDeploymentFixture(options = {}) {
     options.tlsDnsNames ?? [
       "app.staging.atoms.dev",
       "api.staging.atoms.dev",
+      "storage.staging.atoms.dev",
       "*.preview.staging.atoms.dev",
     ],
     options.tlsDays ?? 30,

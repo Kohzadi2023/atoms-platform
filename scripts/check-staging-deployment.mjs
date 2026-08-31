@@ -15,6 +15,7 @@ const PUBLIC_VARIABLES = [
   "ATOMS_STAGING_SECRETS_DIR",
   "ATOMS_WEB_ORIGIN",
   "ATOMS_CONTROL_API_ORIGIN",
+  "ATOMS_STORAGE_ORIGIN",
   "ATOMS_PREVIEW_BASE_DOMAIN",
   "ATOMS_SUPABASE_URL",
   "ATOMS_SUPABASE_PUBLISHABLE_KEY",
@@ -67,6 +68,16 @@ const SECRET_ENVIRONMENTS = {
   },
   "preview-gateway.env": {
     required: ["REDIS_URL", "PREVIEW_SIGNING_SECRET"],
+    optional: [],
+  },
+  "authenticated-smoke.env": {
+    required: [
+      "ATOMS_SMOKE_PRIMARY_EMAIL",
+      "ATOMS_SMOKE_PRIMARY_PASSWORD",
+      "ATOMS_SMOKE_FOREIGN_EMAIL",
+      "ATOMS_SMOKE_FOREIGN_PASSWORD",
+      "ATOMS_SMOKE_FOREIGN_PROJECT_ID",
+    ],
     optional: [],
   },
 };
@@ -344,11 +355,19 @@ function validatePublicEnvironment(environment, violations) {
     "ATOMS_CONTROL_API_ORIGIN",
     violations,
   );
+  const storageOrigin = validateHttpsOrigin(
+    environment.ATOMS_STORAGE_ORIGIN,
+    "ATOMS_STORAGE_ORIGIN",
+    violations,
+  );
   if (webOrigin?.port !== "") {
     violations.push("ATOMS_WEB_ORIGIN must use the default HTTPS port");
   }
   if (apiOrigin?.port !== "") {
     violations.push("ATOMS_CONTROL_API_ORIGIN must use the default HTTPS port");
+  }
+  if (storageOrigin?.port !== "") {
+    violations.push("ATOMS_STORAGE_ORIGIN must use the default HTTPS port");
   }
   const supabaseOrigin = validateHttpsOrigin(
     environment.ATOMS_SUPABASE_URL,
@@ -375,18 +394,22 @@ function validatePublicEnvironment(environment, violations) {
   if (
     webOrigin !== undefined &&
     apiOrigin !== undefined &&
-    webOrigin.hostname === apiOrigin.hostname
+    new Set([
+      webOrigin.hostname,
+      apiOrigin.hostname,
+      storageOrigin?.hostname,
+    ]).size !== 3
   ) {
-    violations.push("the web and Control API must use different hostnames");
+    violations.push("the web, Control API, and storage origins must use different hostnames");
   }
   if (
     previewDomain.length > 0 &&
-    [webOrigin?.hostname, apiOrigin?.hostname].some(
+    [webOrigin?.hostname, apiOrigin?.hostname, storageOrigin?.hostname].some(
       (hostname) =>
         hostname === previewDomain || hostname?.endsWith(`.${previewDomain}`),
     )
   ) {
-    violations.push("web and Control API names must be outside the wildcard preview domain");
+    violations.push("web, Control API, and storage names must be outside the wildcard preview domain");
   }
 
   const issuer = validateHttpsUrl(
@@ -540,6 +563,7 @@ function validateTlsContract(publicEnvironment, tlsFiles, violations) {
   for (const [name, origin] of [
     ["ATOMS_WEB_ORIGIN", publicEnvironment.ATOMS_WEB_ORIGIN],
     ["ATOMS_CONTROL_API_ORIGIN", publicEnvironment.ATOMS_CONTROL_API_ORIGIN],
+    ["ATOMS_STORAGE_ORIGIN", publicEnvironment.ATOMS_STORAGE_ORIGIN],
   ]) {
     const hostname = hostnameFromUrl(origin);
     if (hostname !== undefined && certificate.checkHost(hostname) === undefined) {
@@ -566,6 +590,7 @@ function validateSecretContract(publicEnvironment, environments, secrets, violat
   const controlApi = environments["control-api.env"] ?? {};
   const worker = environments["worker.env"] ?? {};
   const previewGateway = environments["preview-gateway.env"] ?? {};
+  const authenticatedSmoke = environments["authenticated-smoke.env"] ?? {};
 
   compareValues(
     [migration.DATABASE_URL, controlApi.DATABASE_URL, worker.DATABASE_URL],
@@ -675,6 +700,44 @@ function validateSecretContract(publicEnvironment, environments, secrets, violat
     ["VAULT_TOKEN", worker.VAULT_TOKEN],
   ]) {
     if (isPlaceholder(value)) violations.push(`${name} must be configured`);
+  }
+  validateSmokeCredentials(authenticatedSmoke, violations);
+}
+
+function validateSmokeCredentials(environment, violations) {
+  const primaryEmail = environment.ATOMS_SMOKE_PRIMARY_EMAIL;
+  const foreignEmail = environment.ATOMS_SMOKE_FOREIGN_EMAIL;
+  for (const [name, value] of [
+    ["ATOMS_SMOKE_PRIMARY_EMAIL", primaryEmail],
+    ["ATOMS_SMOKE_FOREIGN_EMAIL", foreignEmail],
+  ]) {
+    if (
+      value !== undefined &&
+      (!/^[^@\s]+@[^@\s]+\.[^@\s]+$/u.test(value) || value.length > 254)
+    ) {
+      violations.push(`${name} must contain a normalized test-user email address`);
+    }
+  }
+  for (const [name, value] of [
+    ["ATOMS_SMOKE_PRIMARY_PASSWORD", environment.ATOMS_SMOKE_PRIMARY_PASSWORD],
+    ["ATOMS_SMOKE_FOREIGN_PASSWORD", environment.ATOMS_SMOKE_FOREIGN_PASSWORD],
+  ]) {
+    requireSecretLength(value, 12, name, violations);
+  }
+  if (
+    primaryEmail !== undefined &&
+    foreignEmail !== undefined &&
+    primaryEmail.toLowerCase() === foreignEmail.toLowerCase()
+  ) {
+    violations.push("authenticated smoke identities must be different users");
+  }
+  if (
+    environment.ATOMS_SMOKE_FOREIGN_PROJECT_ID !== undefined &&
+    !/^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/iu.test(
+      environment.ATOMS_SMOKE_FOREIGN_PROJECT_ID,
+    )
+  ) {
+    violations.push("ATOMS_SMOKE_FOREIGN_PROJECT_ID must be a UUID");
   }
 }
 

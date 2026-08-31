@@ -3,8 +3,8 @@
 This provider-neutral deployment contract for Issue #22 prepares the existing
 web, Control API, worker, preview gateway, PostgreSQL, Redis, MinIO, and ClamAV
 services for one Linux host with Docker Compose. Caddy terminates externally
-issued TLS, redirects HTTP to HTTPS, and routes the two exact application names
-plus wildcard preview names. The same manifest can run on an Azure VM or
+issued TLS, redirects HTTP to HTTPS, and routes three exact web/API/storage
+names plus wildcard preview names. The same manifest can run on an Azure VM or
 another approved Docker host.
 
 This contract does **not** create a host, change DNS, issue a certificate,
@@ -33,25 +33,28 @@ The manifest publishes only TCP 80, TCP 443, and UDP 443 from the Caddy ingress.
 Web, Control API, and preview gateway ports exist only on an internal ingress
 network. PostgreSQL, Redis, MinIO, the MinIO console, and ClamAV also have no
 host-published ports. Application services use a separate network for required
-outbound provider traffic.
+outbound provider traffic. A dedicated internal `storage-ingress` network lets
+Caddy reach MinIO without exposing port 9000 on the host.
 
 | Public name | Internal target | Contract |
 |---|---|---|
 | `ATOMS_WEB_ORIGIN` | `web:3000` | Exact Agent Hub HTTPS origin |
 | `ATOMS_CONTROL_API_ORIGIN` | `control-api:3001` | Exact Control API HTTPS origin |
+| `ATOMS_STORAGE_ORIGIN` | `minio:9000` | Exact HTTPS origin; only the configured attachment bucket path is routed |
 | `*.ATOMS_PREVIEW_BASE_DOMAIN` | `preview-gateway:3002` | Signed preview HTTP and WebSocket traffic |
 
 Caddy preserves the incoming host boundary used by preview-ticket validation
 and supports SSE and WebSocket proxying. It emits JSON access logs for the
-exact web/API names, while wildcard preview access logging is intentionally
-disabled so signed preview hostnames are not retained. Its admin API is
+exact web/API names. Storage and wildcard preview access logging are
+intentionally disabled so presigned query capabilities and signed preview
+hostnames are not retained. Its admin API is
 disabled, and its health endpoint is reachable only inside its own container.
 
 ## Public environment
 
 Install a copy of the example outside the checkout and replace every example
 value. `ATOMS_IMAGE_TAG` must be the complete lowercase 40-character SHA that
-was verified by CI. The web, API, and preview names must be real DNS names, and
+was verified by CI. The web, API, storage, and preview names must be real DNS names, and
 all public/auth endpoints must use HTTPS.
 
 ```bash
@@ -77,7 +80,7 @@ TLS files:
 | `tls-private-key.pem` | Matching, unencrypted PEM private key |
 
 The leaf certificate must already be valid, remain valid for at least seven
-days, cover the exact web and API hostnames, and include a wildcard SAN for
+days, cover the exact web, API, and storage hostnames, and include a wildcard SAN for
 `*.ATOMS_PREVIEW_BASE_DOMAIN`. Certificate issuance and renewal stay with the
 approved DNS/TLS provider; this repository does not accept a DNS provider token
 or run an ACME DNS challenge.
@@ -141,6 +144,11 @@ REDIS_URL=redis://:<encoded-password>@redis:6379
 PREVIEW_SIGNING_SECRET=<same-worker-signing-secret>
 ```
 
+The host-only `authenticated-smoke.env` is not mounted into any container. It
+contains two dedicated Supabase test-user email/password pairs and a known
+foreign-workspace project UUID. See `docs/staging-authenticated-smoke.md` for
+its exact five-variable contract and tenant-isolation setup.
+
 Keep the directory owner-only and make every mounted file read-only after
 delivery. Do not loosen the directory mode: it is the host-side confidentiality
 boundary for the `0444` files.
@@ -175,13 +183,15 @@ The preflight verifies:
 - a public-env allowlist that excludes all runtime credentials and development
   auth switches;
 - directory/file type and permission rules;
-- TLS validity, certificate/private-key agreement, exact web/API SAN coverage,
+- TLS validity, certificate/private-key agreement, exact web/API/storage SAN coverage,
   and wildcard preview SAN coverage;
 - identical internal PostgreSQL and Redis URLs across the minimum required
   services;
 - agreement between infrastructure passwords, URLs, S3 credentials, preview
   signing secrets, and the MinIO KMS key ID;
-- complete worker-only OpenAI, E2B, Supabase, and Vault credentials.
+- complete worker-only OpenAI, E2B, Supabase, and Vault credentials;
+- distinct, normalized two-identity authenticated-smoke credentials and a
+  foreign witness project UUID.
 
 ## Persistent service bootstrap
 
@@ -267,6 +277,20 @@ external staging data volume as part of an application rollback.
 For certificate renewal, install the replacement pair atomically, rerun both
 preflight commands, and recreate only `reverse-proxy`. Never restart ingress
 with an unvalidated or mismatched pair.
+
+## Authenticated end-to-end smoke
+
+After the complete stack is healthy and externally reachable, execute the
+single-run acceptance command in `docs/staging-authenticated-smoke.md`. The
+Control API signs browser attachment capabilities with
+`ATOMS_STORAGE_ORIGIN`, while its own head/get/copy/delete operations retain
+the private `http://minio:9000` endpoint. Caddy exposes only the configured
+bucket path and descendants on the exact storage name; every other path
+returns `404`.
+
+The web build includes the exact storage origin in `connect-src`. This is
+required for browser upload/download but does not allow the storage hostname as
+a script, frame, image, or wildcard source.
 
 ## Evidence and rollback boundary
 

@@ -26,7 +26,9 @@ services:
     environment:
       ATOMS_WEB_ORIGIN: ${ATOMS_WEB_ORIGIN:?ATOMS_WEB_ORIGIN is required}
       ATOMS_CONTROL_API_ORIGIN: ${ATOMS_CONTROL_API_ORIGIN:?ATOMS_CONTROL_API_ORIGIN is required}
+      ATOMS_STORAGE_ORIGIN: ${ATOMS_STORAGE_ORIGIN:?ATOMS_STORAGE_ORIGIN is required}
       ATOMS_PREVIEW_BASE_DOMAIN: ${ATOMS_PREVIEW_BASE_DOMAIN:?ATOMS_PREVIEW_BASE_DOMAIN is required}
+      ATOMS_S3_BUCKET: ${ATOMS_S3_BUCKET:?ATOMS_S3_BUCKET is required}
     ports:
       - 80:80/tcp
       - 443:443/tcp
@@ -54,6 +56,8 @@ services:
         condition: service_healthy
       preview-gateway:
         condition: service_healthy
+      minio:
+        condition: service_started
     healthcheck:
       test:
         - CMD
@@ -68,6 +72,7 @@ services:
       start_period: 5s
     networks:
       - ingress
+      - storage-ingress
     labels:
       com.atoms.environment: staging
       com.atoms.revision: ${ATOMS_IMAGE_TAG}
@@ -157,6 +162,7 @@ services:
       - atoms_minio_data:/data
     networks:
       - backend
+      - storage-ingress
     security_opt:
       - no-new-privileges:true
     stop_grace_period: 60s
@@ -309,6 +315,7 @@ services:
       S3_BUCKET: ${ATOMS_S3_BUCKET:?ATOMS_S3_BUCKET is required}
       S3_REGION: ${ATOMS_S3_REGION:?ATOMS_S3_REGION is required}
       S3_ENDPOINT: http://minio:9000
+      S3_PUBLIC_ENDPOINT: ${ATOMS_STORAGE_ORIGIN:?ATOMS_STORAGE_ORIGIN is required}
       S3_FORCE_PATH_STYLE: "true"
       SUPABASE_CREDENTIAL_SECRET_REF: env://SUPABASE_ACCESS_TOKEN
     command:
@@ -455,6 +462,7 @@ services:
         NEXT_PUBLIC_CONTROL_API_URL: ${ATOMS_CONTROL_API_ORIGIN:?ATOMS_CONTROL_API_ORIGIN is required}
         NEXT_PUBLIC_SUPABASE_URL: ${ATOMS_SUPABASE_URL:?ATOMS_SUPABASE_URL is required}
         NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY: ${ATOMS_SUPABASE_PUBLISHABLE_KEY:?ATOMS_SUPABASE_PUBLISHABLE_KEY is required}
+        NEXT_PUBLIC_STORAGE_ORIGIN: ${ATOMS_STORAGE_ORIGIN:?ATOMS_STORAGE_ORIGIN is required}
         NEXT_PUBLIC_PREVIEW_BASE_DOMAIN: ${ATOMS_PREVIEW_BASE_DOMAIN:?ATOMS_PREVIEW_BASE_DOMAIN is required}
     environment:
       NODE_ENV: production
@@ -486,6 +494,8 @@ networks:
   backend:
     internal: true
   ingress:
+    internal: true
+  storage-ingress:
     internal: true
   egress:
 

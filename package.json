@@ -12,7 +12,7 @@
   },
   "scripts": {
     "build": "turbo run build",
-    "ci:verify": "pnpm verify && pnpm test:local-development && pnpm test:phase3-environment-protection && pnpm test:staging-deployment && pnpm sql:lint && pnpm audit --audit-level high && pnpm secrets:scan",
+    "ci:verify": "pnpm verify && pnpm test:local-development && pnpm test:phase3-environment-protection && pnpm test:azure-staging && pnpm test:staging-deployment && pnpm sql:lint && pnpm audit --audit-level high && pnpm secrets:scan",
     "dev": "pnpm dev:check && node --env-file-if-exists=.env node_modules/turbo/bin/turbo run dev --env-mode=loose",
     "dev:check": "node --env-file-if-exists=.env scripts/check-local-development.mjs",
     "dev:web": "node --env-file-if-exists=.env node_modules/turbo/bin/turbo run dev --filter=@atoms/web --env-mode=loose",
@@ -38,6 +38,7 @@
     "staging:deploy:persistence:bootstrap": "node scripts/bootstrap-staging-persistence.mjs",
     "staging:deploy:recovery:rehearse": "node scripts/rehearse-staging-recovery.mjs",
     "staging:smoke:authenticated": "node scripts/smoke-staging-authenticated.mjs",
+    "staging:azure:inputs:validate": "node scripts/validate-azure-staging-inputs.mjs",
     "db:generate": "pnpm prisma generate",
     "db:validate": "pnpm prisma validate",
     "db:format": "pnpm prisma format",
@@ -46,6 +47,7 @@
     "db:seed:local": "pnpm --filter @atoms/db seed:local",
     "test:local-development": "node --test scripts/check-local-development.test.mjs",
     "test:phase3-environment-protection": "node --test scripts/validate-phase3-staging-inputs.test.mjs scripts/verify-phase3-environment-protection.test.mjs",
+    "test:azure-staging": "node --test scripts/validate-azure-staging-inputs.test.mjs",
     "test:staging-deployment": "node --test scripts/check-staging-deployment.test.mjs scripts/bootstrap-staging-persistence.test.mjs scripts/smoke-staging-authenticated.test.mjs scripts/rehearse-staging-recovery.test.mjs"
   },
   "devDependencies": {

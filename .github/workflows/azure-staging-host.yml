@@ -37,6 +37,7 @@ concurrency:
 
 env:
   AZURE_STAGING_LOCATION: canadacentral
+  AZURE_STAGING_RESOURCE_GROUP: atoms-staging-rg
   AZURE_STAGING_VM_SIZE: Standard_B2s_v2
   BICEP_VERSION: v0.46.1
 
@@ -56,9 +57,13 @@ jobs:
           AZURE_STAGING_CONFIRMATION: ${{ inputs.confirmation }}
           AZURE_STAGING_CHANGE_TICKET: ${{ inputs.change_ticket }}
           AZURE_STAGING_MAX_MONTHLY_COST_CAD: ${{ inputs.max_monthly_cost_cad }}
+          AZURE_STAGING_RESOURCE_GROUP: ${{ env.AZURE_STAGING_RESOURCE_GROUP }}
           AZURE_STAGING_SSH_SOURCE_CIDR: ${{ secrets.AZURE_STAGING_SSH_SOURCE_CIDR }}
           AZURE_STAGING_SSH_PUBLIC_KEY: ${{ secrets.AZURE_STAGING_SSH_PUBLIC_KEY }}
           AZURE_BUDGET_CONTACT_EMAIL: ${{ secrets.AZURE_BUDGET_CONTACT_EMAIL }}
+          AZURE_CLIENT_ID: ${{ secrets.AZURE_CLIENT_ID }}
+          AZURE_TENANT_ID: ${{ secrets.AZURE_TENANT_ID }}
+          AZURE_SUBSCRIPTION_ID: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
         run: node scripts/validate-azure-staging-inputs.mjs
       - name: Compile the Azure infrastructure without contacting the subscription
         run: |
@@ -87,9 +92,9 @@ jobs:
           AZURE_STAGING_SSH_PUBLIC_KEY: ${{ secrets.AZURE_STAGING_SSH_PUBLIC_KEY }}
           AZURE_BUDGET_CONTACT_EMAIL: ${{ secrets.AZURE_BUDGET_CONTACT_EMAIL }}
         run: |
-          az deployment sub what-if \
+          az deployment group what-if \
+            --resource-group "$AZURE_STAGING_RESOURCE_GROUP" \
             --name "atoms-staging-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}" \
-            --location "$AZURE_STAGING_LOCATION" \
             --template-file infra/azure/staging/main.bicep \
             --result-format ResourceIdOnly \
             --parameters \
@@ -106,9 +111,9 @@ jobs:
           AZURE_STAGING_SSH_PUBLIC_KEY: ${{ secrets.AZURE_STAGING_SSH_PUBLIC_KEY }}
           AZURE_BUDGET_CONTACT_EMAIL: ${{ secrets.AZURE_BUDGET_CONTACT_EMAIL }}
         run: |
-          az deployment sub what-if \
+          az deployment group what-if \
+            --resource-group "$AZURE_STAGING_RESOURCE_GROUP" \
             --name "atoms-staging-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}" \
-            --location "$AZURE_STAGING_LOCATION" \
             --template-file infra/azure/staging/main.bicep \
             --result-format ResourceIdOnly \
             --parameters \
@@ -125,9 +130,9 @@ jobs:
           AZURE_STAGING_SSH_PUBLIC_KEY: ${{ secrets.AZURE_STAGING_SSH_PUBLIC_KEY }}
           AZURE_BUDGET_CONTACT_EMAIL: ${{ secrets.AZURE_BUDGET_CONTACT_EMAIL }}
         run: |
-          az deployment sub create \
+          az deployment group create \
+            --resource-group "$AZURE_STAGING_RESOURCE_GROUP" \
             --name "atoms-staging-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}" \
-            --location "$AZURE_STAGING_LOCATION" \
             --template-file infra/azure/staging/main.bicep \
             --only-show-errors \
             --output none \

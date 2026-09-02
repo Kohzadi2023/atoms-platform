@@ -21,9 +21,11 @@ The template is intentionally limited to the approved boundary:
 | Administration | SSH key only; one operator IPv4 CIDR between `/24` and `/32` |
 | Monthly budget | CAD 80 resource-group budget with 50%, 80%, and 100% alerts |
 
-`infra/azure/staging/main.bicep` creates only resources with the `atoms-staging`
-prefix or tags. It does not look up, resize, stop, start, attach to, or otherwise
-reference LogiCount resources.
+`infra/azure/staging/main.bicep` is a resource-group-scope template. The workflow
+can deploy it only to `atoms-staging-rg`; it cannot enumerate or mutate another
+resource group. It creates only resources with the `atoms-staging` prefix or
+tags and does not look up, resize, stop, start, attach to, or otherwise reference
+LogiCount resources.
 
 ## Cost boundary
 
@@ -62,22 +64,102 @@ history, or source control.
 
 ## One-time OIDC bootstrap
 
-The workflow uses GitHub OIDC and short-lived Azure tokens. Do not create or
-store a client secret. Before the first workflow run, create a Microsoft Entra
-application or user-assigned managed identity with a federated credential for:
+The workflow uses GitHub OIDC and short-lived Azure tokens. It never creates or
+stores a client secret. The repository includes an idempotent bootstrap command
+so this setup can be completed from a local terminal instead of the Azure web
+portal.
+
+The trust is pinned to the immutable GitHub owner and repository IDs, as well as
+the `phase3-staging` environment:
 
 ```text
-repo:Kohzadi2023/atoms-platform:environment:phase3-staging
+repo:Kohzadi2023@149624604/atoms-platform@1319803321:environment:phase3-staging
 ```
 
-The identity needs `Contributor` for the subscription deployment and Cost
-Management permission to create the resource-group budget. Follow Microsoft's
-OIDC setup guidance and keep the role assignment limited to this staging
-purpose:
+This avoids name-recycling trust if the owner or repository name is later
+renamed, transferred, or reused. The bootstrap verifies the IDs against GitHub
+before changing anything and opts this repository into immutable OIDC subjects.
+
+The workflow identity never receives a subscription-wide role. The bootstrap
+creates the empty `atoms-staging-rg` control-plane container, then grants these
+built-in roles only at that exact resource-group scope:
+
+| Role | Reason |
+|---|---|
+| `Contributor` | Manage the dedicated VM, network, IP, and disks |
+| `Locks Contributor` | Create the explicit delete lock on the data disk |
+| `Cost Management Contributor` | Create and update the CAD 80 budget |
+
+Consequently, the workflow identity has no inherited permission over
+`LogiCount-RG` or `LogiCount-VM`.
+
+References:
 
 - [Deploy Bicep with GitHub Actions and OIDC](https://learn.microsoft.com/azure/azure-resource-manager/bicep/deploy-github-actions)
+- [GitHub immutable OIDC subjects](https://docs.github.com/actions/reference/security/oidc#immutable-subject-claims)
+- [Azure built-in roles](https://learn.microsoft.com/azure/role-based-access-control/built-in-roles)
+- [GitHub CLI environment secrets](https://cli.github.com/manual/gh_secret_set)
 
-Add these values as GitHub Environment secrets in `phase3-staging`:
+### Prerequisites
+
+Install Node.js 24, pnpm, Azure CLI, GitHub CLI, and OpenSSH. Sign in once from
+your own terminal; never paste a password, private key, OTP, client secret, or
+device-login code into an issue, workflow input, repository file, or chat:
+
+```bash
+az login --use-device-code
+gh auth login --hostname github.com
+az account list --query "[?state=='Enabled'].{Name:name,Subscription:id,Default:isDefault}" --output table
+```
+
+Select the intended Pay-As-You-Go subscription UUID from the last command. The
+bootstrap requires that UUID explicitly and refuses aliases such as `current`.
+Use the current operator public IPv4 address with `/32` for SSH ingress and an
+email address that should receive budget alerts.
+
+### Read-only bootstrap plan
+
+Run the bootstrap in `plan` mode first. It checks both authenticated accounts,
+the pinned repository identity, the dedicated resource-group boundary, any
+existing Entra application, role assignments, and GitHub OIDC configuration.
+It does not change cloud or repository state:
+
+```bash
+pnpm staging:azure:oidc:bootstrap -- \
+  --mode plan \
+  --subscription-id <PAY_AS_YOU_GO_SUBSCRIPTION_UUID> \
+  --budget-email <BUDGET_ALERT_EMAIL> \
+  --ssh-source-cidr <CURRENT_PUBLIC_IPV4>/32 \
+  --confirmation PLAN_DEDICATED_ATOMS_AZURE_OIDC
+```
+
+The default dedicated key path is `.ssh/atoms-staging-azure` below the current
+user profile. Supply `--ssh-key-path <ABSOLUTE_PATH>` only when a different
+dedicated key location is required.
+
+### Apply control-plane bootstrap
+
+After the plan succeeds, rerun with the independent apply acknowledgement:
+
+```bash
+pnpm staging:azure:oidc:bootstrap -- \
+  --mode apply \
+  --subscription-id <PAY_AS_YOU_GO_SUBSCRIPTION_UUID> \
+  --budget-email <BUDGET_ALERT_EMAIL> \
+  --ssh-source-cidr <CURRENT_PUBLIC_IPV4>/32 \
+  --confirmation BOOTSTRAP_DEDICATED_ATOMS_AZURE_OIDC_WITHOUT_COMPUTE
+```
+
+Apply mode creates or verifies only the empty resource group, Entra
+application/service principal, immutable federated credential, three
+resource-group-scoped role assignments, local dedicated SSH key pair, and the
+six environment secrets below. It is idempotent and aborts rather than taking
+over ambiguous or mismatched existing state. It does not dispatch the host
+workflow and does not create a VM, disk, public IP, domain, or other billable
+resource.
+
+The bootstrap stores these values as GitHub Environment secrets in
+`phase3-staging`:
 
 | Secret | Purpose |
 |---|---|
@@ -104,8 +186,9 @@ max_monthly_cost_cad=80
 ```
 
 The first job validates the exact boundary and compiles Bicep without contacting
-the subscription. The Azure job then runs `az deployment sub what-if` with
-resource-ID-only output. It cannot create or modify a resource in this mode.
+the subscription. The Azure job then runs `az deployment group what-if` against
+only `atoms-staging-rg`, with resource-ID-only output. It cannot create or
+modify a resource in this mode.
 
 Confirm that the plan contains only `atoms-staging-rg` and its dedicated child
 resources. Stop if any replacement, deletion, LogiCount resource, different
@@ -123,7 +206,7 @@ confirmation=PROVISION_DEDICATED_ATOMS_AZURE_STAGING
 max_monthly_cost_cad=80
 ```
 
-The job reruns what-if immediately before `az deployment sub create`. A passing
+The job reruns what-if immediately before `az deployment group create`. A passing
 run proves only that the Azure host was provisioned and reached a valid power
 and provisioning state. It does not prove that application secrets, DNS, TLS,
 Supabase, OpenAI, E2B, or the Atoms stack are ready.

@@ -1,4 +1,4 @@
-@description('Azure region inherited from the subscription deployment.')
+@description('Azure region inherited from the dedicated resource-group deployment.')
 param location string
 
 @description('Approved virtual machine SKU.')

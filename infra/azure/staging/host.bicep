@@ -4,6 +4,9 @@ param location string
 @description('Approved virtual machine SKU.')
 param vmSize string
 
+@description('Non-root Linux administrator.')
+param adminUsername string
+
 @description('SSH public key for the non-root administrator.')
 @secure()
 param adminSshPublicKey string
@@ -15,7 +18,6 @@ param sshSourceCidr string
 @description('Tags applied to every supported staging resource.')
 param tags object
 
-var adminUsername = 'atomsadmin'
 var vmName = 'atoms-staging-vm'
 var networkSecurityGroupName = 'atoms-staging-nsg'
 var virtualNetworkName = 'atoms-staging-vnet'
@@ -160,7 +162,7 @@ resource networkInterface 'Microsoft.Network/networkInterfaces@2024-05-01' = {
   }
 }
 
-resource dataDisk 'Microsoft.Compute/disks@2024-07-01' = {
+resource dataDisk 'Microsoft.Compute/disks@2024-03-02' = {
   name: dataDiskName
   location: location
   tags: union(tags, {

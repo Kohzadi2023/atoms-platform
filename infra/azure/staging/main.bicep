@@ -12,6 +12,12 @@ param location string = 'canadacentral'
 ])
 param vmSize string = 'Standard_B2s_v2'
 
+@description('Non-root Linux administrator created on the dedicated staging VM.')
+@allowed([
+  'atomsadmin'
+])
+param adminUsername string = 'atomsadmin'
+
 @description('SSH public key installed for the non-root VM administrator.')
 @secure()
 param adminSshPublicKey string
@@ -53,76 +59,20 @@ module host './host.bicep' = {
   params: {
     location: location
     vmSize: vmSize
+    adminUsername: adminUsername
     adminSshPublicKey: adminSshPublicKey
     sshSourceCidr: sshSourceCidr
     tags: commonTags
   }
 }
 
-resource monthlyBudget 'Microsoft.Consumption/budgets@2024-08-01' = {
-  name: 'atoms-staging-monthly-cad-80'
+module budget './budget.bicep' = {
+  name: 'atoms-staging-budget'
   scope: stagingResourceGroup
-  properties: {
-    amount: monthlyBudgetCad
-    category: 'Cost'
-    timeGrain: 'Monthly'
-    timePeriod: {
-      startDate: '${budgetStartDate}T00:00:00Z'
-    }
-    notifications: {
-      Actual_50_Percent: {
-        enabled: true
-        operator: 'GreaterThanOrEqualTo'
-        threshold: 50
-        thresholdType: 'Actual'
-        contactEmails: [
-          budgetContactEmail
-        ]
-        contactGroups: []
-        contactRoles: [
-          'Owner'
-        ]
-      }
-      Forecasted_80_Percent: {
-        enabled: true
-        operator: 'GreaterThanOrEqualTo'
-        threshold: 80
-        thresholdType: 'Forecasted'
-        contactEmails: [
-          budgetContactEmail
-        ]
-        contactGroups: []
-        contactRoles: [
-          'Owner'
-        ]
-      }
-      Actual_80_Percent: {
-        enabled: true
-        operator: 'GreaterThanOrEqualTo'
-        threshold: 80
-        thresholdType: 'Actual'
-        contactEmails: [
-          budgetContactEmail
-        ]
-        contactGroups: []
-        contactRoles: [
-          'Owner'
-        ]
-      }
-      Actual_100_Percent: {
-        enabled: true
-        operator: 'GreaterThanOrEqualTo'
-        threshold: 100
-        thresholdType: 'Actual'
-        contactEmails: [
-          budgetContactEmail
-        ]
-        contactGroups: []
-        contactRoles: [
-          'Owner'
-        ]
-      }
-    }
+  params: {
+    monthlyBudgetCad: monthlyBudgetCad
+    budgetContactEmail: budgetContactEmail
+    budgetStartDate: budgetStartDate
   }
 }
 

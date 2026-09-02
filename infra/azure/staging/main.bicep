@@ -1,4 +1,4 @@
-targetScope = 'subscription'
+targetScope = 'resourceGroup'
 
 @description('Azure region selected for the dedicated Atoms staging host.')
 @allowed([
@@ -38,7 +38,6 @@ param budgetStartDate string = utcNow('yyyy-MM-01')
 @maxValue(80)
 param monthlyBudgetCad int = 80
 
-var resourceGroupName = 'atoms-staging-rg'
 var commonTags = {
   application: 'atoms-platform'
   environment: 'staging'
@@ -47,15 +46,8 @@ var commonTags = {
   repository: 'Kohzadi2023/atoms-platform'
 }
 
-resource stagingResourceGroup 'Microsoft.Resources/resourceGroups@2024-03-01' = {
-  name: resourceGroupName
-  location: location
-  tags: commonTags
-}
-
 module host './host.bicep' = {
   name: 'atoms-staging-host'
-  scope: stagingResourceGroup
   params: {
     location: location
     vmSize: vmSize
@@ -68,7 +60,6 @@ module host './host.bicep' = {
 
 module budget './budget.bicep' = {
   name: 'atoms-staging-budget'
-  scope: stagingResourceGroup
   params: {
     monthlyBudgetCad: monthlyBudgetCad
     budgetContactEmail: budgetContactEmail
@@ -76,7 +67,7 @@ module budget './budget.bicep' = {
   }
 }
 
-output resourceGroupName string = stagingResourceGroup.name
+output resourceGroupName string = resourceGroup().name
 output vmName string = host.outputs.vmName
 output hostFqdn string = host.outputs.hostFqdn
 output dataDiskName string = host.outputs.dataDiskName

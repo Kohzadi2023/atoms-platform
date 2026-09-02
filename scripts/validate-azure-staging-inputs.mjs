@@ -39,6 +39,11 @@ function isEmail(value) {
   return /^[^\s@]+@[^\s@]+\.[^\s@]+$/u.test(value);
 }
 
+function isUuid(value) {
+  if (value === undefined) return false;
+  return /^[0-9a-f]{8}(?:-[0-9a-f]{4}){3}-[0-9a-f]{12}$/iu.test(value);
+}
+
 export function validateAzureStagingInputs(environment) {
   const violations = [];
   const mode = normalized(environment.AZURE_STAGING_MODE);
@@ -61,6 +66,9 @@ export function validateAzureStagingInputs(environment) {
   if (environment.AZURE_STAGING_LOCATION !== "canadacentral") {
     violations.push("AZURE_STAGING_LOCATION must exactly equal canadacentral");
   }
+  if (environment.AZURE_STAGING_RESOURCE_GROUP !== "atoms-staging-rg") {
+    violations.push("AZURE_STAGING_RESOURCE_GROUP must exactly equal atoms-staging-rg");
+  }
   if (environment.AZURE_STAGING_VM_SIZE !== "Standard_B2s_v2") {
     violations.push("AZURE_STAGING_VM_SIZE must exactly equal Standard_B2s_v2");
   }
@@ -72,6 +80,15 @@ export function validateAzureStagingInputs(environment) {
   }
   if (!isEmail(normalized(environment.AZURE_BUDGET_CONTACT_EMAIL))) {
     violations.push("AZURE_BUDGET_CONTACT_EMAIL must be a valid budget notification address");
+  }
+  for (const name of [
+    "AZURE_CLIENT_ID",
+    "AZURE_TENANT_ID",
+    "AZURE_SUBSCRIPTION_ID",
+  ]) {
+    if (!isUuid(normalized(environment[name]))) {
+      violations.push(`${name} must be a UUID`);
+    }
   }
 
   return {

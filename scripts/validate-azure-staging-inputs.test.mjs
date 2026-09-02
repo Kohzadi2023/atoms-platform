@@ -19,11 +19,15 @@ const validEnvironment = {
   AZURE_STAGING_CHANGE_TICKET: "GH-22",
   AZURE_STAGING_MAX_MONTHLY_COST_CAD: "80",
   AZURE_STAGING_LOCATION: "canadacentral",
+  AZURE_STAGING_RESOURCE_GROUP: "atoms-staging-rg",
   AZURE_STAGING_VM_SIZE: "Standard_B2s_v2",
   AZURE_STAGING_SSH_SOURCE_CIDR: "203.0.113.42/32",
   AZURE_STAGING_SSH_PUBLIC_KEY:
     "ssh-ed25519 AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA atoms-staging-test",
   AZURE_BUDGET_CONTACT_EMAIL: "operator@example.test",
+  AZURE_CLIENT_ID: "11111111-1111-4111-8111-111111111111",
+  AZURE_TENANT_ID: "22222222-2222-4222-8222-222222222222",
+  AZURE_SUBSCRIPTION_ID: "33333333-3333-4333-8333-333333333333",
 };
 
 test("accepts a read-only what-if with the exact approved boundary", () => {
@@ -74,6 +78,28 @@ test("rejects changing the approved region or VM size", () => {
   assert.equal(result.ok, false);
   assert.match(result.violations.join("\n"), /canadacentral/u);
   assert.match(result.violations.join("\n"), /Standard_B2s_v2/u);
+});
+
+test("rejects any resource group outside the dedicated Atoms boundary", () => {
+  const result = validateAzureStagingInputs({
+    ...validEnvironment,
+    AZURE_STAGING_RESOURCE_GROUP: "LogiCount-RG",
+  });
+
+  assert.equal(result.ok, false);
+  assert.match(result.violations.join("\n"), /atoms-staging-rg/u);
+});
+
+test("rejects malformed OIDC identity identifiers", () => {
+  const result = validateAzureStagingInputs({
+    ...validEnvironment,
+    AZURE_CLIENT_ID: "not-a-client-id",
+    AZURE_TENANT_ID: "",
+  });
+
+  assert.equal(result.ok, false);
+  assert.match(result.violations.join("\n"), /AZURE_CLIENT_ID must be a UUID/u);
+  assert.match(result.violations.join("\n"), /AZURE_TENANT_ID must be a UUID/u);
 });
 
 test("rejects Internet-wide and overly broad SSH sources", () => {

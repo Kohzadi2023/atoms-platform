@@ -227,9 +227,10 @@ pnpm staging:deploy:compose:validate -- \
 The dedicated Azure host definition is in `infra/azure/staging`. It creates an
 isolated `Standard_B2s_v2` VM and protected data disk in `atoms-staging-rg`,
 adds a CAD 80 monthly budget alert, and never references the existing
-LogiCount resources. See `docs/azure-staging-host.md` for the OIDC bootstrap,
-read-only what-if dispatch, independent billable confirmation, and domain
-boundary.
+LogiCount resources. Its OIDC identity is limited to that dedicated resource
+group and uses immutable GitHub owner/repository IDs. See
+`docs/azure-staging-host.md` for the terminal-based OIDC bootstrap, read-only
+what-if dispatch, independent billable confirmation, and domain boundary.
 
 After the Issue #22 live gates are recorded, bootstrap the external PostgreSQL,
 Redis, and MinIO volumes plus the migration state with an explicit change

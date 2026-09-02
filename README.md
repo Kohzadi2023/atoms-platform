@@ -224,6 +224,13 @@ pnpm staging:deploy:compose:validate -- \
   --secrets-dir /etc/atoms/staging/secrets
 ```
 
+The dedicated Azure host definition is in `infra/azure/staging`. It creates an
+isolated `Standard_B2s_v2` VM and protected data disk in `atoms-staging-rg`,
+adds a CAD 80 monthly budget alert, and never references the existing
+LogiCount resources. See `docs/azure-staging-host.md` for the OIDC bootstrap,
+read-only what-if dispatch, independent billable confirmation, and domain
+boundary.
+
 After the Issue #22 live gates are recorded, bootstrap the external PostgreSQL,
 Redis, and MinIO volumes plus the migration state with an explicit change
 ticket and confirmation. The command refuses a dirty or revision-mismatched

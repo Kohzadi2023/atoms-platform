@@ -22,6 +22,10 @@ jobs:
           node-version: 24
           cache: pnpm
       - run: pnpm install --frozen-lockfile
+      - name: Compile the dedicated Azure staging infrastructure
+        run: |
+          az bicep install --version v0.46.1
+          az bicep build --file infra/azure/staging/main.bicep --stdout > /dev/null
       - name: Validate the staging manifest, TLS ingress, and persistence contract
         run: pnpm staging:deploy:compose:validate
       - run: pnpm run ci:verify

@@ -1,0 +1,149 @@
+name: Azure staging host
+
+run-name: Azure staging host / ${{ inputs.mode }} / ${{ inputs.change_ticket }}
+
+on:
+  workflow_dispatch:
+    inputs:
+      mode:
+        description: Read-only plan or billable deployment
+        required: true
+        type: choice
+        default: what-if
+        options:
+          - what-if
+          - deploy
+      change_ticket:
+        description: Approved GitHub issue reference (for example GH-22)
+        required: true
+        type: string
+      confirmation:
+        description: Exact acknowledgement documented in docs/azure-staging-host.md
+        required: true
+        type: string
+      max_monthly_cost_cad:
+        description: Approved monthly Azure staging budget in CAD
+        required: true
+        type: string
+        default: "80"
+
+permissions:
+  contents: read
+  id-token: write
+
+concurrency:
+  group: azure-staging-host
+  cancel-in-progress: false
+
+env:
+  AZURE_STAGING_LOCATION: canadacentral
+  AZURE_STAGING_VM_SIZE: Standard_B2s_v2
+  BICEP_VERSION: v0.46.1
+
+jobs:
+  validate:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    environment: phase3-staging
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+      - name: Validate the independent cost and provisioning acknowledgements
+        env:
+          AZURE_STAGING_MODE: ${{ inputs.mode }}
+          AZURE_STAGING_CONFIRMATION: ${{ inputs.confirmation }}
+          AZURE_STAGING_CHANGE_TICKET: ${{ inputs.change_ticket }}
+          AZURE_STAGING_MAX_MONTHLY_COST_CAD: ${{ inputs.max_monthly_cost_cad }}
+          AZURE_STAGING_SSH_SOURCE_CIDR: ${{ secrets.AZURE_STAGING_SSH_SOURCE_CIDR }}
+          AZURE_STAGING_SSH_PUBLIC_KEY: ${{ secrets.AZURE_STAGING_SSH_PUBLIC_KEY }}
+          AZURE_BUDGET_CONTACT_EMAIL: ${{ secrets.AZURE_BUDGET_CONTACT_EMAIL }}
+        run: node scripts/validate-azure-staging-inputs.mjs
+      - name: Compile the Azure infrastructure without contacting the subscription
+        run: |
+          az bicep install --version "$BICEP_VERSION"
+          az bicep build --file infra/azure/staging/main.bicep --stdout > /dev/null
+
+  azure:
+    needs: validate
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    environment: phase3-staging
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      - name: Authenticate to Azure with a short-lived GitHub OIDC token
+        uses: azure/login@8216e11d8cd9b42fe925c852af8e76311ff067ac # v2
+        with:
+          client-id: ${{ secrets.AZURE_CLIENT_ID }}
+          tenant-id: ${{ secrets.AZURE_TENANT_ID }}
+          subscription-id: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
+      - name: Install the pinned Bicep compiler
+        run: az bicep install --version "$BICEP_VERSION"
+      - name: Preview dedicated Atoms resources without mutation
+        if: inputs.mode == 'what-if'
+        env:
+          AZURE_STAGING_SSH_SOURCE_CIDR: ${{ secrets.AZURE_STAGING_SSH_SOURCE_CIDR }}
+          AZURE_STAGING_SSH_PUBLIC_KEY: ${{ secrets.AZURE_STAGING_SSH_PUBLIC_KEY }}
+          AZURE_BUDGET_CONTACT_EMAIL: ${{ secrets.AZURE_BUDGET_CONTACT_EMAIL }}
+        run: |
+          az deployment sub what-if \
+            --name "atoms-staging-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}" \
+            --location "$AZURE_STAGING_LOCATION" \
+            --template-file infra/azure/staging/main.bicep \
+            --result-format ResourceIdOnly \
+            --parameters \
+              location="$AZURE_STAGING_LOCATION" \
+              vmSize="$AZURE_STAGING_VM_SIZE" \
+              monthlyBudgetCad=80 \
+              adminSshPublicKey="$AZURE_STAGING_SSH_PUBLIC_KEY" \
+              sshSourceCidr="$AZURE_STAGING_SSH_SOURCE_CIDR" \
+              budgetContactEmail="$AZURE_BUDGET_CONTACT_EMAIL"
+      - name: Recheck the billable deployment plan
+        if: inputs.mode == 'deploy'
+        env:
+          AZURE_STAGING_SSH_SOURCE_CIDR: ${{ secrets.AZURE_STAGING_SSH_SOURCE_CIDR }}
+          AZURE_STAGING_SSH_PUBLIC_KEY: ${{ secrets.AZURE_STAGING_SSH_PUBLIC_KEY }}
+          AZURE_BUDGET_CONTACT_EMAIL: ${{ secrets.AZURE_BUDGET_CONTACT_EMAIL }}
+        run: |
+          az deployment sub what-if \
+            --name "atoms-staging-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}" \
+            --location "$AZURE_STAGING_LOCATION" \
+            --template-file infra/azure/staging/main.bicep \
+            --result-format ResourceIdOnly \
+            --parameters \
+              location="$AZURE_STAGING_LOCATION" \
+              vmSize="$AZURE_STAGING_VM_SIZE" \
+              monthlyBudgetCad=80 \
+              adminSshPublicKey="$AZURE_STAGING_SSH_PUBLIC_KEY" \
+              sshSourceCidr="$AZURE_STAGING_SSH_SOURCE_CIDR" \
+              budgetContactEmail="$AZURE_BUDGET_CONTACT_EMAIL"
+      - name: Provision the dedicated Atoms staging host
+        if: inputs.mode == 'deploy'
+        env:
+          AZURE_STAGING_SSH_SOURCE_CIDR: ${{ secrets.AZURE_STAGING_SSH_SOURCE_CIDR }}
+          AZURE_STAGING_SSH_PUBLIC_KEY: ${{ secrets.AZURE_STAGING_SSH_PUBLIC_KEY }}
+          AZURE_BUDGET_CONTACT_EMAIL: ${{ secrets.AZURE_BUDGET_CONTACT_EMAIL }}
+        run: |
+          az deployment sub create \
+            --name "atoms-staging-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}" \
+            --location "$AZURE_STAGING_LOCATION" \
+            --template-file infra/azure/staging/main.bicep \
+            --only-show-errors \
+            --output none \
+            --parameters \
+              location="$AZURE_STAGING_LOCATION" \
+              vmSize="$AZURE_STAGING_VM_SIZE" \
+              monthlyBudgetCad=80 \
+              adminSshPublicKey="$AZURE_STAGING_SSH_PUBLIC_KEY" \
+              sshSourceCidr="$AZURE_STAGING_SSH_SOURCE_CIDR" \
+              budgetContactEmail="$AZURE_BUDGET_CONTACT_EMAIL"
+      - name: Report non-sensitive host state
+        if: inputs.mode == 'deploy'
+        run: |
+          az vm show \
+            --resource-group atoms-staging-rg \
+            --name atoms-staging-vm \
+            --show-details \
+            --query '{powerState:powerState,provisioningState:provisioningState}' \
+            --output json

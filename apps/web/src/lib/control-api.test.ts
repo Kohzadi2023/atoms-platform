@@ -59,6 +59,39 @@ test("requests send the access token supplied by the provider", async (context) 
   assert.equal(authorization, "Bearer access-token");
 });
 
+test("getMe resolves the typed current Entra identity through the authenticated client", async (context) => {
+  let requestUrl = "";
+  let authorization: string | null = null;
+  const originalFetch = globalThis.fetch;
+  context.after(() => {
+    globalThis.fetch = originalFetch;
+  });
+  globalThis.fetch = async (input, init = {}) => {
+    requestUrl = String(input);
+    authorization = new Headers(init.headers).get("authorization");
+    return jsonResponse({
+      userId: "entra-user-1",
+      subject: "entra-subject-1",
+      memberships: [],
+    });
+  };
+
+  const client = new ControlApiClient({
+    baseUrl: "https://control.test/",
+    accessTokenProvider: async () => "entra-access-token",
+  });
+
+  const identity = await client.getMe();
+
+  assert.equal(requestUrl, "https://control.test/v1/me");
+  assert.equal(authorization, "Bearer entra-access-token");
+  assert.deepEqual(identity, {
+    userId: "entra-user-1",
+    subject: "entra-subject-1",
+    memberships: [],
+  });
+});
+
 test("approve action sends its scope and concurrency preconditions", async (context) => {
   let body: unknown;
   const originalFetch = globalThis.fetch;

@@ -17,6 +17,7 @@ import { useEffect, useMemo, useState, type ReactNode } from "react";
 
 import {
   createEntraAccessTokenProvider,
+  createEntraRedirectUri,
   resolveBrowserAuthenticationMode,
   type EntraBrowserConfiguration,
 } from "../lib/entra-auth";
@@ -71,12 +72,13 @@ function EntraSessionBoundary({
 
   useEffect(() => {
     let active = true;
+    const redirectUri = createEntraRedirectUri(globalThis.location.origin);
     const instance = new PublicClientApplication({
       auth: {
         clientId: configuration.clientId,
         authority: configuration.authority,
         knownAuthorities: [configuration.knownAuthority],
-        redirectUri: globalThis.location.origin,
+        redirectUri,
         postLogoutRedirectUri: globalThis.location.origin,
       },
       cache: {
@@ -86,9 +88,7 @@ function EntraSessionBoundary({
 
     void (async () => {
       await instance.initialize();
-      const redirectResult = await instance.handleRedirectPromise({
-        navigateToLoginRequestUrl: false,
-      });
+      const redirectResult = await instance.handleRedirectPromise();
       const nextAccount =
         redirectResult?.account ??
         instance.getActiveAccount() ??
@@ -100,7 +100,8 @@ function EntraSessionBoundary({
       setClient(instance);
       setAccount(nextAccount);
       setAuthError(undefined);
-    })().catch(() => {
+    })().catch((error: unknown) => {
+      console.error("Failed to initialize Microsoft Entra authentication", error);
       if (!active) return;
       setAuthError("Microsoft Entra External ID is temporarily unavailable.");
       setAccount(null);
@@ -158,7 +159,8 @@ function EntraSessionBoundary({
           configuration.apiScope,
         ],
       });
-    } catch {
+    } catch (error: unknown) {
+      console.error("Failed to start Microsoft Entra sign-in", error);
       setAuthError("Sign-in could not be started. Please try again.");
     }
   }
@@ -173,7 +175,8 @@ function EntraSessionBoundary({
         account,
         postLogoutRedirectUri: globalThis.location.origin,
       });
-    } catch {
+    } catch (error: unknown) {
+      console.error("Failed to sign out from Microsoft Entra", error);
       setAuthError("Sign-out failed. Please try again.");
       setSigningOut(false);
     }

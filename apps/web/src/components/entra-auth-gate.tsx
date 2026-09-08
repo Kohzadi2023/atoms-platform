@@ -27,6 +27,7 @@ const authenticationMode = resolveBrowserAuthenticationMode({
   nodeEnv: process.env.NODE_ENV,
   clientId: process.env.NEXT_PUBLIC_ENTRA_CLIENT_ID,
   authority: process.env.NEXT_PUBLIC_ENTRA_AUTHORITY,
+  tenantId: process.env.NEXT_PUBLIC_ENTRA_TENANT_ID,
   apiScope: process.env.NEXT_PUBLIC_ENTRA_API_SCOPE,
 });
 const ACTIVE_RUN_STORAGE_KEY = "atoms.active-run.v1";
@@ -77,7 +78,7 @@ function EntraSessionBoundary({
       auth: {
         clientId: configuration.clientId,
         authority: configuration.authority,
-        knownAuthorities: [configuration.knownAuthority],
+        knownAuthorities: [...configuration.knownAuthorities],
         redirectUri,
         postLogoutRedirectUri: globalThis.location.origin,
       },

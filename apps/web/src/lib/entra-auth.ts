@@ -1,5 +1,7 @@
 import type { ControlApiAccessTokenProvider } from "./control-api.js";
 
+export const ENTRA_REDIRECT_PATH = "/redirect";
+
 export interface EntraBrowserConfiguration {
   readonly clientId: string;
   readonly authority: string;
@@ -87,6 +89,14 @@ export function resolveBrowserAuthenticationMode(input: {
     message:
       "Microsoft Entra External ID is required outside development. Configure the public Entra client ID, authority, and Control API delegated scope.",
   };
+}
+
+export function createEntraRedirectUri(origin: string): string {
+  const url = new URL(origin);
+  url.pathname = ENTRA_REDIRECT_PATH;
+  url.search = "";
+  url.hash = "";
+  return url.href;
 }
 
 export function createEntraAccessTokenProvider(

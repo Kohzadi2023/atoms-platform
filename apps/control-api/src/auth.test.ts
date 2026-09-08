@@ -111,9 +111,37 @@ test("OIDC authenticator verifies signature and claims", async () => {
   }
 });
 
-test("OIDC authenticator accepts a Supabase-shaped ES256 access token", async () => {
-  const issuer = "https://project-ref.supabase.co/auth/v1";
-  const signingKeys = await generateSigningKeys("kid-supabase", "ES256");
+test("OIDC authenticator prefers Entra oid as the stable user ID", async () => {
+  const issuer = "https://atoms.ciamlogin.com/tenant-id/v2.0";
+  const signingKeys = await generateSigningKeys("kid-entra");
+  const jwksServer = await startJwksServer(signingKeys.publicJwk);
+
+  try {
+    const authenticator = new OidcJwtAuthenticator({
+      issuer,
+      audience: "api-client-id",
+      jwksUrl: jwksServer.url,
+      allowedAlgorithms: ["RS256"],
+    });
+    const accessToken = await createToken(signingKeys.privateKey, {
+      sub: "pairwise-subject",
+      oid: "11111111-2222-4333-8444-555555555555",
+      iss: issuer,
+      aud: "api-client-id",
+    });
+
+    const principal = await authenticator.authenticate(accessToken);
+    assert.equal(principal.userId, "11111111-2222-4333-8444-555555555555");
+    assert.equal(principal.subject, "pairwise-subject");
+    assert.deepEqual(principal.audience, ["api-client-id"]);
+  } finally {
+    await jwksServer.close();
+  }
+});
+
+test("OIDC authenticator retains sub fallback for providers without oid", async () => {
+  const issuer = "https://provider.example.test/";
+  const signingKeys = await generateSigningKeys("kid-generic", "ES256");
   const jwksServer = await startJwksServer(signingKeys.publicJwk);
 
   try {
@@ -192,6 +220,7 @@ async function createToken(
   privateKey: KeyObject | webcrypto.CryptoKey,
   claims: {
     readonly sub: string;
+    readonly oid?: string;
     readonly iss?: string;
     readonly aud?: string;
     readonly exp?: number;
@@ -200,7 +229,9 @@ async function createToken(
   algorithm: TestSigningAlgorithm = "RS256",
 ): Promise<string> {
   const issuedAt = Math.floor(Date.now() / 1_000);
-  let payload = new SignJWT({})
+  let payload = new SignJWT(
+    claims.oid === undefined ? {} : { oid: claims.oid },
+  )
     .setProtectedHeader({ alg: algorithm, typ: "JWT" })
     .setSubject(claims.sub)
     .setIssuer(claims.iss ?? ISSUER)

@@ -40,15 +40,16 @@ export async function createStagingDeploymentFixture(options = {}) {
       ATOMS_CONTROL_API_ORIGIN: "https://api.staging.atoms.dev",
       ATOMS_STORAGE_ORIGIN: "https://storage.staging.atoms.dev",
       ATOMS_PREVIEW_BASE_DOMAIN: "preview.staging.atoms.dev",
-      ATOMS_SUPABASE_URL: "https://fixture-project.supabase.co",
-      ATOMS_SUPABASE_PUBLISHABLE_KEY:
-        "sb_publishable_fixture_0123456789abcdef",
+      ATOMS_ENTRA_WEB_CLIENT_ID: "11111111-2222-4333-8444-555555555555",
+      ATOMS_ENTRA_AUTHORITY: "https://fixture-tenant.ciamlogin.com/",
+      ATOMS_ENTRA_API_SCOPE:
+        "api://66666666-7777-4888-8999-aaaaaaaaaaaa/access_as_user",
       ATOMS_AUTH_ISSUER_URL:
-        "https://fixture-project.supabase.co/auth/v1",
-      ATOMS_AUTH_AUDIENCE: "authenticated",
+        "https://fixture-tenant.ciamlogin.com/aaaaaaaa-bbbb-4ccc-8ddd-eeeeeeeeeeee/v2.0",
+      ATOMS_AUTH_AUDIENCE: "66666666-7777-4888-8999-aaaaaaaaaaaa",
       ATOMS_AUTH_JWKS_URL:
-        "https://fixture-project.supabase.co/auth/v1/.well-known/jwks.json",
-      ATOMS_AUTH_ALLOWED_ALGORITHMS: "ES256",
+        "https://fixture-tenant.ciamlogin.com/aaaaaaaa-bbbb-4ccc-8ddd-eeeeeeeeeeee/discovery/v2.0/keys",
+      ATOMS_AUTH_ALLOWED_ALGORITHMS: "RS256",
       ATOMS_POSTGRES_DB: "atoms",
       ATOMS_POSTGRES_USER: "atoms",
       ATOMS_S3_BUCKET: "atoms-attachments",

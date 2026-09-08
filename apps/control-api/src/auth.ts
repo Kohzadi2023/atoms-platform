@@ -57,16 +57,21 @@ export class OidcJwtAuthenticator implements Authenticator {
         ? payload.aud
         : payload.aud === undefined
           ? []
-         : [payload.aud];
+          : [payload.aud];
+      const oid = payload["oid"];
+      const userId =
+        typeof oid === "string" && oid.trim().length > 0 ? oid : payload.sub;
 
       return {
-        userId: payload.sub,
+        // Entra External ID emits `oid` as the stable directory object identifier.
+        // Other OIDC providers may not, so retain `sub` as a safe fallback.
+        userId,
         subject: payload.sub,
         issuer: payload.iss ?? this.#issuer,
         audience,
         issuedAt: typeof payload.iat === "number" ? payload.iat : null,
-        // `jwtVerify` enforces nbf when it is present. Supabase access tokens
-        // intentionally allow this claim to be absent.
+        // `jwtVerify` enforces nbf when it is present. OIDC providers may
+        // intentionally omit this claim.
         notBefore: typeof payload.nbf === "number" ? payload.nbf : null,
         expiresAt: payload.exp,
       };

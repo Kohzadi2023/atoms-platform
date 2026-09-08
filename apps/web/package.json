@@ -12,9 +12,8 @@
   },
   "dependencies": {
     "@atoms/contracts": "workspace:*",
+    "@azure/msal-browser": "catalog:",
     "@monaco-editor/react": "catalog:",
-    "@supabase/ssr": "catalog:",
-    "@supabase/supabase-js": "catalog:",
     "lucide-react": "catalog:",
     "monaco-editor": "catalog:",
     "next": "catalog:",

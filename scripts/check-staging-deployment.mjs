@@ -17,8 +17,9 @@ const PUBLIC_VARIABLES = [
   "ATOMS_CONTROL_API_ORIGIN",
   "ATOMS_STORAGE_ORIGIN",
   "ATOMS_PREVIEW_BASE_DOMAIN",
-  "ATOMS_SUPABASE_URL",
-  "ATOMS_SUPABASE_PUBLISHABLE_KEY",
+  "ATOMS_ENTRA_WEB_CLIENT_ID",
+  "ATOMS_ENTRA_AUTHORITY",
+  "ATOMS_ENTRA_API_SCOPE",
   "ATOMS_AUTH_ISSUER_URL",
   "ATOMS_AUTH_AUDIENCE",
   "ATOMS_AUTH_JWKS_URL",
@@ -369,11 +370,29 @@ function validatePublicEnvironment(environment, violations) {
   if (storageOrigin?.port !== "") {
     violations.push("ATOMS_STORAGE_ORIGIN must use the default HTTPS port");
   }
-  const supabaseOrigin = validateHttpsOrigin(
-    environment.ATOMS_SUPABASE_URL,
-    "ATOMS_SUPABASE_URL",
+  const entraAuthority = validateHttpsOrigin(
+    environment.ATOMS_ENTRA_AUTHORITY,
+    "ATOMS_ENTRA_AUTHORITY",
     violations,
   );
+  if (
+    entraAuthority !== undefined &&
+    !entraAuthority.hostname.toLowerCase().endsWith(".ciamlogin.com")
+  ) {
+    violations.push(
+      "ATOMS_ENTRA_AUTHORITY must use the external-tenant ciamlogin.com authority",
+    );
+  }
+  if (
+    environment.ATOMS_ENTRA_WEB_CLIENT_ID !== undefined &&
+    !/^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/iu.test(
+      environment.ATOMS_ENTRA_WEB_CLIENT_ID,
+    )
+  ) {
+    violations.push(
+      "ATOMS_ENTRA_WEB_CLIENT_ID must be a Microsoft Entra application client ID",
+    );
+  }
   const managementOrigin = validateHttpsOrigin(
     environment.ATOMS_SUPABASE_MANAGEMENT_API_URL,
     "ATOMS_SUPABASE_MANAGEMENT_API_URL",
@@ -422,43 +441,63 @@ function validatePublicEnvironment(environment, violations) {
     "ATOMS_AUTH_JWKS_URL",
     violations,
   );
-  if (issuer !== undefined && issuer.pathname.replace(/\/$/u, "") !== "/auth/v1") {
-    violations.push("ATOMS_AUTH_ISSUER_URL must end with /auth/v1");
+  const audience = environment.ATOMS_AUTH_AUDIENCE;
+  const tenantMatch =
+    issuer === undefined
+      ? undefined
+      : /^\/([0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12})\/v2\.0\/?$/iu.exec(
+          issuer.pathname,
+        );
+
+  if (issuer !== undefined && tenantMatch === null) {
+    violations.push("ATOMS_AUTH_ISSUER_URL must be an Entra External ID v2 issuer");
   }
   if (
     issuer !== undefined &&
-    supabaseOrigin !== undefined &&
-    issuer.origin !== supabaseOrigin.origin
+    entraAuthority !== undefined &&
+    issuer.origin !== entraAuthority.origin
   ) {
-    violations.push("Supabase browser and auth issuer origins must match");
+    violations.push("Entra browser authority and API issuer origins must match");
   }
   if (
     issuer !== undefined &&
     jwks !== undefined &&
+    tenantMatch !== null &&
+    tenantMatch !== undefined &&
     (jwks.origin !== issuer.origin ||
-      jwks.pathname !==
-        `${issuer.pathname.replace(/\/$/u, "")}/.well-known/jwks.json`)
+      jwks.pathname !== `/${tenantMatch[1]}/discovery/v2.0/keys`)
   ) {
-    violations.push("ATOMS_AUTH_JWKS_URL must be the issuer JWKS endpoint");
+    violations.push(
+      "ATOMS_AUTH_JWKS_URL must be the Entra External ID tenant JWKS endpoint",
+    );
   }
   if (
-    isPlaceholder(environment.ATOMS_SUPABASE_PUBLISHABLE_KEY) ||
-    (environment.ATOMS_SUPABASE_PUBLISHABLE_KEY?.length ?? 0) < 20
+    audience === undefined ||
+    !/^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/iu.test(
+      audience,
+    )
   ) {
-    violations.push("ATOMS_SUPABASE_PUBLISHABLE_KEY must be configured");
+    violations.push(
+      "ATOMS_AUTH_AUDIENCE must be the Control API application client ID",
+    );
   }
-  if (!/^[A-Za-z0-9._:/-]{1,191}$/u.test(environment.ATOMS_AUTH_AUDIENCE ?? "")) {
-    violations.push("ATOMS_AUTH_AUDIENCE must be normalized");
+  if (
+    audience !== undefined &&
+    environment.ATOMS_ENTRA_API_SCOPE !== `api://${audience}/access_as_user`
+  ) {
+    violations.push(
+      "ATOMS_ENTRA_API_SCOPE must be the Control API access_as_user delegated scope",
+    );
   }
+
   const algorithms = (environment.ATOMS_AUTH_ALLOWED_ALGORITHMS ?? "")
     .split(",")
     .map((value) => value.trim())
     .filter(Boolean);
-  if (
-    algorithms.length === 0 ||
-    algorithms.some((algorithm) => !ASYMMETRIC_JWT_ALGORITHMS.has(algorithm))
-  ) {
-    violations.push("ATOMS_AUTH_ALLOWED_ALGORITHMS must contain only asymmetric JWT algorithms");
+  if (algorithms.length !== 1 || algorithms[0] !== "RS256") {
+    violations.push(
+      "ATOMS_AUTH_ALLOWED_ALGORITHMS must equal RS256 for Entra External ID",
+    );
   }
 
   validateIdentifier(

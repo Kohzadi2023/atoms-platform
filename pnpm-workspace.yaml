@@ -23,6 +23,7 @@ overrides:
   "undici@>=8.0.0 <8.9.0": 8.9.0
 
 catalog:
+  "@azure/msal-browser": 5.21.0
   "@monaco-editor/react": 4.7.0
   "@supabase/ssr": 0.12.5
   "@supabase/supabase-js": 2.112.4
@@ -64,6 +65,7 @@ catalog:
   zod: 4.4.3
 
 minimumReleaseAgeExclude:
+  - '@azure/msal-browser@5.21.0'
   - '@langchain/core@1.2.4'
   - '@turbo/darwin-64@2.10.8'
   - '@turbo/darwin-arm64@2.10.8'

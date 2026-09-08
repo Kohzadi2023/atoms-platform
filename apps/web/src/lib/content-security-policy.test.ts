@@ -3,21 +3,21 @@ import test from "node:test";
 
 import { buildContentSecurityPolicy } from "./content-security-policy.js";
 
-test("CSP allows only the exact API, Supabase, and storage origins", () => {
+test("CSP allows only the exact API, Entra, and storage origins", () => {
   const policy = buildContentSecurityPolicy({
     controlApiUrl: "https://api.staging.atoms.dev/v1",
-    supabaseUrl: "https://fixture-project.supabase.co/path",
+    identityAuthorityUrl: "https://atoms.ciamlogin.com/",
     storageUrl: "https://storage.staging.atoms.dev/atoms-attachments",
     previewBaseDomain: "preview.staging.atoms.dev",
   });
 
   assert.match(
     policy,
-    /connect-src 'self' https:\/\/api\.staging\.atoms\.dev https:\/\/fixture-project\.supabase\.co https:\/\/storage\.staging\.atoms\.dev/u,
+    /connect-src 'self' https:\/\/api\.staging\.atoms\.dev https:\/\/atoms\.ciamlogin\.com https:\/\/storage\.staging\.atoms\.dev/u,
   );
   assert.match(
     policy,
-    /frame-src https:\/\/preview\.staging\.atoms\.dev https:\/\/\*\.preview\.staging\.atoms\.dev/u,
+    /frame-src https:\/\/preview\.staging\.atoms\.dev https:\/\/\*\.preview\.staging\.atoms\.dev https:\/\/atoms\.ciamlogin\.com/u,
   );
   assert.doesNotMatch(policy, /connect-src[^;]*\*/u);
 });

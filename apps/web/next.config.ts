@@ -5,9 +5,9 @@ import { buildContentSecurityPolicy } from "./src/lib/content-security-policy";
 const contentSecurityPolicy = buildContentSecurityPolicy({
   controlApiUrl:
     process.env.NEXT_PUBLIC_CONTROL_API_URL ?? "http://localhost:3001",
-  ...(process.env.NEXT_PUBLIC_SUPABASE_URL === undefined
+  ...(process.env.NEXT_PUBLIC_ENTRA_AUTHORITY === undefined
     ? {}
-    : { supabaseUrl: process.env.NEXT_PUBLIC_SUPABASE_URL }),
+    : { identityAuthorityUrl: process.env.NEXT_PUBLIC_ENTRA_AUTHORITY }),
   ...(process.env.NEXT_PUBLIC_STORAGE_ORIGIN === undefined
     ? {}
     : { storageUrl: process.env.NEXT_PUBLIC_STORAGE_ORIGIN }),

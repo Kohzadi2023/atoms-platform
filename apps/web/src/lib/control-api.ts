@@ -1,6 +1,7 @@
 import {
   AttachmentListResponseSchema,
   AttachmentUploadIntentResponseSchema,
+  GetMeResponseSchema,
   ListWorkspacesResponseSchema,
   FileContentResponseSchema,
   IdempotencyKeySchema,
@@ -16,6 +17,7 @@ import {
   type AttachmentUploadIntentResponse,
   type CreateAttachmentUploadIntentInput,
   type FileContentResponse,
+  type GetMeResponse,
   type ProjectFileListResponse,
   type ProjectResponse,
   type ProjectAttachment,
@@ -58,6 +60,10 @@ export class ControlApiClient {
   constructor(options: ControlApiClientOptions) {
     this.#baseUrl = options.baseUrl.replace(/\/+$/u, "");
     this.#accessTokenProvider = options.accessTokenProvider ?? (() => undefined);
+  }
+
+  getMe(): Promise<GetMeResponse> {
+    return this.#request("/v1/me", GetMeResponseSchema);
   }
 
   listWorkspaces(): Promise<ListWorkspacesResponse> {

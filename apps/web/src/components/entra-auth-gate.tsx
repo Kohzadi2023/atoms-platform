@@ -78,7 +78,6 @@ function EntraSessionBoundary({
         knownAuthorities: [configuration.knownAuthority],
         redirectUri: globalThis.location.origin,
         postLogoutRedirectUri: globalThis.location.origin,
-        navigateToLoginRequestUrl: false,
       },
       cache: {
         cacheLocation: "sessionStorage",
@@ -87,7 +86,9 @@ function EntraSessionBoundary({
 
     void (async () => {
       await instance.initialize();
-      const redirectResult = await instance.handleRedirectPromise();
+      const redirectResult = await instance.handleRedirectPromise({
+        navigateToLoginRequestUrl: false,
+      });
       const nextAccount =
         redirectResult?.account ??
         instance.getActiveAccount() ??

@@ -38,6 +38,7 @@
     "staging:deploy:persistence:bootstrap": "node scripts/bootstrap-staging-persistence.mjs",
     "staging:deploy:recovery:rehearse": "node scripts/rehearse-staging-recovery.mjs",
     "staging:smoke:authenticated": "node scripts/smoke-staging-authenticated.mjs",
+    "staging:smoke:entra-auth": "node scripts/smoke-staging-entra-auth.mjs",
     "staging:azure:oidc:bootstrap": "node scripts/bootstrap-azure-staging-oidc.mjs",
     "staging:azure:inputs:validate": "node scripts/validate-azure-staging-inputs.mjs",
     "db:generate": "pnpm prisma generate",
@@ -49,7 +50,7 @@
     "test:local-development": "node --test scripts/check-local-development.test.mjs",
     "test:phase3-environment-protection": "node --test scripts/validate-phase3-staging-inputs.test.mjs scripts/verify-phase3-environment-protection.test.mjs",
     "test:azure-staging": "node --test scripts/bootstrap-azure-staging-oidc.test.mjs scripts/validate-azure-staging-inputs.test.mjs",
-    "test:staging-deployment": "node --test scripts/check-staging-deployment.test.mjs scripts/bootstrap-staging-persistence.test.mjs scripts/smoke-staging-authenticated.test.mjs scripts/rehearse-staging-recovery.test.mjs"
+    "test:staging-deployment": "node --test scripts/check-staging-deployment.test.mjs scripts/bootstrap-staging-persistence.test.mjs scripts/smoke-staging-authenticated.test.mjs scripts/smoke-staging-entra-auth.test.mjs scripts/rehearse-staging-recovery.test.mjs"
   },
   "devDependencies": {
     "@types/node": "catalog:",

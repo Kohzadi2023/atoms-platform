@@ -25,17 +25,29 @@ export type AgentManifestMap = {
 const sharedRules = [
   "Return exactly one JSON object and no Markdown fences.",
   "Do not invent credentials, provider state, test results, or completed deployments.",
-  "Stay inside Next.js, React, TypeScript, Tailwind, Prisma, and PostgreSQL.",
+  "Stay inside Next.js, React, TypeScript, Tailwind, Prisma, and PostgreSQL when producing implementation artifacts.",
 ].join(" ");
 
 export const agentManifests: AgentManifestMap = {
+  Sophia: {
+    name: "Sophia",
+    version: "1.0.0",
+    objective:
+      "Produce evidence-aware market intelligence that can shape product planning, requirements, positioning, and growth strategy.",
+    instructions: `${sharedRules} Analyze the target market, ICP, competitors, TAM/SAM/SOM, pricing signals, positioning, risks, and unanswered research questions. Never fabricate a market size, competitor capability, customer count, price, or trend. Mark every material market claim as EVIDENCED, ASSUMPTION, or RESEARCH_REQUIRED. EVIDENCED claims must name a concrete source from the supplied context or reference attachments. If evidence is missing, return a research request instead of guessing.`,
+    schemaHint:
+      '{"summary":string,"marketDefinition":{"targetCustomer":string,"geography":string[],"segments":string[],"jobsToBeDone":string[]},"icp":{"primarySegment":string,"firmographics":string[],"painPoints":string[],"buyingTriggers":string[],"objections":string[]},"competitors":[{"name":string,"category":"DIRECT|ADJACENT|SUBSTITUTE","positioning":string,"strengths":string[],"weaknesses":string[],"evidenceStatus":"EVIDENCED|ASSUMPTION|RESEARCH_REQUIRED","source":string|null}],"marketSizing":{"tam":{"estimate":string|null,"basis":string,"evidenceStatus":"EVIDENCED|ASSUMPTION|RESEARCH_REQUIRED"},"sam":{"estimate":string|null,"basis":string,"evidenceStatus":"EVIDENCED|ASSUMPTION|RESEARCH_REQUIRED"},"som":{"estimate":string|null,"basis":string,"evidenceStatus":"EVIDENCED|ASSUMPTION|RESEARCH_REQUIRED"}},"pricing":{"observedBenchmarks":string[],"hypotheses":string[]},"positioning":{"category":string,"wedge":string,"differentiators":string[],"alternatives":string[]},"risks":[{"risk":string,"impact":"LOW|MEDIUM|HIGH","mitigation":string}],"claims":[{"claim":string,"evidenceStatus":"EVIDENCED|ASSUMPTION|RESEARCH_REQUIRED","source":string|null}],"researchRequests":[{"question":string,"priority":"LOW|MEDIUM|HIGH","reason":string}]}',
+    policy: "flagship",
+    maxOutputTokens: 12_000,
+    outputSchema: AgentOutputSchemas.Sophia,
+  },
   Mike: {
     name: "Mike",
     version: "1.0.0",
     objective: "Create an auditable dependency graph and identify approval points.",
-    instructions: `${sharedRules} Every task must have an owner, dependencies, acceptance criteria, and a retry budget of at most three attempts.`,
+    instructions: `${sharedRules} Every task must have an owner, dependencies, acceptance criteria, and a retry budget of at most three attempts. Use Sophia's evidence-aware market intelligence when it is available, but do not convert unsupported market assumptions into delivery facts.`,
     schemaHint:
-      '{"summary":string,"taskGraph":[{"key":kebab-case,"agent":"Mike|Emma|Bob|Alex|David|Sarah|Adrian","description":string,"dependsOn":string[],"acceptanceCriteria":string[],"maxAttempts":1|2|3}],"assumptions":string[],"requiresApproval":boolean}',
+      '{"summary":string,"taskGraph":[{"key":kebab-case,"agent":"Sophia|Mike|Emma|Bob|Alex|David|Sarah|Adrian","description":string,"dependsOn":string[],"acceptanceCriteria":string[],"maxAttempts":1|2|3}],"assumptions":string[],"requiresApproval":boolean}',
     policy: "balanced",
     maxOutputTokens: 4_000,
     outputSchema: AgentOutputSchemas.Mike,
@@ -44,7 +56,7 @@ export const agentManifests: AgentManifestMap = {
     name: "Emma",
     version: "1.0.0",
     objective: "Turn the request into bounded product requirements and acceptance criteria.",
-    instructions: `${sharedRules} Resolve the supported PoC scope, make assumptions explicit, and use sequential story IDs such as US-001.`,
+    instructions: `${sharedRules} Resolve the supported PoC scope, make assumptions explicit, and use sequential story IDs such as US-001. Use Sophia's market/ICP findings to sharpen users, pains, scope, and value only where the evidence status supports it.`,
     schemaHint:
       '{"productName":string,"problemStatement":string,"targetUsers":string[],"userStories":[{"id":"US-001","role":string,"goal":string,"benefit":string,"acceptanceCriteria":string[]}],"nonGoals":string[],"assumptions":string[]}',
     policy: "flagship",
@@ -102,7 +114,7 @@ export const agentManifests: AgentManifestMap = {
     version: "1.0.0",
     objective:
       "Produce audience-aligned growth copy variants with explicit evidence requirements.",
-    instructions: `${sharedRules} Keep copy aligned to approved audience and value proposition. Flag every factual claim that requires evidence instead of inventing proof.`,
+    instructions: `${sharedRules} Keep copy aligned to approved audience and value proposition. Use Sophia's market positioning and ICP when available. Flag every factual claim that requires evidence instead of inventing proof.`,
     schemaHint:
       '{"summary":string,"contentPackage":{"version":"v1","audience":string,"valuePropositions":string[],"ctaVariants":[{"id":string,"headline":string,"body":string,"ctaLabel":string}],"adVariants":[{"channel":"SEARCH|SOCIAL|DISPLAY|EMAIL","headline":string,"body":string,"ctaLabel":string|null}],"claimsRequiringEvidence":[{"claim":string,"evidenceStatus":"REQUIRED|PROVIDED","notes":string|null}]}}',
     policy: "balanced",

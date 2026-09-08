@@ -17,6 +17,146 @@ export type ActiveMvpAgentName = ActiveAgentName;
 
 const BoundedTextSchema = z.string().trim().min(1).max(20_000);
 const ShortTextSchema = z.string().trim().min(1).max(2_000);
+const EvidenceStatusSchema = z.enum([
+  "EVIDENCED",
+  "ASSUMPTION",
+  "RESEARCH_REQUIRED",
+]);
+
+export const SophiaOutputSchema = z
+  .object({
+    summary: BoundedTextSchema,
+    marketDefinition: z
+      .object({
+        targetCustomer: ShortTextSchema,
+        geography: z.array(ShortTextSchema).max(20),
+        segments: z.array(ShortTextSchema).min(1).max(30),
+        jobsToBeDone: z.array(ShortTextSchema).max(30),
+      })
+      .strict(),
+    icp: z
+      .object({
+        primarySegment: ShortTextSchema,
+        firmographics: z.array(ShortTextSchema).max(30),
+        painPoints: z.array(ShortTextSchema).max(30),
+        buyingTriggers: z.array(ShortTextSchema).max(30),
+        objections: z.array(ShortTextSchema).max(30),
+      })
+      .strict(),
+    competitors: z
+      .array(
+        z
+          .object({
+            name: z.string().trim().min(1).max(200),
+            category: z.enum(["DIRECT", "ADJACENT", "SUBSTITUTE"]),
+            positioning: ShortTextSchema,
+            strengths: z.array(ShortTextSchema).max(20),
+            weaknesses: z.array(ShortTextSchema).max(20),
+            evidenceStatus: EvidenceStatusSchema,
+            source: z.string().trim().min(1).max(2_000).nullable(),
+          })
+          .strict(),
+      )
+      .max(30),
+    marketSizing: z
+      .object({
+        tam: z
+          .object({
+            estimate: z.string().trim().min(1).max(500).nullable(),
+            basis: ShortTextSchema,
+            evidenceStatus: EvidenceStatusSchema,
+          })
+          .strict(),
+        sam: z
+          .object({
+            estimate: z.string().trim().min(1).max(500).nullable(),
+            basis: ShortTextSchema,
+            evidenceStatus: EvidenceStatusSchema,
+          })
+          .strict(),
+        som: z
+          .object({
+            estimate: z.string().trim().min(1).max(500).nullable(),
+            basis: ShortTextSchema,
+            evidenceStatus: EvidenceStatusSchema,
+          })
+          .strict(),
+      })
+      .strict(),
+    pricing: z
+      .object({
+        observedBenchmarks: z.array(ShortTextSchema).max(30),
+        hypotheses: z.array(ShortTextSchema).max(30),
+      })
+      .strict(),
+    positioning: z
+      .object({
+        category: ShortTextSchema,
+        wedge: ShortTextSchema,
+        differentiators: z.array(ShortTextSchema).max(30),
+        alternatives: z.array(ShortTextSchema).max(30),
+      })
+      .strict(),
+    risks: z
+      .array(
+        z
+          .object({
+            risk: ShortTextSchema,
+            impact: z.enum(["LOW", "MEDIUM", "HIGH"]),
+            mitigation: ShortTextSchema,
+          })
+          .strict(),
+      )
+      .max(40),
+    claims: z
+      .array(
+        z
+          .object({
+            claim: ShortTextSchema,
+            evidenceStatus: EvidenceStatusSchema,
+            source: z.string().trim().min(1).max(2_000).nullable(),
+          })
+          .strict(),
+      )
+      .max(100),
+    researchRequests: z
+      .array(
+        z
+          .object({
+            question: ShortTextSchema,
+            priority: z.enum(["LOW", "MEDIUM", "HIGH"]),
+            reason: ShortTextSchema,
+          })
+          .strict(),
+      )
+      .max(50),
+  })
+  .strict()
+  .superRefine((output, context) => {
+    output.claims.forEach((claim, index) => {
+      if (claim.evidenceStatus === "EVIDENCED" && claim.source === null) {
+        context.addIssue({
+          code: "custom",
+          path: ["claims", index, "source"],
+          message: "evidenced market claims must name a source",
+        });
+      }
+    });
+    output.competitors.forEach((competitor, index) => {
+      if (
+        competitor.evidenceStatus === "EVIDENCED" &&
+        competitor.source === null
+      ) {
+        context.addIssue({
+          code: "custom",
+          path: ["competitors", index, "source"],
+          message: "evidenced competitor findings must name a source",
+        });
+      }
+    });
+  });
+
+export type SophiaOutput = z.infer<typeof SophiaOutputSchema>;
 
 export const MikeOutputSchema = z
   .object({
@@ -273,6 +413,7 @@ export const AdrianOutputSchema = z
 export type AdrianOutput = z.infer<typeof AdrianOutputSchema>;
 
 export interface AgentOutputByName {
+  readonly Sophia: SophiaOutput;
   readonly Mike: MikeOutput;
   readonly Emma: EmmaOutput;
   readonly Bob: BobOutput;
@@ -283,6 +424,7 @@ export interface AgentOutputByName {
 }
 
 export const AgentOutputSchemas = {
+  Sophia: SophiaOutputSchema,
   Mike: MikeOutputSchema,
   Emma: EmmaOutputSchema,
   Bob: BobOutputSchema,
@@ -326,7 +468,7 @@ export interface AgentExecutionRequest<
   readonly prompt: string;
   readonly upstreamOutputs: AgentUpstreamOutputs;
   readonly currentFiles: readonly AgentProjectFile[];
-  /** Clean, immutable reference inputs. The orchestrator sends them only to Emma. */
+  /** Clean, immutable reference inputs. The orchestrator sends them to research/product agents. */
   readonly referenceAttachments?: readonly AgentReferenceAttachment[];
 }
 

@@ -116,7 +116,15 @@ function EntraSessionBoundary({
     }
 
     const silentProvider = createEntraAccessTokenProvider(
-      client,
+      {
+        acquireTokenSilent: async (request) => {
+          const result = await client.acquireTokenSilent({
+            account,
+            scopes: [...request.scopes],
+          });
+          return { accessToken: result.accessToken };
+        },
+      },
       account,
       configuration.apiScope,
     );

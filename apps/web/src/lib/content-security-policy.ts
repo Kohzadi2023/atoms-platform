@@ -1,6 +1,6 @@
 export interface ContentSecurityPolicyOptions {
   readonly controlApiUrl: string;
-  readonly supabaseUrl?: string;
+  readonly identityAuthorityUrl?: string;
   readonly storageUrl?: string;
   readonly previewBaseDomain?: string;
 }
@@ -12,9 +12,9 @@ export function buildContentSecurityPolicy(
     options.controlApiUrl,
     "NEXT_PUBLIC_CONTROL_API_URL",
   );
-  const supabaseOrigin = optionalHttpOrigin(
-    options.supabaseUrl,
-    "NEXT_PUBLIC_SUPABASE_URL",
+  const identityAuthorityOrigin = optionalHttpOrigin(
+    options.identityAuthorityUrl,
+    "NEXT_PUBLIC_ENTRA_AUTHORITY",
   );
   const storageOrigin = optionalHttpOrigin(
     options.storageUrl,
@@ -29,15 +29,17 @@ export function buildContentSecurityPolicy(
   const connectSources = [
     "'self'",
     controlApiOrigin,
-    supabaseOrigin,
+    identityAuthorityOrigin,
     storageOrigin,
   ].filter((value): value is string => value !== undefined);
+  const identityFrameSource =
+    identityAuthorityOrigin === undefined ? "" : ` ${identityAuthorityOrigin}`;
 
   return [
     "default-src 'self'",
     "base-uri 'none'",
     `connect-src ${connectSources.join(" ")}`,
-    `frame-src https://${previewBaseDomain} https://*.${previewBaseDomain}${localPreviewSources}`,
+    `frame-src https://${previewBaseDomain} https://*.${previewBaseDomain}${localPreviewSources}${identityFrameSource}`,
     "frame-ancestors 'self'",
     "form-action 'self'",
     "img-src 'self' data: blob:",

@@ -59,20 +59,24 @@ export interface BuildRunGraphOptions {
 }
 
 const taskDefinitions = {
-  Mike: { ordinal: 1, description: "Plan the run and dependency graph" },
-  Emma: { ordinal: 2, description: "Produce structured product requirements" },
-  Bob: { ordinal: 3, description: "Produce architecture and Prisma schema" },
-  Alex: { ordinal: 4, description: "Generate application files and commands" },
+  Sophia: {
+    ordinal: 1,
+    description: "Analyze market, ICP, competition, pricing, positioning, and evidence gaps",
+  },
+  Mike: { ordinal: 2, description: "Plan the run and dependency graph" },
+  Emma: { ordinal: 3, description: "Produce structured product requirements" },
+  Bob: { ordinal: 4, description: "Produce architecture and Prisma schema" },
+  Alex: { ordinal: 5, description: "Generate application files and commands" },
   David: {
-    ordinal: 5,
+    ordinal: 6,
     description: "Review schema and generate migrations, seed data, and data policies",
   },
   Sarah: {
-    ordinal: 6,
+    ordinal: 7,
     description: "Generate SEO artifacts and deterministic metadata findings",
   },
   Adrian: {
-    ordinal: 7,
+    ordinal: 8,
     description: "Generate growth copy variants and evidence requirements",
   },
 } as const;
@@ -131,7 +135,7 @@ export function buildRunGraph(options: BuildRunGraphOptions) {
             ? await options.repository.listProjectFiles(state.projectId)
             : [];
         const referenceAttachments =
-          agentName === "Emma"
+          agentName === "Sophia" || agentName === "Emma"
             ? await options.attachmentLoader?.load(state.runId)
             : undefined;
         const output = await options.agents.execute({
@@ -253,6 +257,7 @@ export function buildRunGraph(options: BuildRunGraphOptions) {
   };
 
   const builder = new StateGraph(RunState)
+    .addNode("sophia", runAgent("Sophia"))
     .addNode("mike", runAgent("Mike"))
     .addNode("emma", runAgent("Emma"))
     .addNode("bob", runAgent("Bob"))
@@ -262,7 +267,8 @@ export function buildRunGraph(options: BuildRunGraphOptions) {
     .addNode("sarah", runAgent("Sarah"))
     .addNode("adrian", runAgent("Adrian"))
     .addNode("content-approval", contentApprovalGate)
-    .addEdge(START, "mike")
+    .addEdge(START, "sophia")
+    .addEdge("sophia", "mike")
     .addEdge("mike", "emma")
     .addEdge("emma", "bob")
     .addEdge("bob", "approval")
@@ -341,6 +347,9 @@ function parseUpstreamOutputs(
   outputs: Readonly<Record<string, JsonValue>>,
 ): AgentUpstreamOutputs {
   return {
+    ...(outputs.Sophia === undefined
+      ? {}
+      : { Sophia: AgentOutputSchemas.Sophia.parse(outputs.Sophia) }),
     ...(outputs.Mike === undefined
       ? {}
       : { Mike: AgentOutputSchemas.Mike.parse(outputs.Mike) }),

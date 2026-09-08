@@ -12,6 +12,7 @@ import {
   AgentRuntimeError,
   AlexOutputSchema,
   ModelBackedAgentRuntime,
+  SophiaOutputSchema,
   agentManifests,
 } from "./index.js";
 
@@ -62,6 +63,7 @@ class FakeGateway implements ModelGateway {
 
 test("all active agent manifests are versioned and schema-bound", () => {
   assert.deepEqual(Object.keys(agentManifests), [
+    "Sophia",
     "Mike",
     "Emma",
     "Bob",
@@ -74,6 +76,62 @@ test("all active agent manifests are versioned and schema-bound", () => {
     assert.match(manifest.version, /^\d+\.\d+\.\d+$/);
     assert.ok(manifest.maxOutputTokens > 0);
   }
+});
+
+test("Sophia requires sources for claims marked as evidenced", () => {
+  const base = {
+    summary: "Evidence-aware market view.",
+    marketDefinition: {
+      targetCustomer: "Canadian accounting firms",
+      geography: ["Canada"],
+      segments: ["Small and midsize accounting firms"],
+      jobsToBeDone: ["Reduce manual financial document processing"],
+    },
+    icp: {
+      primarySegment: "Accounting firms with recurring bookkeeping workload",
+      firmographics: [],
+      painPoints: ["Manual document review"],
+      buyingTriggers: [],
+      objections: [],
+    },
+    competitors: [],
+    marketSizing: {
+      tam: { estimate: null, basis: "No sourced market count supplied", evidenceStatus: "RESEARCH_REQUIRED" },
+      sam: { estimate: null, basis: "No sourced segment count supplied", evidenceStatus: "RESEARCH_REQUIRED" },
+      som: { estimate: null, basis: "Pilot capacity not yet validated", evidenceStatus: "ASSUMPTION" },
+    },
+    pricing: { observedBenchmarks: [], hypotheses: [] },
+    positioning: {
+      category: "Accounting automation",
+      wedge: "Exception-first financial document processing",
+      differentiators: [],
+      alternatives: [],
+    },
+    risks: [],
+    claims: [
+      {
+        claim: "The target segment is growing rapidly",
+        evidenceStatus: "EVIDENCED",
+        source: null,
+      },
+    ],
+    researchRequests: [],
+  } as const;
+
+  assert.equal(SophiaOutputSchema.safeParse(base).success, false);
+  assert.equal(
+    SophiaOutputSchema.safeParse({
+      ...base,
+      claims: [
+        {
+          claim: "The target segment is growing rapidly",
+          evidenceStatus: "RESEARCH_REQUIRED",
+          source: null,
+        },
+      ],
+    }).success,
+    true,
+  );
 });
 
 test("ModelBackedAgentRuntime sends scoped metadata and validates Alex output", async () => {

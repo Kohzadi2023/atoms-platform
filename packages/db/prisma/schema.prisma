@@ -15,6 +15,7 @@ enum MembershipRole {
 }
 
 enum AgentName {
+  Sophia
   Mike
   Emma
   Bob

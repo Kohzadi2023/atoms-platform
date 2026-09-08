@@ -1475,6 +1475,7 @@ function formatElapsed(run: RunResponse, now: number): string {
 
 function agentRole(agent: AgentName): string {
   return {
+    Sophia: "Analyzes market intelligence and evidence",
     Mike: "Coordinates policies and approvals",
     Emma: "Produces structured product requirements",
     Bob: "Designs architecture and Prisma schema",

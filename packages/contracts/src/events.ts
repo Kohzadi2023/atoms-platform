@@ -28,6 +28,7 @@ export const RunEventTypeSchema = z.enum([
 export type RunEventType = z.infer<typeof RunEventTypeSchema>;
 
 export const RunAgentNameSchema = z.enum([
+  "Sophia",
   "Mike",
   "Emma",
   "Bob",
@@ -40,6 +41,7 @@ export const RunAgentNameSchema = z.enum([
 export type RunAgentName = z.infer<typeof RunAgentNameSchema>;
 
 export const ArtifactTypeSchema = z.enum([
+  "sophia-output",
   "mike-output",
   "emma-output",
   "bob-output",

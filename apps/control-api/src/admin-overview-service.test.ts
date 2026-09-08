@@ -90,7 +90,7 @@ test("loadWorkspaceAdminOverview rejects non-members before loading counts", asy
     ),
     (error: unknown) => {
       assert.ok(error instanceof ApiError);
-      assert.equal(error.statusCode, 403);
+      assert.equal(error.statusCode, 404);
       assert.equal(error.code, "WORKSPACE_ACCESS_DENIED");
       return true;
     },

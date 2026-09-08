@@ -12,6 +12,7 @@ test("Entra External ID configuration is selected and normalized in production",
     nodeEnv: "production",
     clientId: "11111111-2222-4333-8444-555555555555",
     authority: " https://atoms.ciamlogin.com/ ",
+    tenantId: " AAAAAAAA-BBBB-4CCC-8DDD-EEEEEEEEEEEE ",
     apiScope: " api://66666666-7777-4888-8999-aaaaaaaaaaaa/access_as_user ",
   });
 
@@ -20,10 +21,30 @@ test("Entra External ID configuration is selected and normalized in production",
     configuration: {
       clientId: "11111111-2222-4333-8444-555555555555",
       authority: "https://atoms.ciamlogin.com/",
-      knownAuthority: "atoms.ciamlogin.com",
+      tenantId: "aaaaaaaa-bbbb-4ccc-8ddd-eeeeeeeeeeee",
+      knownAuthorities: [
+        "atoms.ciamlogin.com",
+        "aaaaaaaa-bbbb-4ccc-8ddd-eeeeeeeeeeee.ciamlogin.com",
+      ],
       apiScope: "api://66666666-7777-4888-8999-aaaaaaaaaaaa/access_as_user",
     },
   });
+});
+
+test("CIAM GUID issuer authority is deduplicated when it matches the configured authority host", () => {
+  const mode = resolveBrowserAuthenticationMode({
+    nodeEnv: "production",
+    clientId: "11111111-2222-4333-8444-555555555555",
+    authority: "https://aaaaaaaa-bbbb-4ccc-8ddd-eeeeeeeeeeee.ciamlogin.com/",
+    tenantId: "aaaaaaaa-bbbb-4ccc-8ddd-eeeeeeeeeeee",
+    apiScope: "api://66666666-7777-4888-8999-aaaaaaaaaaaa/access_as_user",
+  });
+
+  assert.equal(mode.kind, "entra");
+  if (mode.kind !== "entra") return;
+  assert.deepEqual(mode.configuration.knownAuthorities, [
+    "aaaaaaaa-bbbb-4ccc-8ddd-eeeeeeeeeeee.ciamlogin.com",
+  ]);
 });
 
 test("production fails closed when Entra configuration is missing or partial", () => {
@@ -32,6 +53,7 @@ test("production fails closed when Entra configuration is missing or partial", (
       nodeEnv: "production",
       clientId: undefined,
       authority: undefined,
+      tenantId: undefined,
       apiScope: undefined,
     }).kind,
     "configuration_error",
@@ -42,10 +64,26 @@ test("production fails closed when Entra configuration is missing or partial", (
       nodeEnv: "production",
       clientId: "11111111-2222-4333-8444-555555555555",
       authority: "https://atoms.ciamlogin.com/",
-      apiScope: undefined,
+      tenantId: undefined,
+      apiScope: "api://66666666-7777-4888-8999-aaaaaaaaaaaa/access_as_user",
     }).kind,
     "configuration_error",
   );
+});
+
+test("production rejects an invalid Entra tenant ID", () => {
+  const mode = resolveBrowserAuthenticationMode({
+    nodeEnv: "production",
+    clientId: "11111111-2222-4333-8444-555555555555",
+    authority: "https://atoms.ciamlogin.com/",
+    tenantId: "not-a-guid",
+    apiScope: "api://66666666-7777-4888-8999-aaaaaaaaaaaa/access_as_user",
+  });
+
+  assert.deepEqual(mode, {
+    kind: "configuration_error",
+    message: "NEXT_PUBLIC_ENTRA_TENANT_ID must be a Microsoft Entra tenant ID GUID.",
+  });
 });
 
 test("development can retain the explicit static-token authenticator fallback", () => {
@@ -54,6 +92,7 @@ test("development can retain the explicit static-token authenticator fallback", 
       nodeEnv: "development",
       clientId: undefined,
       authority: undefined,
+      tenantId: undefined,
       apiScope: undefined,
     }),
     { kind: "development" },

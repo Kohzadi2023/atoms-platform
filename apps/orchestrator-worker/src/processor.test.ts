@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import test from "node:test";
 
 import type {
-  ActiveMvpAgentName,
+  ActiveAgentName,
   AgentExecutionRequest,
   AgentOutputByName,
   AgentProjectFile,
@@ -46,7 +46,7 @@ interface MutableRun {
 interface MutableTask {
   id: string;
   runId: string;
-  agentName: ActiveMvpAgentName;
+  agentName: ActiveAgentName;
   description: string;
   ordinal: number;
   status: WorkerTaskStatus;
@@ -319,7 +319,7 @@ class RetryableTestError extends Error {
 }
 
 class ScriptedAgentRuntime implements AgentRuntime {
-  readonly calls: ActiveMvpAgentName[] = [];
+  readonly calls: ActiveAgentName[] = [];
   readonly requests: AgentExecutionRequest[] = [];
   readonly #outputs: AgentOutputByName;
   failAlexOnce = false;
@@ -329,7 +329,7 @@ class ScriptedAgentRuntime implements AgentRuntime {
     this.#outputs = outputs;
   }
 
-  async execute<Name extends ActiveMvpAgentName>(
+  async execute<Name extends ActiveAgentName>(
     request: AgentExecutionRequest<Name>,
   ): Promise<AgentOutputByName[Name]> {
     this.calls.push(request.agentName);
@@ -353,6 +353,50 @@ function outputs(options: {
   const includeContentVariants = options.includeContentVariants ?? true;
 
   return {
+    Sophia: {
+      summary: "Market evidence is intentionally bounded to supplied context.",
+      marketDefinition: {
+        targetCustomer: "Small business customers",
+        geography: ["Canada"],
+        segments: ["Small businesses needing secure self-service"],
+        jobsToBeDone: ["Manage account information without support tickets"],
+      },
+      icp: {
+        primarySegment: "Small businesses with recurring account-service needs",
+        firmographics: [],
+        painPoints: ["Manual account support"],
+        buyingTriggers: [],
+        objections: [],
+      },
+      competitors: [],
+      marketSizing: {
+        tam: {
+          estimate: null,
+          basis: "No sourced market count is supplied in this fixture",
+          evidenceStatus: "RESEARCH_REQUIRED",
+        },
+        sam: {
+          estimate: null,
+          basis: "No sourced segment count is supplied in this fixture",
+          evidenceStatus: "RESEARCH_REQUIRED",
+        },
+        som: {
+          estimate: null,
+          basis: "Reachable share is not validated in this fixture",
+          evidenceStatus: "ASSUMPTION",
+        },
+      },
+      pricing: { observedBenchmarks: [], hypotheses: [] },
+      positioning: {
+        category: "Customer self-service software",
+        wedge: "Secure account access",
+        differentiators: [],
+        alternatives: [],
+      },
+      risks: [],
+      claims: [],
+      researchRequests: [],
+    },
     Mike: {
       summary: "Generate the supported customer portal.",
       taskGraph: [
@@ -510,7 +554,7 @@ function processor(repository: MemoryRepository, agents: AgentRuntime): RunProce
   });
 }
 
-test("worker executes the full Phase 4 chain once and commits ordered events", async () => {
+test("worker executes the full Sophia-first chain once and commits ordered events", async () => {
   const repository = new MemoryRepository();
   const agents = new ScriptedAgentRuntime(outputs());
   const runProcessor = processor(repository, agents);
@@ -541,6 +585,7 @@ test("worker executes the full Phase 4 chain once and commits ordered events", a
     { outcome: "completed" },
   );
   assert.deepEqual(agents.calls, [
+    "Sophia",
     "Mike",
     "Emma",
     "Bob",
@@ -554,9 +599,9 @@ test("worker executes the full Phase 4 chain once and commits ordered events", a
   const artifactEvents = repository.events.filter(
     (event) => event.eventType === "artifact.created",
   );
-  assert.equal(artifactEvents.length, 9);
+  assert.equal(artifactEvents.length, 10);
   const firstArtifactPayload = artifactEvents[0]?.payload;
-  const lastArtifactPayload = artifactEvents[8]?.payload;
+  const lastArtifactPayload = artifactEvents[9]?.payload;
   assert.equal(typeof firstArtifactPayload, "object");
   assert.equal(firstArtifactPayload === null, false);
   assert.equal(typeof lastArtifactPayload, "object");
@@ -567,12 +612,10 @@ test("worker executes the full Phase 4 chain once and commits ordered events", a
   );
   assert.equal(
     (firstArtifactPayload as { readonly artifactType: string }).artifactType,
-    "mike-output",
+    "sophia-output",
   );
   assert.equal(
-    (
-      artifactEvents[7]?.payload as { readonly artifactType: string }
-    ).artifactType,
+    (artifactEvents[8]?.payload as { readonly artifactType: string }).artifactType,
     "adrian-output",
   );
   assert.equal(
@@ -589,6 +632,7 @@ test("worker executes the full Phase 4 chain once and commits ordered events", a
     { outcome: "skipped", reason: "stale" },
   );
   assert.deepEqual(agents.calls, [
+    "Sophia",
     "Mike",
     "Emma",
     "Bob",
@@ -599,7 +643,7 @@ test("worker executes the full Phase 4 chain once and commits ordered events", a
   ]);
 });
 
-test("worker loads clean references once and sends them only to Emma", async () => {
+test("worker loads clean references for Sophia and Emma only", async () => {
   const repository = new MemoryRepository();
   const agents = new ScriptedAgentRuntime(outputs());
   let loads = 0;
@@ -638,30 +682,35 @@ test("worker loads clean references once and sends them only to Emma", async () 
     }),
     { outcome: "completed" },
   );
-  assert.equal(loads, 1);
-  assert.equal(
-    agents.requests.find((request) => request.agentName === "Emma")
-      ?.referenceAttachments?.[0]?.fileName,
-    "brief.txt",
-  );
+  assert.equal(loads, 2);
+  for (const agentName of ["Sophia", "Emma"] as const) {
+    assert.equal(
+      agents.requests.find((request) => request.agentName === agentName)
+        ?.referenceAttachments?.[0]?.fileName,
+      "brief.txt",
+    );
+  }
   assert.equal(
     agents.requests
-      .filter((request) => request.agentName !== "Emma")
+      .filter(
+        (request) =>
+          request.agentName !== "Sophia" && request.agentName !== "Emma",
+      )
       .some((request) => request.referenceAttachments !== undefined),
     false,
   );
 });
 
-test("worker runs validation after Phase 4 agents and before completing the durable run", async () => {
+test("worker runs validation after all agents and before completing the durable run", async () => {
   const repository = new MemoryRepository();
   const agents = new ScriptedAgentRuntime(outputs());
   const validations: RunValidationInput[] = [];
   const validator: RunValidator = {
     validate: async (input) => {
       assert.equal(repository.run.status, "RUNNING");
-      assert.equal(repository.tasks.get(5)?.status, "COMPLETED");
       assert.equal(repository.tasks.get(6)?.status, "COMPLETED");
       assert.equal(repository.tasks.get(7)?.status, "COMPLETED");
+      assert.equal(repository.tasks.get(8)?.status, "COMPLETED");
       validations.push(input);
     },
   };
@@ -734,7 +783,7 @@ test("plan approval and content approval require two explicit approvals", async 
     await runProcessor.process(startJob(), { attempt: 1, maxAttempts: 3 }),
     { outcome: "stopped", status: "PAUSED" },
   );
-  assert.deepEqual(agents.calls, ["Mike", "Emma", "Bob"]);
+  assert.deepEqual(agents.calls, ["Sophia", "Mike", "Emma", "Bob"]);
   const approvedVersion = repository.approve();
 
   assert.deepEqual(
@@ -783,6 +832,7 @@ test("plan approval and content approval require two explicit approvals", async 
   assert.deepEqual(approvalScopes, ["plan", "content"]);
 
   assert.deepEqual(agents.calls, [
+    "Sophia",
     "Mike",
     "Emma",
     "Bob",
@@ -852,6 +902,7 @@ test("a retryable failure retries only the unfinished agent task", async () => {
     { outcome: "completed" },
   );
   assert.deepEqual(agents.calls, [
+    "Sophia",
     "Mike",
     "Emma",
     "Bob",
@@ -888,7 +939,15 @@ test("Sarah output fails when route coverage is incomplete", async () => {
     { outcome: "failed" },
   );
   assert.equal(repository.run.status, "FAILED");
-  assert.deepEqual(agents.calls, ["Mike", "Emma", "Bob", "Alex", "David", "Sarah"]);
+  assert.deepEqual(agents.calls, [
+    "Sophia",
+    "Mike",
+    "Emma",
+    "Bob",
+    "Alex",
+    "David",
+    "Sarah",
+  ]);
 });
 
 test("Sarah output fails when canonical URLs are duplicated", async () => {
@@ -922,7 +981,15 @@ test("Sarah output fails when canonical URLs are duplicated", async () => {
     { outcome: "failed" },
   );
   assert.equal(repository.run.status, "FAILED");
-  assert.deepEqual(agents.calls, ["Mike", "Emma", "Bob", "Alex", "David", "Sarah"]);
+  assert.deepEqual(agents.calls, [
+    "Sophia",
+    "Mike",
+    "Emma",
+    "Bob",
+    "Alex",
+    "David",
+    "Sarah",
+  ]);
 });
 
 test("a generated-file CAS conflict preserves the manual revision and fails safely", async () => {

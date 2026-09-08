@@ -3,6 +3,7 @@ import test from "node:test";
 
 import {
   createEntraAccessTokenProvider,
+  createEntraRedirectUri,
   resolveBrowserAuthenticationMode,
 } from "./entra-auth.js";
 
@@ -56,6 +57,13 @@ test("development can retain the explicit static-token authenticator fallback", 
       apiScope: undefined,
     }),
     { kind: "development" },
+  );
+});
+
+test("MSAL v5 uses the dedicated redirect bridge route", () => {
+  assert.equal(
+    createEntraRedirectUri("https://atoms.example.test/workspace?ignored=true#ignored"),
+    "https://atoms.example.test/redirect",
   );
 });
 

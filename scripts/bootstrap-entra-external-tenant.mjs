@@ -1,6 +1,7 @@
 import { mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { pathToFileURL } from "node:url";
 import { spawnSync } from "node:child_process";
 
 export const ENTRA_TENANT_PLAN_CONFIRMATION = "PLAN_ATOMS_ENTRA_EXTERNAL_TENANT";
@@ -22,12 +23,6 @@ const defaultDependencies = {
   run: runProcess,
   log: (message) => console.log(message),
 };
-
-function normalized(value) {
-  if (typeof value !== "string") return undefined;
-  const result = value.trim();
-  return result.length === 0 ? undefined : result;
-}
 
 export function parseArguments(arguments_) {
   const args = arguments_[0] === "--" ? arguments_.slice(1) : arguments_;
@@ -101,7 +96,16 @@ export function buildNameCheckBody(resourceName, boundary = ENTRA_STAGING_BOUNDA
 async function restJson(dependencies, method, url, body) {
   let root;
   try {
-    const args = ["rest", "--method", method.toLowerCase(), "--url", url, "--only-show-errors", "--output", "json"];
+    const args = [
+      "rest",
+      "--method",
+      method.toLowerCase(),
+      "--url",
+      url,
+      "--only-show-errors",
+      "--output",
+      "json",
+    ];
     if (body !== undefined) {
       root = await mkdtemp(join(tmpdir(), "atoms-entra-rest-"));
       const bodyPath = join(root, "body.json");
@@ -138,11 +142,38 @@ export async function bootstrapEntraExternalTenant(options, dependencies = defau
   const boundary = ENTRA_STAGING_BOUNDARY;
 
   dependencies.run("az", ["account", "set", "--subscription", boundary.subscriptionId]);
-  const account = JSON.parse(dependencies.run("az", ["account", "show", "--output", "json", "--only-show-errors"]));
+  const account = JSON.parse(
+    dependencies.run("az", [
+      "account",
+      "show",
+      "--output",
+      "json",
+      "--only-show-errors",
+    ]),
+  );
   validateAccount(account, boundary);
 
-  dependencies.run("az", ["group", "show", "--subscription", boundary.subscriptionId, "--name", boundary.resourceGroup, "--output", "none", "--only-show-errors"]);
-  dependencies.run("az", ["provider", "register", "--subscription", boundary.subscriptionId, "--namespace", "Microsoft.AzureActiveDirectory", "--wait", "--only-show-errors"]);
+  dependencies.run("az", [
+    "group",
+    "show",
+    "--subscription",
+    boundary.subscriptionId,
+    "--name",
+    boundary.resourceGroup,
+    "--output",
+    "none",
+    "--only-show-errors",
+  ]);
+  dependencies.run("az", [
+    "provider",
+    "register",
+    "--subscription",
+    boundary.subscriptionId,
+    "--namespace",
+    "Microsoft.AzureActiveDirectory",
+    "--wait",
+    "--only-show-errors",
+  ]);
 
   const existing = await listExistingTenants(dependencies, boundary);
   if (existing.length > 1) {
@@ -204,5 +235,6 @@ export async function main(arguments_ = process.argv.slice(2)) {
   console.log(JSON.stringify(result, null, 2));
 }
 
-const invokedDirectly = process.argv[1] !== undefined && new URL(`file://${process.argv[1].replaceAll("\\", "/")}`).href === import.meta.url;
+const invokedDirectly =
+  process.argv[1] !== undefined && import.meta.url === pathToFileURL(process.argv[1]).href;
 if (invokedDirectly) await main();

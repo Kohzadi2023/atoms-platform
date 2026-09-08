@@ -5,7 +5,8 @@ export const ENTRA_REDIRECT_PATH = "/redirect";
 export interface EntraBrowserConfiguration {
   readonly clientId: string;
   readonly authority: string;
-  readonly knownAuthority: string;
+  readonly tenantId: string;
+  readonly knownAuthorities: readonly string[];
   readonly apiScope: string;
 }
 
@@ -32,17 +33,31 @@ export function resolveBrowserAuthenticationMode(input: {
   readonly nodeEnv: string | undefined;
   readonly clientId: string | undefined;
   readonly authority: string | undefined;
+  readonly tenantId: string | undefined;
   readonly apiScope: string | undefined;
 }): BrowserAuthenticationMode {
   const clientId = normalizedOptionalValue(input.clientId);
   const authority = normalizedOptionalValue(input.authority);
+  const tenantId = normalizedOptionalValue(input.tenantId);
   const apiScope = normalizedOptionalValue(input.apiScope);
 
-  if (clientId !== undefined && authority !== undefined && apiScope !== undefined) {
+  if (
+    clientId !== undefined &&
+    authority !== undefined &&
+    tenantId !== undefined &&
+    apiScope !== undefined
+  ) {
     if (!isGuid(clientId)) {
       return {
         kind: "configuration_error",
         message: "NEXT_PUBLIC_ENTRA_CLIENT_ID must be an Application (client) ID GUID.",
+      };
+    }
+
+    if (!isGuid(tenantId)) {
+      return {
+        kind: "configuration_error",
+        message: "NEXT_PUBLIC_ENTRA_TENANT_ID must be a Microsoft Entra tenant ID GUID.",
       };
     }
 
@@ -61,22 +76,33 @@ export function resolveBrowserAuthenticationMode(input: {
       };
     }
 
+    const guidIssuerAuthority = `${tenantId.toLowerCase()}.ciamlogin.com`;
+    const knownAuthorities = Array.from(
+      new Set([normalizedAuthority.hostname.toLowerCase(), guidIssuerAuthority]),
+    );
+
     return {
       kind: "entra",
       configuration: {
         clientId,
         authority: normalizedAuthority.href,
-        knownAuthority: normalizedAuthority.hostname,
+        tenantId: tenantId.toLowerCase(),
+        knownAuthorities,
         apiScope,
       },
     };
   }
 
-  if (clientId !== undefined || authority !== undefined || apiScope !== undefined) {
+  if (
+    clientId !== undefined ||
+    authority !== undefined ||
+    tenantId !== undefined ||
+    apiScope !== undefined
+  ) {
     return {
       kind: "configuration_error",
       message:
-        "NEXT_PUBLIC_ENTRA_CLIENT_ID, NEXT_PUBLIC_ENTRA_AUTHORITY, and NEXT_PUBLIC_ENTRA_API_SCOPE must be configured together.",
+        "NEXT_PUBLIC_ENTRA_CLIENT_ID, NEXT_PUBLIC_ENTRA_AUTHORITY, NEXT_PUBLIC_ENTRA_TENANT_ID, and NEXT_PUBLIC_ENTRA_API_SCOPE must be configured together.",
     };
   }
 
@@ -87,7 +113,7 @@ export function resolveBrowserAuthenticationMode(input: {
   return {
     kind: "configuration_error",
     message:
-      "Microsoft Entra External ID is required outside development. Configure the public Entra client ID, authority, and Control API delegated scope.",
+      "Microsoft Entra External ID is required outside development. Configure the public Entra client ID, authority, tenant ID, and Control API delegated scope.",
   };
 }
 

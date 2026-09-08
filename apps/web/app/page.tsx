@@ -1,5 +1,5 @@
-import { SupabaseAuthGate } from "../src/components/supabase-auth-gate";
+import { EntraAuthGate } from "../src/components/entra-auth-gate";
 
 export default function HomePage() {
-  return <SupabaseAuthGate />;
+  return <EntraAuthGate />;
 }

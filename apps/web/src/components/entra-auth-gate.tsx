@@ -71,8 +71,7 @@ function EntraSessionBoundary({
 
   useEffect(() => {
     let active = true;
-
-    void PublicClientApplication.createPublicClientApplication({
+    const instance = new PublicClientApplication({
       auth: {
         clientId: configuration.clientId,
         authority: configuration.authority,
@@ -84,26 +83,27 @@ function EntraSessionBoundary({
       cache: {
         cacheLocation: "sessionStorage",
       },
-    })
-      .then(async (instance) => {
-        const redirectResult = await instance.handleRedirectPromise();
-        const nextAccount =
-          redirectResult?.account ??
-          instance.getActiveAccount() ??
-          instance.getAllAccounts()[0] ??
-          null;
+    });
 
-        if (nextAccount !== null) instance.setActiveAccount(nextAccount);
-        if (!active) return;
-        setClient(instance);
-        setAccount(nextAccount);
-        setAuthError(undefined);
-      })
-      .catch(() => {
-        if (!active) return;
-        setAuthError("Microsoft Entra External ID is temporarily unavailable.");
-        setAccount(null);
-      });
+    void (async () => {
+      await instance.initialize();
+      const redirectResult = await instance.handleRedirectPromise();
+      const nextAccount =
+        redirectResult?.account ??
+        instance.getActiveAccount() ??
+        instance.getAllAccounts()[0] ??
+        null;
+
+      if (nextAccount !== null) instance.setActiveAccount(nextAccount);
+      if (!active) return;
+      setClient(instance);
+      setAccount(nextAccount);
+      setAuthError(undefined);
+    })().catch(() => {
+      if (!active) return;
+      setAuthError("Microsoft Entra External ID is temporarily unavailable.");
+      setAccount(null);
+    });
 
     return () => {
       active = false;
@@ -202,7 +202,7 @@ function EntraSessionBoundary({
   return (
     <WorkspaceShell
       key={account.homeAccountId}
-      accessTokenProvider={accessTokenProvider}
+      {...(accessTokenProvider === undefined ? {} : { accessTokenProvider })}
       identityLabel={account.name ?? account.username ?? account.homeAccountId}
       signingOut={signingOut}
       onSignOut={() => void signOut()}

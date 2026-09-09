@@ -29,6 +29,8 @@ jobs:
       - name: Validate the staging manifest, TLS ingress, and persistence contract
         run: pnpm staging:deploy:compose:validate
       - run: pnpm run ci:verify
+      - name: Smoke the production standalone MSAL redirect bridge
+        run: pnpm staging:smoke:web-standalone-redirect
 
   migration-matrix:
     runs-on: ubuntu-latest

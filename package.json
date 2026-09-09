@@ -39,6 +39,7 @@
     "staging:deploy:recovery:rehearse": "node scripts/rehearse-staging-recovery.mjs",
     "staging:smoke:authenticated": "node scripts/smoke-staging-authenticated.mjs",
     "staging:smoke:entra-auth": "node scripts/smoke-staging-entra-auth.mjs",
+    "staging:smoke:web-standalone-redirect": "node scripts/smoke-web-standalone-redirect.mjs",
     "staging:azure:oidc:bootstrap": "node scripts/bootstrap-azure-staging-oidc.mjs",
     "staging:azure:inputs:validate": "node scripts/validate-azure-staging-inputs.mjs",
     "db:generate": "pnpm prisma generate",

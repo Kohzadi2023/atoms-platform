@@ -9,7 +9,33 @@ permissions:
   contents: read
 
 jobs:
+  changes:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    outputs:
+      fast_path: ${{ steps.classify.outputs.fast_path }}
+      full_ci: ${{ steps.classify.outputs.full_ci }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+      - name: Classify CI scope conservatively
+        id: classify
+        env:
+          BASE_SHA: ${{ github.event.pull_request.base.sha }}
+          HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+        run: |
+          if [ "$GITHUB_EVENT_NAME" = "pull_request" ]; then
+            git diff --name-only "$BASE_SHA" "$HEAD_SHA" | node scripts/classify-ci-changes.mjs
+          else
+            printf '%s\n' 'push-to-main' | node scripts/classify-ci-changes.mjs
+          fi
+
   verify:
+    needs: changes
     runs-on: ubuntu-latest
     timeout-minutes: 20
     steps:
@@ -22,17 +48,36 @@ jobs:
           node-version: 24
           cache: pnpm
       - run: pnpm install --frozen-lockfile
+
+      - name: Fast Web verification
+        if: needs.changes.outputs.fast_path == 'true'
+        run: |
+          pnpm --filter @atoms/web... build
+          pnpm --filter @atoms/web test
+          pnpm --filter @atoms/web typecheck
+          pnpm audit --audit-level high
+          pnpm secrets:scan
+
       - name: Compile the dedicated Azure staging infrastructure
+        if: needs.changes.outputs.full_ci == 'true'
         run: |
           az bicep install --version v0.46.1
           az bicep build --file infra/azure/staging/main.bicep --stdout > /dev/null
+
       - name: Validate the staging manifest, TLS ingress, and persistence contract
+        if: needs.changes.outputs.full_ci == 'true'
         run: pnpm staging:deploy:compose:validate
-      - run: pnpm run ci:verify
+
+      - name: Run full repository verification
+        if: needs.changes.outputs.full_ci == 'true'
+        run: pnpm run ci:verify
+
       - name: Smoke the production standalone MSAL redirect bridge
         run: pnpm staging:smoke:web-standalone-redirect
 
   migration-matrix:
+    needs: changes
+    if: needs.changes.outputs.full_ci == 'true'
     runs-on: ubuntu-latest
     timeout-minutes: 20
     services:
@@ -122,6 +167,8 @@ jobs:
         run: pnpm staging:attachments:durability
 
   attachment-storage-integration:
+    needs: changes
+    if: needs.changes.outputs.full_ci == 'true'
     runs-on: ubuntu-latest
     timeout-minutes: 15
     steps:

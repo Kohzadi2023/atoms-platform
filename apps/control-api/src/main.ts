@@ -10,6 +10,7 @@ import { BullMqDatabaseOperationQueue } from "./database-operation-queue.js";
 import { PrismaDatabaseControlRepository } from "./database-repository.js";
 import { PrismaControlRepository } from "./repository.js";
 import { BullMqRunQueue } from "./run-queue.js";
+import { withPersonalWorkspaceOnboarding } from "./workspace-onboarding.js";
 
 const EnvironmentSchema = z
   .object({
@@ -98,7 +99,8 @@ async function main(): Promise<void> {
     AUTH_DEV_USER_ID: environment.AUTH_DEV_USER_ID,
   });
   const prisma = createPrismaClient(environment.DATABASE_URL);
-  const repository = new PrismaControlRepository(prisma);
+  const baseRepository = new PrismaControlRepository(prisma);
+  const repository = withPersonalWorkspaceOnboarding(baseRepository, prisma);
   const attachmentRepository = new PrismaAttachmentRepository(prisma);
   const databaseRepository = new PrismaDatabaseControlRepository(prisma, {
     ...(environment.SUPABASE_CREDENTIAL_SECRET_REF === undefined

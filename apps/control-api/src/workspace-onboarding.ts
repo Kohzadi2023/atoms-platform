@@ -46,9 +46,22 @@ export async function ensurePersonalWorkspaceMembership(
   return prisma.$transaction(async (transaction) => {
     // Serialize first-workspace creation per authenticated identity so parallel
     // /v1/me and /v1/workspaces requests cannot create duplicate workspaces.
-    await transaction.$queryRaw(
-      Prisma.sql`SELECT pg_advisory_xact_lock(hashtextextended(${userId}, 0))`,
+    //
+    // pg_advisory_xact_lock returns PostgreSQL `void`. Prisma raw-query adapters
+    // cannot reliably deserialize unsupported/void output types, so materialize
+    // the lock side effect in a CTE and return only a supported integer column.
+    const lockRows = await transaction.$queryRaw<Array<{ locked: number }>>(
+      Prisma.sql`
+        WITH onboarding_lock AS MATERIALIZED (
+          SELECT pg_advisory_xact_lock(hashtextextended(${userId}, 0))
+        )
+        SELECT 1::integer AS locked
+        FROM onboarding_lock
+      `,
     );
+    if (lockRows.length !== 1 || lockRows[0]?.locked !== 1) {
+      throw new Error("Could not acquire the personal workspace onboarding lock");
+    }
 
     const existing = await transaction.membership.findFirst({
       where: { userId },

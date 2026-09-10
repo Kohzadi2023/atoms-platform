@@ -1,6 +1,8 @@
 [CmdletBinding()]
 param(
-    [string]$RepositoryRoot = (Get-Location).Path
+    [string]$RepositoryRoot = (Get-Location).Path,
+    [ValidatePattern("^[0-9a-fA-F]{40}$")]
+    [string]$ExpectedSourceSha
 )
 
 Clear-Host
@@ -111,7 +113,7 @@ try {
     Start-Transcript -Path $TranscriptPath -Force | Out-Null
     $TranscriptStarted = $true
 
-    Write-Host "Atoms Staging Web Entra Cutover v1" -ForegroundColor DarkGray
+    Write-Host "Atoms Staging Web Entra Cutover v2" -ForegroundColor DarkGray
 
     Write-Step "Lock Azure CLI to the dedicated Atoms-Staging subscription"
 
@@ -162,11 +164,19 @@ try {
         throw "Could not resolve an immutable git SHA."
     }
 
+    if (-not [string]::IsNullOrWhiteSpace($ExpectedSourceSha) -and
+        $gitSha -ne $ExpectedSourceSha.ToLowerInvariant()) {
+        throw "Source SHA mismatch. Expected '$($ExpectedSourceSha.ToLowerInvariant())', got '$gitSha'. Refusing staging build."
+    }
+
     $shortSha = $gitSha.Substring(0, 12)
     $imageTag = "entra-$shortSha"
     $image = "$AcrName.azurecr.io/web:$imageTag"
 
     Write-Ok "Immutable source: $gitSha"
+    if (-not [string]::IsNullOrWhiteSpace($ExpectedSourceSha)) {
+        Write-Ok "Exact expected source SHA matched"
+    }
     Write-Ok "Target image: $image"
 
     Write-Step "Resolve current staging public origins"
@@ -281,7 +291,7 @@ try {
     Write-Host "  Entra authority: $ExpectedAuthority"
     Write-Host "  API scope     : $ExpectedApiScope"
     Write-Host ""
-    Write-Host "Next: perform two real External ID browser sign-ins and run the Entra staging identity smoke." -ForegroundColor Cyan
+    Write-Host "Next: run scripts/staging-public-smoke.ps1, then perform authenticated browser gates only when auth-sensitive code changed." -ForegroundColor Cyan
 }
 finally {
     try {

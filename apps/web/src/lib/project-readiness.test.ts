@@ -20,9 +20,10 @@ const project: ProjectResponse = {
   workspaceId: input.workspaceId,
   name: input.name,
   slug: input.slug,
-  description: input.description,
+  description: input.description ?? null,
   createdAt: "2026-09-10T03:00:00.000Z",
   updatedAt: "2026-09-10T03:00:00.000Z",
+  archivedAt: null,
 };
 
 test("creates and verifies a project without any run capability", async () => {

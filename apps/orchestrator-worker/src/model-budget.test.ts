@@ -95,6 +95,16 @@ function request(overrides: Partial<ModelRequest> = {}): ModelRequest {
   };
 }
 
+function estimate(value: ModelRequest): number {
+  return estimateTextRequestReservationUsdMicros({
+    request: value,
+    model: MODEL,
+    pricing: PINNED_OPENAI_PRICING,
+    outputTokenLimits: PINNED_OPENAI_OUTPUT_LIMITS,
+    safetyMultiplier: 1.5,
+  });
+}
+
 test("reserves a conservative run budget before the provider call", async () => {
   const gateway = new FakeGateway();
   const store = new FakeBudgetStore();
@@ -181,41 +191,79 @@ test("requires a run budget context", async () => {
   assert.equal(gateway.generateCalls, 0);
 });
 
-test("rejects references because their provider cost is not safely pre-bounded", () => {
-  assert.throws(
-    () =>
-      estimateTextRequestReservationUsdMicros({
-        request: request({
-          references: [
-            {
-              kind: "file",
-              fileName: "context.txt",
-              mimeType: "text/plain",
-              dataBase64: "SGVsbG8=",
-            },
-          ],
-        }),
-        model: MODEL,
-        pricing: PINNED_OPENAI_PRICING,
-        outputTokenLimits: PINNED_OPENAI_OUTPUT_LIMITS,
-        safetyMultiplier: 1.5,
-      }),
-    (error: unknown) =>
-      error instanceof ProviderBudgetError &&
-      error.code === "PROVIDER_BUDGET_REFERENCES_UNSUPPORTED",
+test("includes UTF-8 text reference bytes in the conservative reservation", () => {
+  const withoutReference = estimate(request());
+  const text = "This is bounded staging context.";
+  const withReference = estimate(
+    request({
+      references: [
+        {
+          kind: "file",
+          fileName: "context.txt",
+          mimeType: "text/plain",
+          dataBase64: Buffer.from(text, "utf8").toString("base64"),
+        },
+      ],
+    }),
   );
+
+  assert.ok(withReference > withoutReference);
+});
+
+test("rejects PDF and image references before provider work", () => {
+  for (const references of [
+    [
+      {
+        kind: "file" as const,
+        fileName: "context.pdf",
+        mimeType: "application/pdf" as const,
+        dataBase64: "JVBERi0xLjQ=",
+      },
+    ],
+    [
+      {
+        kind: "image" as const,
+        fileName: "context.png",
+        mimeType: "image/png" as const,
+        dataBase64: "iVBORw0KGgo=",
+      },
+    ],
+  ]) {
+    assert.throws(
+      () => estimate(request({ references })),
+      (error: unknown) =>
+        error instanceof ProviderBudgetError &&
+        error.code === "PROVIDER_BUDGET_REFERENCES_UNSUPPORTED",
+    );
+  }
+});
+
+test("rejects malformed or non-UTF-8 text references", () => {
+  for (const dataBase64 of ["not base64!", "/w=="]) {
+    assert.throws(
+      () =>
+        estimate(
+          request({
+            references: [
+              {
+                kind: "file",
+                fileName: "invalid.txt",
+                mimeType: "text/plain",
+                dataBase64,
+              },
+            ],
+          }),
+        ),
+      (error: unknown) =>
+        error instanceof ProviderBudgetError &&
+        error.code === "PROVIDER_BUDGET_REFERENCE_INVALID",
+    );
+  }
 });
 
 test("rejects a model output request above the pinned provider limit", () => {
   assert.throws(
-    () =>
-      estimateTextRequestReservationUsdMicros({
-        request: request({ maxOutputTokens: 16_385 }),
-        model: MODEL,
-        pricing: PINNED_OPENAI_PRICING,
-        outputTokenLimits: PINNED_OPENAI_OUTPUT_LIMITS,
-        safetyMultiplier: 1.5,
-      }),
+    () => estimate(request({ maxOutputTokens: 16_385 })),
     (error: unknown) =>
       error instanceof ProviderBudgetError &&
       error.code === "PROVIDER_OUTPUT_LIMIT_EXCEEDED",

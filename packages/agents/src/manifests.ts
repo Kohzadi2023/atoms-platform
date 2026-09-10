@@ -82,7 +82,7 @@ export const agentManifests: AgentManifestMap = {
     schemaHint:
       '{"summary":string,"files":[{"path":relative-posix-path,"content":string,"expectedVersion":nonnegative-integer}],"commands":{"lint":string,"typecheck":string,"test":string,"build":string}}',
     policy: "flagship",
-    maxOutputTokens: 32_000,
+    maxOutputTokens: 16_000,
     outputSchema: AgentOutputSchemas.Alex,
   },
   David: {
@@ -94,7 +94,7 @@ export const agentManifests: AgentManifestMap = {
     schemaHint:
       '{"summary":string,"schemaPrismaPath":relative-posix-path,"migrations":[{"name":snake_case,"path":"prisma/migrations/<name>/migration.sql","risk":"SAFE|DESTRUCTIVE","rationale":string}],"seedPath":relative-posix-path,"files":[{"path":relative-posix-path,"content":string,"expectedVersion":nonnegative-integer}],"dataPolicyReport":{"summary":string,"rlsModels":string[],"findings":[{"severity":"INFO|WARNING|BLOCKING","subject":string,"recommendation":string}]},"destructiveChanges":[{"migrationPath":relative-posix-path,"description":string}]}',
     policy: "flagship",
-    maxOutputTokens: 20_000,
+    maxOutputTokens: 16_000,
     outputSchema: AgentOutputSchemas.David,
   },
   Sarah: {

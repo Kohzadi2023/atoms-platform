@@ -29,6 +29,13 @@ import { BullMqDatabaseReconciliationWorker } from "./database-reconciliation-wo
 import { DatabaseReconciler } from "./database-reconciler.js";
 import { BullMqDatabaseRecoveryQueue } from "./database-recovery-queue.js";
 import { PrismaDatabaseOperationRepository } from "./database-repository.js";
+import {
+  BudgetedModelGateway,
+  PINNED_OPENAI_MODELS,
+  PINNED_OPENAI_OUTPUT_LIMITS,
+  PINNED_OPENAI_PRICING,
+  PostgresRunProviderBudgetStore,
+} from "./model-budget.js";
 import { RunProcessor } from "./processor.js";
 import { PrismaWorkerRepository } from "./repository.js";
 import { Phase2RunValidator } from "./validation.js";
@@ -57,6 +64,17 @@ const EnvironmentSchema = z
     PREVIEW_BASE_DOMAIN: z.string().min(3),
     PREVIEW_PUBLIC_PROTOCOL: z.enum(["http", "https"]).default("https"),
     RUN_QUEUE_PREFIX: z.string().trim().min(1).optional(),
+    RUN_PROVIDER_BUDGET_USD_MICROS: z.coerce
+      .number()
+      .int()
+      .min(0)
+      .max(10_000_000)
+      .default(0),
+    RUN_PROVIDER_BUDGET_SAFETY_MULTIPLIER: z.coerce
+      .number()
+      .min(1)
+      .max(10)
+      .default(1.5),
     ORCHESTRATOR_CONCURRENCY: z.coerce.number().int().min(1).max(32).default(2),
     ATTACHMENT_SCAN_CONCURRENCY: z.coerce
       .number()
@@ -175,7 +193,20 @@ async function main(): Promise<void> {
   const checkpointer = PostgresSaver.fromConnString(environment.DATABASE_URL);
   await checkpointer.setup();
 
-  const gateway = new OpenAIModelGateway({ apiKey: environment.OPENAI_API_KEY });
+  const budgetStore = new PostgresRunProviderBudgetStore(prisma);
+  const openAiGateway = new OpenAIModelGateway({
+    apiKey: environment.OPENAI_API_KEY,
+    models: PINNED_OPENAI_MODELS,
+    pricing: PINNED_OPENAI_PRICING,
+  });
+  const gateway = new BudgetedModelGateway({
+    gateway: openAiGateway,
+    budgetStore,
+    totalBudgetUsdMicros: environment.RUN_PROVIDER_BUDGET_USD_MICROS,
+    pricing: PINNED_OPENAI_PRICING,
+    outputTokenLimits: PINNED_OPENAI_OUTPUT_LIMITS,
+    safetyMultiplier: environment.RUN_PROVIDER_BUDGET_SAFETY_MULTIPLIER,
+  });
   const agents = new ModelBackedAgentRuntime(gateway);
   const sandboxProvider = new E2BSandboxAdapter({
     apiKey: environment.E2B_API_KEY,

@@ -11,6 +11,8 @@ import Redis from "ioredis";
 
 const REQUEST_OVERHEAD_TOKEN_RESERVE = 2_048;
 const DEFAULT_BUDGET_TTL_MS = 24 * 60 * 60 * 1_000;
+const STANDARD_BASE64_PATTERN =
+  /^(?:[A-Za-z0-9+/]{4})*(?:[A-Za-z0-9+/]{2}==|[A-Za-z0-9+/]{3}=)?$/u;
 
 export const PINNED_OPENAI_MODELS: Readonly<Record<ModelPolicy, string>> = {
   flagship: "gpt-4o-2024-11-20",
@@ -84,11 +86,18 @@ export class BudgetedModelGateway implements ModelGateway {
   readonly #budgetTtlMs: number;
 
   constructor(options: BudgetedModelGatewayOptions) {
-    if (!Number.isInteger(options.totalBudgetUsdMicros) || options.totalBudgetUsdMicros < 0) {
+    if (
+      !Number.isInteger(options.totalBudgetUsdMicros) ||
+      options.totalBudgetUsdMicros < 0
+    ) {
       throw new RangeError("totalBudgetUsdMicros must be a non-negative integer");
     }
     const safetyMultiplier = options.safetyMultiplier ?? 1.5;
-    if (!Number.isFinite(safetyMultiplier) || safetyMultiplier < 1 || safetyMultiplier > 10) {
+    if (
+      !Number.isFinite(safetyMultiplier) ||
+      safetyMultiplier < 1 ||
+      safetyMultiplier > 10
+    ) {
       throw new RangeError("safetyMultiplier must be between 1 and 10");
     }
     const budgetTtlMs = options.budgetTtlMs ?? DEFAULT_BUDGET_TTL_MS;
@@ -164,15 +173,12 @@ export function estimateTextRequestReservationUsdMicros(input: {
   readonly outputTokenLimits: Readonly<Record<string, number>>;
   readonly safetyMultiplier: number;
 }): number {
-  if (input.request.references !== undefined && input.request.references.length > 0) {
-    throw new ProviderBudgetError(
-      "PROVIDER_BUDGET_REFERENCES_UNSUPPORTED",
-      "Budgeted provider execution currently rejects file/image references because their provider token cost cannot be bounded safely before the call",
-    );
-  }
-
   const maxOutputTokens = input.request.maxOutputTokens;
-  if (maxOutputTokens === undefined || !Number.isInteger(maxOutputTokens) || maxOutputTokens < 1) {
+  if (
+    maxOutputTokens === undefined ||
+    !Number.isInteger(maxOutputTokens) ||
+    maxOutputTokens < 1
+  ) {
     throw new ProviderBudgetError(
       "PROVIDER_BUDGET_OUTPUT_LIMIT_REQUIRED",
       "Budgeted provider calls require an explicit positive maxOutputTokens value",
@@ -205,12 +211,17 @@ export function estimateTextRequestReservationUsdMicros(input: {
     throw new RangeError("safetyMultiplier must be at least 1");
   }
 
+  const referenceBytes = boundedTextReferenceBytes(input.request);
+
   // OpenAI text tokenization is byte based; UTF-8 byte length therefore gives
-  // a conservative upper bound for text token count. Add a fixed reserve for
-  // request framing/protocol overhead, then apply the configured safety factor.
+  // a conservative upper bound for text token count. Include decoded text
+  // reference bytes, add protocol/framing reserve, then apply the configured
+  // safety multiplier. PDF/image references remain fail-closed below because
+  // their provider token cost cannot be bounded reliably from file bytes alone.
   const textBytes =
     Buffer.byteLength(input.request.input, "utf8") +
-    Buffer.byteLength(input.request.instructions ?? "", "utf8");
+    Buffer.byteLength(input.request.instructions ?? "", "utf8") +
+    referenceBytes;
   const inputTokenUpperBound = textBytes + REQUEST_OVERHEAD_TOKEN_RESERVE;
   const rawUsdMicros = calculateCostUsdMicros(
     inputTokenUpperBound,
@@ -220,6 +231,36 @@ export function estimateTextRequestReservationUsdMicros(input: {
   );
 
   return Math.max(1, Math.ceil(rawUsdMicros * input.safetyMultiplier));
+}
+
+function boundedTextReferenceBytes(request: ModelRequest): number {
+  let bytes = 0;
+  for (const reference of request.references ?? []) {
+    if (reference.kind !== "file" || reference.mimeType !== "text/plain") {
+      throw new ProviderBudgetError(
+        "PROVIDER_BUDGET_REFERENCES_UNSUPPORTED",
+        "Budgeted provider execution currently permits only UTF-8 text/plain references; PDF and image references remain disabled",
+      );
+    }
+
+    if (!STANDARD_BASE64_PATTERN.test(reference.dataBase64)) {
+      throw new ProviderBudgetError(
+        "PROVIDER_BUDGET_REFERENCE_INVALID",
+        `Text reference ${reference.fileName} is not canonical base64`,
+      );
+    }
+
+    const decoded = Buffer.from(reference.dataBase64, "base64");
+    const decodedText = decoded.toString("utf8");
+    if (!Buffer.from(decodedText, "utf8").equals(decoded)) {
+      throw new ProviderBudgetError(
+        "PROVIDER_BUDGET_REFERENCE_INVALID",
+        `Text reference ${reference.fileName} is not valid UTF-8`,
+      );
+    }
+    bytes += decoded.byteLength;
+  }
+  return bytes;
 }
 
 const RESERVE_BUDGET_LUA = `

@@ -13,8 +13,16 @@ const BaseDomainSchema = z
     "baseDomain must be a DNS name",
   );
 const SessionIdSchema = z.string().uuid();
-const SignatureSchema = z.string().regex(/^[a-f0-9]{48}$/);
-const ExpiryLabelSchema = z.string().regex(/^[a-z0-9]{1,16}$/);
+const TicketLabelSchema = z
+  .string()
+  .length(61)
+  .regex(/^[a-z0-9]{25}-[a-z0-9]{9}-[a-z0-9]{25}$/);
+
+const BASE36_SESSION_WIDTH = 25;
+const BASE36_EXPIRY_WIDTH = 9;
+const BASE36_MAC_WIDTH = 25;
+const MAC_BYTES = 16;
+const MAX_UUID_VALUE = (1n << 128n) - 1n;
 
 export interface PreviewTicketSignerOptions {
   readonly secret: string;
@@ -68,10 +76,21 @@ export class PreviewTicketSigner {
         "Preview expiry must be in the future",
       );
     }
-    const sessionLabel = normalizedSessionId.replaceAll("-", "");
-    const expiryLabel = expiresAt.getTime().toString(36);
+    if (!Number.isSafeInteger(expiresAt.getTime())) {
+      throw new PreviewTicketError("INVALID_HOST", "Preview expiry is out of range");
+    }
+
+    const sessionLabel = encodeUuidBase36(normalizedSessionId);
+    const expiryLabel = BigInt(expiresAt.getTime())
+      .toString(36)
+      .padStart(BASE36_EXPIRY_WIDTH, "0");
+    if (expiryLabel.length !== BASE36_EXPIRY_WIDTH) {
+      throw new PreviewTicketError("INVALID_HOST", "Preview expiry is out of range");
+    }
     const signature = this.#signature(normalizedSessionId, expiryLabel);
-    return `${this.#protocol}://${sessionLabel}.${expiryLabel}.${signature}.${this.#baseDomain}/`;
+    const ticketLabel = `${sessionLabel}-${expiryLabel}-${signature}`;
+    TicketLabelSchema.parse(ticketLabel);
+    return `${this.#protocol}://${ticketLabel}.${this.#baseDomain}/`;
   }
 
   verifyHost(untrustedHost: string): VerifiedPreviewTicket {
@@ -80,43 +99,44 @@ export class PreviewTicketSigner {
     if (!host.endsWith(suffix)) {
       throw new PreviewTicketError("INVALID_HOST");
     }
-    const ticketLabels = host.slice(0, -suffix.length).split(".");
-    if (ticketLabels.length !== 3) {
+
+    const ticketLabel = host.slice(0, -suffix.length);
+    const parsedTicket = TicketLabelSchema.safeParse(ticketLabel);
+    if (!parsedTicket.success) {
       throw new PreviewTicketError("INVALID_HOST");
     }
-    const [sessionLabel, expiryCandidate, signatureCandidate] = ticketLabels;
+    const [sessionCandidate, expiryCandidate, signatureCandidate] =
+      parsedTicket.data.split("-");
     if (
-      sessionLabel === undefined ||
-      !/^[a-f0-9]{32}$/.test(sessionLabel) ||
+      sessionCandidate === undefined ||
       expiryCandidate === undefined ||
       signatureCandidate === undefined
     ) {
       throw new PreviewTicketError("INVALID_HOST");
     }
-    const expiryLabel = ExpiryLabelSchema.safeParse(expiryCandidate);
-    const signature = SignatureSchema.safeParse(signatureCandidate);
-    if (!expiryLabel.success || !signature.success) {
+
+    let sessionId: string;
+    let expiresAtMs: number;
+    try {
+      sessionId = decodeUuidBase36(sessionCandidate);
+      expiresAtMs = Number(parseBase36(expiryCandidate));
+    } catch {
       throw new PreviewTicketError("INVALID_HOST");
     }
-    const sessionId = [
-      sessionLabel.slice(0, 8),
-      sessionLabel.slice(8, 12),
-      sessionLabel.slice(12, 16),
-      sessionLabel.slice(16, 20),
-      sessionLabel.slice(20),
-    ].join("-");
-    SessionIdSchema.parse(sessionId);
-    const expected = this.#signature(sessionId, expiryLabel.data);
+    if (!Number.isSafeInteger(expiresAtMs)) {
+      throw new PreviewTicketError("INVALID_HOST");
+    }
+
+    const expected = this.#signature(sessionId, expiryCandidate);
     const expectedBytes = Buffer.from(expected, "utf8");
-    const actualBytes = Buffer.from(signature.data, "utf8");
+    const actualBytes = Buffer.from(signatureCandidate, "utf8");
     if (
       expectedBytes.length !== actualBytes.length ||
       !timingSafeEqual(expectedBytes, actualBytes)
     ) {
       throw new PreviewTicketError("INVALID_SIGNATURE");
     }
-    const expiresAtMs = Number.parseInt(expiryLabel.data, 36);
-    if (!Number.isSafeInteger(expiresAtMs) || expiresAtMs <= this.#now().getTime()) {
+    if (expiresAtMs <= this.#now().getTime()) {
       throw new PreviewTicketError("EXPIRED_TICKET", "Preview ticket expired");
     }
     return {
@@ -126,10 +146,58 @@ export class PreviewTicketSigner {
   }
 
   #signature(sessionId: string, expiryLabel: string): string {
-    return createHmac("sha256", this.#secret)
+    const mac = createHmac("sha256", this.#secret)
       .update(`${sessionId}.${expiryLabel}.${this.#baseDomain}`)
-      .digest("hex")
-      .slice(0, 48);
+      .digest()
+      .subarray(0, MAC_BYTES);
+    return bytesToBigInt(mac).toString(36).padStart(BASE36_MAC_WIDTH, "0");
   }
 }
 
+function encodeUuidBase36(sessionId: string): string {
+  const hex = sessionId.replaceAll("-", "");
+  const value = BigInt(`0x${hex}`);
+  return value.toString(36).padStart(BASE36_SESSION_WIDTH, "0");
+}
+
+function decodeUuidBase36(value: string): string {
+  const numeric = parseBase36(value);
+  if (numeric < 0n || numeric > MAX_UUID_VALUE) {
+    throw new RangeError("UUID token is out of range");
+  }
+  const hex = numeric.toString(16).padStart(32, "0");
+  const sessionId = [
+    hex.slice(0, 8),
+    hex.slice(8, 12),
+    hex.slice(12, 16),
+    hex.slice(16, 20),
+    hex.slice(20),
+  ].join("-");
+  return SessionIdSchema.parse(sessionId);
+}
+
+function parseBase36(value: string): bigint {
+  let result = 0n;
+  for (const character of value) {
+    const code = character.charCodeAt(0);
+    let digit: number;
+    if (code >= 48 && code <= 57) {
+      digit = code - 48;
+    } else if (code >= 97 && code <= 122) {
+      digit = code - 87;
+    } else {
+      throw new TypeError("Invalid base36 character");
+    }
+    if (digit >= 36) throw new TypeError("Invalid base36 character");
+    result = result * 36n + BigInt(digit);
+  }
+  return result;
+}
+
+function bytesToBigInt(value: Uint8Array): bigint {
+  let result = 0n;
+  for (const byte of value) {
+    result = (result << 8n) | BigInt(byte);
+  }
+  return result;
+}

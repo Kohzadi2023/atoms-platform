@@ -15,7 +15,7 @@ const RUN_ID = "00000000-0000-4000-8000-000000000014";
 const NOW = new Date("2026-08-01T12:00:00.000Z");
 const SECRET = "phase-2-preview-signing-secret-at-least-32-bytes";
 
-test("preview tickets use a unique signed hostname and reject tampering", () => {
+test("preview tickets use one DNS-safe signed label and reject tampering", () => {
   const signer = new PreviewTicketSigner({
     secret: SECRET,
     baseDomain: "preview.example.test",
@@ -29,13 +29,39 @@ test("preview tickets use a unique signed hostname and reject tampering", () => 
     sessionId: SESSION_ID,
     expiresAt: "2026-08-01T12:15:00.000Z",
   });
+
+  const baseLabels = "preview.example.test".split(".");
   const labels = url.hostname.split(".");
-  labels[2] = `${labels[2]?.slice(0, -1)}0`;
+  assert.equal(labels.length, baseLabels.length + 1);
+  const ticketLabel = labels[0];
+  assert.ok(ticketLabel !== undefined);
+  assert.equal(ticketLabel.length, 61);
+  assert.match(ticketLabel, /^[a-z0-9]{25}-[a-z0-9]{9}-[a-z0-9]{25}$/);
+
+  const tamperedCharacter = ticketLabel.at(-1) === "0" ? "1" : "0";
+  const tamperedLabel = `${ticketLabel.slice(0, -1)}${tamperedCharacter}`;
   assert.throws(
-    () => signer.verifyHost(labels.join(".")),
+    () => signer.verifyHost(`${tamperedLabel}.preview.example.test`),
     (error: unknown) =>
       error instanceof PreviewTicketError &&
       error.code === "INVALID_SIGNATURE",
+  );
+});
+
+test("preview tickets reject extra dynamic DNS labels", () => {
+  const signer = new PreviewTicketSigner({
+    secret: SECRET,
+    baseDomain: "preview.example.test",
+    now: () => NOW,
+  });
+  const url = new URL(
+    signer.issue(SESSION_ID, new Date("2026-08-01T12:15:00.000Z")),
+  );
+
+  assert.throws(
+    () => signer.verifyHost(`extra.${url.host}`),
+    (error: unknown) =>
+      error instanceof PreviewTicketError && error.code === "INVALID_HOST",
   );
 });
 
@@ -114,4 +140,3 @@ test("Redis store keeps provider credentials only in an expiring target record",
   await store.close();
   assert.equal(redis.quitCalled, false);
 });
-

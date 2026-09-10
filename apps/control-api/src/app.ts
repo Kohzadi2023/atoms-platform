@@ -104,6 +104,7 @@ const TERMINAL_RUN_STATUSES: ReadonlySet<AgentRunStatus> = new Set([
 export interface BuildControlApiOptions {
   readonly repository: ControlRepository;
   readonly runQueue: RunQueue;
+  readonly runExecutionEnabled?: boolean;
   readonly logger?: boolean;
   readonly closeDependencies?: boolean;
   readonly ssePollIntervalMs?: number;
@@ -125,6 +126,7 @@ export async function buildControlApi(
   app.setSerializerCompiler(serializerCompiler);
   const corsOrigins = options.corsOrigins ?? [];
   const authRequired = options.authRequired ?? true;
+  const runExecutionEnabled = options.runExecutionEnabled ?? true;
   if (authRequired && options.authenticator === undefined) {
     throw new Error("Authenticator is required when AUTH_REQUIRED is true");
   }
@@ -338,6 +340,7 @@ export async function buildControlApi(
       },
     },
     async (request, reply) => {
+      assertRunExecutionEnabled(runExecutionEnabled);
       const principal = requirePrincipal(request);
       let result: CreateRunWithIdempotencyResult;
       try {
@@ -565,6 +568,9 @@ export async function buildControlApi(
         current.status,
         now(),
       );
+      if (transition.enqueue) {
+        assertRunExecutionEnabled(runExecutionEnabled);
+      }
       const updated = await options.repository.transitionRun(
         principal.userId,
         current.id,
@@ -760,6 +766,16 @@ function requirePrincipal(request: FastifyRequest) {
     throw new ApiError(401, "AUTHENTICATION_REQUIRED", "Authentication required");
   }
   return request.principal;
+}
+
+function assertRunExecutionEnabled(enabled: boolean): void {
+  if (!enabled) {
+    throw new ApiError(
+      503,
+      "RUN_EXECUTION_DISABLED",
+      "Run execution is disabled by deployment policy",
+    );
+  }
 }
 
 function assertClientPreconditions(

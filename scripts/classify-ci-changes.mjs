@@ -1,4 +1,4 @@
-import { appendFile, readFile } from "node:fs/promises";
+import { appendFile } from "node:fs/promises";
 import { pathToFileURL } from "node:url";
 
 export function classifyCiChanges(paths, eventName = "pull_request") {
@@ -24,8 +24,16 @@ export function classifyCiChanges(paths, eventName = "pull_request") {
   };
 }
 
+async function readStdin() {
+  let input = "";
+  for await (const chunk of process.stdin) {
+    input += chunk.toString();
+  }
+  return input;
+}
+
 async function main() {
-  const input = await readFile(0, "utf8");
+  const input = await readStdin();
   const paths = input.split(/\r?\n/u);
   const eventName = process.env.GITHUB_EVENT_NAME ?? "pull_request";
   const result = classifyCiChanges(paths, eventName);

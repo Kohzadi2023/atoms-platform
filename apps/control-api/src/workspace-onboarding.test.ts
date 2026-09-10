@@ -27,7 +27,7 @@ function prismaFixture(options: { readonly existingAfterLock?: boolean } = {}) {
   const transaction = {
     async $queryRaw() {
       lockCount += 1;
-      return [{ pg_advisory_xact_lock: null }];
+      return [{ locked: 1 }];
     },
     membership: {
       async findFirst() {

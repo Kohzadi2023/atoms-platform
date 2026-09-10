@@ -66,6 +66,11 @@ import {
   type ControlApiAccessTokenProvider,
 } from "../lib/control-api";
 import {
+  LIVE_PROVIDER_CONFIRMATION,
+  MAX_ALLOWED_COST_CAD,
+  validateLiveRunConsent,
+} from "../lib/run-readiness";
+import {
   AGENT_ORDER,
   availableRunActions,
   createWorkspaceProjection,
@@ -138,6 +143,7 @@ export function WorkspaceShell({
   const [prompt, setPrompt] = useState(
     "Build a responsive customer operations portal with account summaries, support requests, role-based navigation, Prisma models, API routes, and deterministic tests.",
   );
+  const [providerConfirmation, setProviderConfirmation] = useState("");
   const [attachments, setAttachments] = useState<readonly File[]>([]);
   const [attachmentRecords, setAttachmentRecords] = useState<
     readonly ProjectAttachment[]
@@ -302,21 +308,59 @@ export function WorkspaceShell({
     return () => window.clearInterval(interval);
   }, [run, terminal]);
 
-  async function createProjectRun(event: FormEvent<HTMLFormElement>) {
+  async function createProjectOnly(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
+    if (project !== undefined) {
+      setNotice("Project is already created and verified. No run has been started yet.");
+      return;
+    }
     setError(undefined);
     setNotice(undefined);
     setBusy(true);
     try {
-      const createdProject =
-        project ??
-        (await api.createProject({
-          workspaceId,
-          name: projectName,
-          slug: projectSlug,
-          description: "Created from the Atoms developer workspace",
-        }));
-      setProject(createdProject);
+      const created = await api.createProject({
+        workspaceId,
+        name: projectName,
+        slug: projectSlug,
+        description: "Created from the Atoms developer workspace",
+      });
+      const verified = await api.getProject(created.id);
+      if (
+        verified.id !== created.id ||
+        verified.workspaceId !== workspaceId ||
+        verified.slug !== projectSlug
+      ) {
+        throw new Error("Created project could not be verified against its workspace and slug.");
+      }
+      setProject(verified);
+      setNotice("Project created and verified. No run has been started.");
+    } catch (caught) {
+      setError(toMessage(caught));
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function launchRun(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    if (project === undefined) {
+      setError("Create and verify the project before launching a run.");
+      return;
+    }
+    const consent = validateLiveRunConsent({
+      prompt,
+      maximumCostCad: MAX_ALLOWED_COST_CAD,
+      providerConfirmation,
+    });
+    if (consent.violations.length > 0 || consent.normalizedPrompt === undefined) {
+      setError(consent.violations.join(" "));
+      return;
+    }
+
+    setError(undefined);
+    setNotice(undefined);
+    setBusy(true);
+    try {
       const attachmentIds: string[] = [];
       for (const [index, file] of attachments.entries()) {
         const existing = attachmentRecords.find(
@@ -337,7 +381,7 @@ export function WorkspaceShell({
         const identity = attachmentIdentity(file);
         const intent =
           uploadIntentsRef.current.get(identity) ??
-          (await api.createAttachmentUploadIntent(createdProject.id, {
+          (await api.createAttachmentUploadIntent(project.id, {
             fileName: file.name,
             contentType:
               file.type as (typeof ALLOWED_ATTACHMENT_MIME_TYPES)[number],
@@ -361,7 +405,7 @@ export function WorkspaceShell({
           );
         }
         const completed = await api.completeAttachmentUpload(
-          createdProject.id,
+          project.id,
           intent.attachment.id,
           upload.headers.get("etag") ?? undefined,
         );
@@ -378,14 +422,14 @@ export function WorkspaceShell({
         setNotice("References uploaded. Waiting for malware and file-type scans…");
         const clean = await waitForCleanAttachments(
           api,
-          createdProject.id,
+          project.id,
           attachmentIds,
           setAttachmentRecords,
         );
         setAttachmentRecords(clean);
       }
       const fingerprint = JSON.stringify({
-        prompt: prompt.trim(),
+        prompt: consent.normalizedPrompt,
         attachmentIds: [...attachmentIds].sort(),
       });
       if (runRequestRef.current?.fingerprint !== fingerprint) {
@@ -395,12 +439,13 @@ export function WorkspaceShell({
         };
       }
       const createdRun = await api.createRun(
-        createdProject.id,
-        prompt,
+        project.id,
+        consent.normalizedPrompt,
         runRequestRef.current.idempotencyKey,
         attachmentIds,
       );
       runRequestRef.current = undefined;
+      setProviderConfirmation("");
       lastSequenceRef.current = 0;
       setProjection(createWorkspaceProjection());
       setFiles([]);
@@ -410,7 +455,7 @@ export function WorkspaceShell({
       setRun(createdRun);
       globalThis.localStorage.setItem(
         ACTIVE_RUN_STORAGE_KEY,
-        JSON.stringify({ projectId: createdProject.id, runId: createdRun.id }),
+        JSON.stringify({ projectId: project.id, runId: createdRun.id }),
       );
       setNow(Date.now());
       setMobilePane("project");
@@ -563,6 +608,15 @@ export function WorkspaceShell({
     projection.preview?.url,
     PREVIEW_BASE_DOMAIN,
   );
+  const launchConsent = validateLiveRunConsent({
+    prompt,
+    maximumCostCad: MAX_ALLOWED_COST_CAD,
+    providerConfirmation,
+  });
+  const launchReady =
+    project !== undefined &&
+    launchConsent.violations.length === 0 &&
+    launchConsent.normalizedPrompt !== undefined;
 
   return (
     <main className="min-h-screen">
@@ -653,7 +707,13 @@ export function WorkspaceShell({
         >
           <SectionHeading
             eyebrow="Agent Hub"
-            title={run === undefined ? "Create a durable run" : "Build in progress"}
+            title={
+              run !== undefined
+                ? "Build in progress"
+                : project === undefined
+                  ? "Create a project"
+                  : "Project ready — launch is confirmation-gated"
+            }
             trailing={
               effectiveStatus === undefined ? undefined : <StatusBadge status={effectiveStatus} />
             }
@@ -662,7 +722,7 @@ export function WorkspaceShell({
           {run === undefined ? (
             <form
               className="mt-4 space-y-4 rounded-2xl border border-[#252d3a] bg-[#0d121a] p-4 shadow-2xl shadow-black/20"
-              onSubmit={createProjectRun}
+              onSubmit={project === undefined ? createProjectOnly : launchRun}
             >
               <Field label="Workspace">
                 <select
@@ -670,7 +730,7 @@ export function WorkspaceShell({
                   value={workspaceId}
                   onChange={(event) => setWorkspaceId(event.target.value)}
                   required
-                  disabled={workspaces.length === 0}
+                  disabled={workspaces.length === 0 || project !== undefined}
                 >
                   {workspaces.length === 0 ? (
                     <option value="">No authorized workspaces</option>
@@ -690,6 +750,7 @@ export function WorkspaceShell({
                     value={projectName}
                     maxLength={160}
                     required
+                    disabled={project !== undefined}
                     onChange={(event) => {
                       setProjectName(event.target.value);
                       setProjectSlug(slugify(event.target.value));
@@ -702,96 +763,152 @@ export function WorkspaceShell({
                     value={projectSlug}
                     maxLength={100}
                     required
+                    disabled={project !== undefined}
                     pattern="[a-z0-9]+(?:-[a-z0-9]+)*"
                     onChange={(event) => setProjectSlug(event.target.value)}
                   />
                 </Field>
               </div>
-              <Field
-                label="What should the agents build?"
-                hint={`${prompt.length.toLocaleString()} / 100,000 characters`}
-              >
-                <textarea
-                  className={`${inputClass} min-h-40 resize-y leading-6`}
-                  value={prompt}
-                  maxLength={100_000}
-                  required
-                  onChange={(event) => setPrompt(event.target.value)}
-                />
-              </Field>
 
-              <div className="rounded-xl border border-dashed border-[#364151] bg-[#0a0f16] p-3">
-                <label className="flex cursor-pointer items-center justify-between gap-3 text-sm font-medium text-[#c8d1de]">
-                  <span className="inline-flex items-center gap-2">
-                    <Paperclip size={16} aria-hidden="true" />
-                    Reference files
-                  </span>
-                  <span className="rounded-lg border border-[#303a48] px-2.5 py-1 text-xs text-[#a6b1c0]">
-                    Choose files
-                  </span>
-                  <input
-                    className="sr-only"
-                    type="file"
-                    multiple
-                    accept=".pdf,.txt,.png,.jpg,.jpeg,.webp"
-                    onChange={selectAttachments}
-                  />
-                </label>
-                <p className="mt-2 text-xs leading-5 text-[#7f8b9d]">
-                  Up to five files, 10 MB each. Files are uploaded directly to
-                  encrypted quarantine storage and scanned before agents can use them.
-                </p>
-                {attachments.length > 0 ? (
-                  <>
-                    <ul className="mt-2 space-y-1" aria-label="Selected attachments">
-                      {attachments.map((file) => (
-                        <li
-                          key={`${file.name}-${String(file.lastModified)}`}
-                          className="flex items-center justify-between rounded-lg bg-[#111821] px-2.5 py-1.5 text-xs"
+              {project === undefined ? (
+                <div className="rounded-xl border border-[#2f4a42] bg-[#0e1d18] p-3 text-xs leading-5 text-[#a8d8c6]">
+                  Step 1 is non-billable. It creates and reads back project metadata only;
+                  no run, agent, OpenAI, or E2B request is sent.
+                </div>
+              ) : (
+                <>
+                  <div className="rounded-xl border border-[#315c4b] bg-[#10271f] p-3 text-sm text-[#aff6d9]">
+                    <div className="flex items-start gap-2">
+                      <Check className="mt-0.5 shrink-0" size={16} aria-hidden="true" />
+                      <div>
+                        <p className="font-semibold">Project created and verified</p>
+                        <p className="mt-1 text-xs leading-5 text-[#93cdb7]">
+                          {project.name} · <span className="font-mono">{project.slug}</span>. No run has been started.
+                        </p>
+                      </div>
+                    </div>
+                  </div>
+
+                  <Field
+                    label="What should the agents build?"
+                    hint={`${prompt.length.toLocaleString()} / 100,000 characters`}
+                  >
+                    <textarea
+                      className={`${inputClass} min-h-40 resize-y leading-6`}
+                      value={prompt}
+                      maxLength={100_000}
+                      required
+                      onChange={(event) => setPrompt(event.target.value)}
+                    />
+                  </Field>
+
+                  <div className="rounded-xl border border-dashed border-[#364151] bg-[#0a0f16] p-3">
+                    <label className="flex cursor-pointer items-center justify-between gap-3 text-sm font-medium text-[#c8d1de]">
+                      <span className="inline-flex items-center gap-2">
+                        <Paperclip size={16} aria-hidden="true" />
+                        Reference files
+                      </span>
+                      <span className="rounded-lg border border-[#303a48] px-2.5 py-1 text-xs text-[#a6b1c0]">
+                        Choose files
+                      </span>
+                      <input
+                        className="sr-only"
+                        type="file"
+                        multiple
+                        accept=".pdf,.txt,.png,.jpg,.jpeg,.webp"
+                        onChange={selectAttachments}
+                      />
+                    </label>
+                    <p className="mt-2 text-xs leading-5 text-[#7f8b9d]">
+                      Up to five files, 10 MB each. Files are uploaded directly to
+                      encrypted quarantine storage and scanned before agents can use them.
+                    </p>
+                    {attachments.length > 0 ? (
+                      <>
+                        <ul className="mt-2 space-y-1" aria-label="Selected attachments">
+                          {attachments.map((file) => (
+                            <li
+                              key={`${file.name}-${String(file.lastModified)}`}
+                              className="flex items-center justify-between rounded-lg bg-[#111821] px-2.5 py-1.5 text-xs"
+                            >
+                              <span className="truncate text-[#cbd5e1]">{file.name}</span>
+                              <span className="text-[#7f8b9d]">{formatBytes(file.size)}</span>
+                              {attachmentRecords.find(
+                                (attachment) => attachment.fileName === file.name,
+                              )?.status !== undefined ? (
+                                <span className="text-[#78e6bd]">
+                                  {
+                                    attachmentRecords.find(
+                                      (attachment) =>
+                                        attachment.fileName === file.name,
+                                    )?.status
+                                  }
+                                </span>
+                              ) : null}
+                            </li>
+                          ))}
+                        </ul>
+                        <button
+                          type="button"
+                          className="mt-2 text-xs font-semibold text-[#9fc5ff] hover:text-[#c3d9ff]"
+                          onClick={() => {
+                            setAttachments([]);
+                            uploadIntentsRef.current.clear();
+                            setAttachmentRecords([]);
+                          }}
                         >
-                          <span className="truncate text-[#cbd5e1]">{file.name}</span>
-                          <span className="text-[#7f8b9d]">{formatBytes(file.size)}</span>
-                          {attachmentRecords.find(
-                            (attachment) => attachment.fileName === file.name,
-                          )?.status !== undefined ? (
-                            <span className="text-[#78e6bd]">
-                              {
-                                attachmentRecords.find(
-                                  (attachment) =>
-                                    attachment.fileName === file.name,
-                                )?.status
-                              }
-                            </span>
-                          ) : null}
-                        </li>
-                      ))}
-                    </ul>
-                    <button
-                      type="button"
-                      className="mt-2 text-xs font-semibold text-[#9fc5ff] hover:text-[#c3d9ff]"
-                      onClick={() => {
-                        setAttachments([]);
-                        uploadIntentsRef.current.clear();
-                        setAttachmentRecords([]);
-                      }}
+                          Clear attachments
+                        </button>
+                      </>
+                    ) : null}
+                  </div>
+
+                  <div className="rounded-xl border border-[#6d5a32] bg-[#211b0f] p-3">
+                    <Field
+                      label="Live provider confirmation"
+                      hint={`Maximum CAD ${String(MAX_ALLOWED_COST_CAD)}`}
                     >
-                      Clear attachments
-                    </button>
-                  </>
-                ) : null}
-              </div>
+                      <input
+                        className={inputClass}
+                        value={providerConfirmation}
+                        autoComplete="off"
+                        spellCheck={false}
+                        required
+                        placeholder={LIVE_PROVIDER_CONFIRMATION}
+                        onChange={(event) => setProviderConfirmation(event.target.value)}
+                      />
+                    </Field>
+                    <p className="mt-2 text-xs leading-5 text-[#d1bd92]">
+                      Type <code className="font-mono text-[#ffe1a4]">{LIVE_PROVIDER_CONFIRMATION}</code> exactly.
+                      Launching may use OpenAI and E2B and is capped by the current CAD {String(MAX_ALLOWED_COST_CAD)} build target.
+                    </p>
+                  </div>
+                </>
+              )}
 
               <button
                 className="inline-flex w-full items-center justify-center gap-2 rounded-xl bg-[#78e6bd] px-4 py-3 text-sm font-bold text-[#06281e] transition hover:bg-[#91efd0] disabled:cursor-not-allowed disabled:opacity-50"
                 type="submit"
-                disabled={busy}
+                disabled={
+                  busy ||
+                  workspaces.length === 0 ||
+                  (project !== undefined && !launchReady)
+                }
               >
                 {busy ? (
                   <LoaderCircle className="animate-spin" size={17} aria-hidden="true" />
+                ) : project === undefined ? (
+                  <Check size={17} aria-hidden="true" />
                 ) : (
                   <Play size={17} fill="currentColor" aria-hidden="true" />
                 )}
-                {busy ? "Creating durable run…" : "Plan and build"}
+                {busy
+                  ? project === undefined
+                    ? "Creating project…"
+                    : "Preparing controlled run…"
+                  : project === undefined
+                    ? "Create project only — no run"
+                    : "Launch run — may use OpenAI/E2B"}
               </button>
             </form>
           ) : (

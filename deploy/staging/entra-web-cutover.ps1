@@ -215,6 +215,7 @@ try {
             --build-arg "NEXT_PUBLIC_CONTROL_API_URL=$controlApiOrigin" `
             --build-arg "NEXT_PUBLIC_ENTRA_CLIENT_ID=$ExpectedWebClientId" `
             --build-arg "NEXT_PUBLIC_ENTRA_AUTHORITY=$ExpectedAuthority" `
+            --build-arg "NEXT_PUBLIC_ENTRA_TENANT_ID=$ExpectedTenantId" `
             --build-arg "NEXT_PUBLIC_ENTRA_API_SCOPE=$ExpectedApiScope" `
             --build-arg "NEXT_PUBLIC_STORAGE_ORIGIN=$controlApiOrigin" `
             --build-arg "NEXT_PUBLIC_PREVIEW_BASE_DOMAIN=$ExpectedPreviewBaseDomain" `

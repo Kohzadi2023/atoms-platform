@@ -8,7 +8,7 @@ import {
 import {
   createProjectAndVerify,
   type ProjectReadinessClient,
-} from "./project-readiness.js";
+} from "./project-readiness";
 
 export const LIVE_PROVIDER_CONFIRMATION =
   "I_ACCEPT_ONE_LIVE_OPENAI_E2B_STAGING_RUN";

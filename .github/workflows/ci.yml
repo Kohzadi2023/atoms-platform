@@ -104,7 +104,7 @@ jobs:
           RUN_WORKSPACE_ONBOARDING_INTEGRATION_TESTS: "true"
           WORKSPACE_ONBOARDING_INTEGRATION_CONFIRMATION: DEDICATED_EPHEMERAL_DATABASE
         run: |
-          pnpm --filter @atoms/control-api build
+          pnpm --filter @atoms/control-api... build
           pnpm --filter @atoms/control-api test:workspace-onboarding:built
       - name: Exercise PostgreSQL CAS and the BullMQ reconciliation scheduler
         env:

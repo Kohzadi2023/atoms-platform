@@ -47,8 +47,10 @@ test("creates a unique default readiness slug and verifies without run capabilit
     },
     async getProject(projectId) {
       calls.push("getProject");
-      assert.equal(projectId, createdProject?.id);
-      assert.notEqual(createdProject, undefined);
+      if (createdProject === undefined) {
+        throw new Error("Project must be created before readback");
+      }
+      assert.equal(projectId, createdProject.id);
       return createdProject;
     },
   };

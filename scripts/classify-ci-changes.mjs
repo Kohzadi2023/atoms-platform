@@ -42,8 +42,9 @@ async function main() {
     `full_ci=${String(result.fullCi)}`,
   ].join("\n");
 
-  if (process.env.GITHUB_OUTPUT !== undefined) {
-    await appendFile(process.env.GITHUB_OUTPUT, `${output}\n`, "utf8");
+  const githubOutput = process.env.GITHUB_OUTPUT?.trim();
+  if (githubOutput !== undefined && githubOutput.length > 0) {
+    await appendFile(githubOutput, `${output}\n`, "utf8");
   }
 
   console.log(`CI classification: ${result.reason}.`);

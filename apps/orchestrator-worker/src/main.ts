@@ -34,7 +34,7 @@ import {
   PINNED_OPENAI_MODELS,
   PINNED_OPENAI_OUTPUT_LIMITS,
   PINNED_OPENAI_PRICING,
-  RedisRunProviderBudgetStore,
+  PostgresRunProviderBudgetStore,
 } from "./model-budget.js";
 import { RunProcessor } from "./processor.js";
 import { PrismaWorkerRepository } from "./repository.js";
@@ -75,12 +75,6 @@ const EnvironmentSchema = z
       .min(1)
       .max(10)
       .default(1.5),
-    RUN_PROVIDER_BUDGET_TTL_MS: z.coerce
-      .number()
-      .int()
-      .min(60_000)
-      .max(7 * 24 * 60 * 60_000)
-      .default(24 * 60 * 60_000),
     ORCHESTRATOR_CONCURRENCY: z.coerce.number().int().min(1).max(32).default(2),
     ATTACHMENT_SCAN_CONCURRENCY: z.coerce
       .number()
@@ -199,9 +193,7 @@ async function main(): Promise<void> {
   const checkpointer = PostgresSaver.fromConnString(environment.DATABASE_URL);
   await checkpointer.setup();
 
-  const budgetStore = new RedisRunProviderBudgetStore({
-    redisUrl: environment.REDIS_URL,
-  });
+  const budgetStore = new PostgresRunProviderBudgetStore(prisma);
   const openAiGateway = new OpenAIModelGateway({
     apiKey: environment.OPENAI_API_KEY,
     models: PINNED_OPENAI_MODELS,
@@ -214,7 +206,6 @@ async function main(): Promise<void> {
     pricing: PINNED_OPENAI_PRICING,
     outputTokenLimits: PINNED_OPENAI_OUTPUT_LIMITS,
     safetyMultiplier: environment.RUN_PROVIDER_BUDGET_SAFETY_MULTIPLIER,
-    budgetTtlMs: environment.RUN_PROVIDER_BUDGET_TTL_MS,
   });
   const agents = new ModelBackedAgentRuntime(gateway);
   const sandboxProvider = new E2BSandboxAdapter({
@@ -406,7 +397,6 @@ async function main(): Promise<void> {
     await databaseWorker?.close();
     await attachmentWorker.close();
     await worker.close();
-    await budgetStore.close();
     await previewStore.close();
     await checkpointer.end();
     await repository.close();

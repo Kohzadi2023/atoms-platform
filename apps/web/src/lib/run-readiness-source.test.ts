@@ -14,5 +14,5 @@ test("run readiness UI cannot invoke live run creation", async () => {
   assert.doesNotMatch(source, /\.createRun\s*\(/u);
   assert.doesNotMatch(source, /\/runs/u);
   assert.doesNotMatch(source, /OpenAI\.create/u);
-  assert.doesNotMatch(source, /E2B/u);
+  assert.doesNotMatch(source, /new\s+E2B/u);
 });

@@ -98,6 +98,14 @@ jobs:
           psql -h localhost -U atoms -d atoms_clean -tAc \
             "SELECT id FROM workspaces WHERE id = '00000000-0000-4000-8000-000000000001'" \
             | grep -Fx '00000000-0000-4000-8000-000000000001'
+      - name: Exercise first-workspace onboarding against real PostgreSQL
+        env:
+          DATABASE_URL: postgresql://atoms:atoms@localhost:5432/atoms_clean
+          RUN_WORKSPACE_ONBOARDING_INTEGRATION_TESTS: "true"
+          WORKSPACE_ONBOARDING_INTEGRATION_CONFIRMATION: DEDICATED_EPHEMERAL_DATABASE
+        run: |
+          pnpm --filter @atoms/control-api build
+          pnpm --filter @atoms/control-api test:workspace-onboarding:built
       - name: Exercise PostgreSQL CAS and the BullMQ reconciliation scheduler
         env:
           DATABASE_URL: postgresql://atoms:atoms@localhost:5432/atoms_upgrade

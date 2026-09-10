@@ -58,6 +58,29 @@ jobs:
           pnpm audit --audit-level high
           pnpm secrets:scan
 
+      - name: Parse reusable staging PowerShell
+        if: needs.changes.outputs.full_ci == 'true'
+        shell: pwsh
+        run: |
+          $failed = $false
+          foreach ($path in @(
+            "deploy/staging/entra-web-cutover.ps1",
+            "scripts/staging-public-smoke.ps1"
+          )) {
+            $tokens = $null
+            $errors = $null
+            [void][System.Management.Automation.Language.Parser]::ParseFile(
+              (Resolve-Path $path).Path,
+              [ref]$tokens,
+              [ref]$errors
+            )
+            if ($errors.Count -gt 0) {
+              $failed = $true
+              Write-Error "$path has PowerShell parser errors: $($errors -join '; ')"
+            }
+          }
+          if ($failed) { throw "Reusable staging PowerShell parsing failed." }
+
       - name: Compile the dedicated Azure staging infrastructure
         if: needs.changes.outputs.full_ci == 'true'
         run: |

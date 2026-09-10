@@ -29,6 +29,13 @@ function claims(overrides = {}) {
   };
 }
 
+test("pins Atoms staging to the GUID-host External ID issuer returned by metadata", () => {
+  assert.equal(
+    EXPECTED_ISSUER,
+    `https://${EXPECTED_TENANT_ID}.ciamlogin.com/${EXPECTED_TENANT_ID}/v2.0`,
+  );
+});
+
 test("decodes and validates the verified Atoms staging Entra token contract", () => {
   const accessToken = token(claims());
   const payload = decodeJwtPayload(accessToken);

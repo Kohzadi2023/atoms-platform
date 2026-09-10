@@ -5,7 +5,7 @@ export const EXPECTED_TENANT_ID = "1dda8889-b5fc-43eb-857b-b1549e4b82c3";
 export const EXPECTED_API_CLIENT_ID = "4299c3fb-7ce1-4d23-bd49-26c554b08dac";
 export const EXPECTED_SCOPE = "access_as_user";
 export const EXPECTED_ISSUER =
-  "https://atomsstaging91ce9.ciamlogin.com/1dda8889-b5fc-43eb-857b-b1549e4b82c3/v2.0";
+  `https://${EXPECTED_TENANT_ID}.ciamlogin.com/${EXPECTED_TENANT_ID}/v2.0`;
 
 export function decodeJwtPayload(token) {
   if (typeof token !== "string" || token.length < 20) {

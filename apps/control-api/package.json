@@ -9,6 +9,7 @@
     "start": "node dist/main.js",
     "test": "pnpm build && node --test dist/*.test.js",
     "test:attachments-durability:built": "node --test dist/attachment.integration.test.js",
+    "test:workspace-onboarding:built": "node --test dist/workspace-onboarding.integration.test.js",
     "typecheck": "tsc -p tsconfig.json --noEmit"
   },
   "dependencies": {

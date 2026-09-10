@@ -65,7 +65,6 @@ class FakeBudgetStore implements RunProviderBudgetStore {
     readonly runId: string;
     readonly reservationUsdMicros: number;
     readonly totalBudgetUsdMicros: number;
-    readonly ttlMs: number;
   }> = [];
   accepted = true;
   remainingUsdMicros = 1_000_000;
@@ -74,7 +73,6 @@ class FakeBudgetStore implements RunProviderBudgetStore {
     readonly runId: string;
     readonly reservationUsdMicros: number;
     readonly totalBudgetUsdMicros: number;
-    readonly ttlMs: number;
   }): Promise<{ readonly accepted: boolean; readonly remainingUsdMicros: number }> {
     this.calls.push(input);
     return {
@@ -150,7 +148,7 @@ test("rejects an exhausted budget before invoking the provider", async () => {
   assert.equal(gateway.generateCalls, 0);
 });
 
-test("zero configured budget fails closed before Redis or provider work", async () => {
+test("zero configured budget fails closed before ledger or provider work", async () => {
   const gateway = new FakeGateway();
   const store = new FakeBudgetStore();
   const budgeted = new BudgetedModelGateway({

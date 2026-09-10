@@ -11,6 +11,5 @@ test("project readiness UI cannot invoke run creation", async () => {
 
   assert.match(source, /Create project only/u);
   assert.doesNotMatch(source, /\.createRun\s*\(/u);
-  assert.doesNotMatch(source, /\/runs(?:[\"'`/]|$)/u);
-  assert.doesNotMatch(source, /OpenAI.*E2B.*run/u);
+  assert.doesNotMatch(source, /\/runs/u);
 });

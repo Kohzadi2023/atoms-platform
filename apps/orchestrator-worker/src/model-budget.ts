@@ -7,10 +7,9 @@ import {
   type ModelResponse,
   type ModelStreamEvent,
 } from "@atoms/model-gateway";
-import Redis from "ioredis";
+import type { PrismaClient } from "@atoms/db";
 
 const REQUEST_OVERHEAD_TOKEN_RESERVE = 2_048;
-const DEFAULT_BUDGET_TTL_MS = 24 * 60 * 60 * 1_000;
 const STANDARD_BASE64_PATTERN =
   /^(?:[A-Za-z0-9+/]{4})*(?:[A-Za-z0-9+/]{2}==|[A-Za-z0-9+/]{3}=)?$/u;
 
@@ -58,7 +57,6 @@ export interface RunProviderBudgetStore {
     readonly runId: string;
     readonly reservationUsdMicros: number;
     readonly totalBudgetUsdMicros: number;
-    readonly ttlMs: number;
   }): Promise<{ readonly accepted: boolean; readonly remainingUsdMicros: number }>;
 }
 
@@ -73,7 +71,6 @@ export interface BudgetedModelGatewayOptions {
   readonly pricing: Readonly<Record<string, ModelPricing>>;
   readonly outputTokenLimits: Readonly<Record<string, number>>;
   readonly safetyMultiplier?: number;
-  readonly budgetTtlMs?: number;
 }
 
 export class BudgetedModelGateway implements ModelGateway {
@@ -83,7 +80,6 @@ export class BudgetedModelGateway implements ModelGateway {
   readonly #pricing: Readonly<Record<string, ModelPricing>>;
   readonly #outputTokenLimits: Readonly<Record<string, number>>;
   readonly #safetyMultiplier: number;
-  readonly #budgetTtlMs: number;
 
   constructor(options: BudgetedModelGatewayOptions) {
     if (
@@ -100,10 +96,6 @@ export class BudgetedModelGateway implements ModelGateway {
     ) {
       throw new RangeError("safetyMultiplier must be between 1 and 10");
     }
-    const budgetTtlMs = options.budgetTtlMs ?? DEFAULT_BUDGET_TTL_MS;
-    if (!Number.isInteger(budgetTtlMs) || budgetTtlMs < 60_000) {
-      throw new RangeError("budgetTtlMs must be at least 60000");
-    }
 
     this.#gateway = options.gateway;
     this.#budgetStore = options.budgetStore;
@@ -111,7 +103,6 @@ export class BudgetedModelGateway implements ModelGateway {
     this.#pricing = options.pricing;
     this.#outputTokenLimits = options.outputTokenLimits;
     this.#safetyMultiplier = safetyMultiplier;
-    this.#budgetTtlMs = budgetTtlMs;
   }
 
   async generate(request: ModelRequest): Promise<ModelResponse> {
@@ -154,7 +145,6 @@ export class BudgetedModelGateway implements ModelGateway {
       runId,
       reservationUsdMicros,
       totalBudgetUsdMicros: this.#totalBudgetUsdMicros,
-      ttlMs: this.#budgetTtlMs,
     });
 
     if (!reservation.accepted) {
@@ -263,75 +253,88 @@ function boundedTextReferenceBytes(request: ModelRequest): number {
   return bytes;
 }
 
-const RESERVE_BUDGET_LUA = `
-local current = redis.call("GET", KEYS[1])
-if not current then
-  current = tonumber(ARGV[1])
-else
-  current = tonumber(current)
-end
-local reservation = tonumber(ARGV[2])
-local ttl = tonumber(ARGV[3])
-if reservation > current then
-  return {0, current}
-end
-local remaining = current - reservation
-redis.call("SET", KEYS[1], remaining, "PX", ttl)
-return {1, remaining}
-`;
+interface ProviderBudgetRow {
+  readonly totalUsdMicros: number;
+  readonly reservedUsdMicros: number;
+}
 
-export class RedisRunProviderBudgetStore implements RunProviderBudgetStore {
-  readonly #redis: Redis;
-  readonly #keyPrefix: string;
+export class PostgresRunProviderBudgetStore implements RunProviderBudgetStore {
+  readonly #prisma: PrismaClient;
 
-  constructor(options: { readonly redisUrl: string; readonly keyPrefix?: string }) {
-    this.#redis = new Redis(options.redisUrl, {
-      enableOfflineQueue: false,
-      maxRetriesPerRequest: 1,
-    });
-    this.#keyPrefix = options.keyPrefix ?? "atoms:provider-budget";
+  constructor(prisma: PrismaClient) {
+    this.#prisma = prisma;
   }
 
   async reserve(input: {
     readonly runId: string;
     readonly reservationUsdMicros: number;
     readonly totalBudgetUsdMicros: number;
-    readonly ttlMs: number;
   }): Promise<{ readonly accepted: boolean; readonly remainingUsdMicros: number }> {
-    for (const [name, value] of [
-      ["reservationUsdMicros", input.reservationUsdMicros],
-      ["totalBudgetUsdMicros", input.totalBudgetUsdMicros],
-      ["ttlMs", input.ttlMs],
-    ] as const) {
-      if (!Number.isInteger(value) || value < 0) {
-        throw new RangeError(`${name} must be a non-negative integer`);
-      }
+    if (!Number.isInteger(input.reservationUsdMicros) || input.reservationUsdMicros <= 0) {
+      throw new RangeError("reservationUsdMicros must be a positive integer");
+    }
+    if (!Number.isInteger(input.totalBudgetUsdMicros) || input.totalBudgetUsdMicros <= 0) {
+      throw new RangeError("totalBudgetUsdMicros must be a positive integer");
     }
     if (input.runId.trim().length === 0) {
       throw new TypeError("runId must not be empty");
     }
 
-    const result = await this.#redis.eval(
-      RESERVE_BUDGET_LUA,
-      1,
-      `${this.#keyPrefix}:${input.runId}`,
-      String(input.totalBudgetUsdMicros),
-      String(input.reservationUsdMicros),
-      String(input.ttlMs),
-    );
+    return this.#prisma.$transaction(async (transaction) => {
+      // First reservation permanently fixes the durable ceiling for this run.
+      // ON CONFLICT never raises an existing ceiling. A lower later deployment
+      // is honored through Math.min below, so configuration can only tighten it.
+      await transaction.$executeRaw`
+        INSERT INTO atoms_runtime.run_provider_budgets (
+          run_id,
+          total_usd_micros,
+          reserved_usd_micros
+        )
+        VALUES (
+          ${input.runId}::uuid,
+          ${input.totalBudgetUsdMicros},
+          0
+        )
+        ON CONFLICT (run_id) DO NOTHING
+      `;
 
-    if (!Array.isArray(result) || result.length !== 2) {
-      throw new Error("Redis provider budget reservation returned an invalid response");
-    }
-    const accepted = Number(result[0]) === 1;
-    const remainingUsdMicros = Number(result[1]);
-    if (!Number.isSafeInteger(remainingUsdMicros) || remainingUsdMicros < 0) {
-      throw new Error("Redis provider budget reservation returned an invalid balance");
-    }
-    return { accepted, remainingUsdMicros };
-  }
+      const rows = await transaction.$queryRaw<ProviderBudgetRow[]>`
+        SELECT
+          total_usd_micros AS "totalUsdMicros",
+          reserved_usd_micros AS "reservedUsdMicros"
+        FROM atoms_runtime.run_provider_budgets
+        WHERE run_id = ${input.runId}::uuid
+        FOR UPDATE
+      `;
+      const current = rows[0];
+      if (current === undefined) {
+        throw new Error("Provider budget ledger row could not be initialized");
+      }
 
-  async close(): Promise<void> {
-    await this.#redis.quit();
+      const effectiveTotalUsdMicros = Math.min(
+        current.totalUsdMicros,
+        input.totalBudgetUsdMicros,
+      );
+      const remainingUsdMicros = Math.max(
+        0,
+        effectiveTotalUsdMicros - current.reservedUsdMicros,
+      );
+      if (input.reservationUsdMicros > remainingUsdMicros) {
+        return { accepted: false, remainingUsdMicros };
+      }
+
+      await transaction.$executeRaw`
+        UPDATE atoms_runtime.run_provider_budgets
+        SET
+          reserved_usd_micros = reserved_usd_micros + ${input.reservationUsdMicros},
+          updated_at = CURRENT_TIMESTAMP
+        WHERE run_id = ${input.runId}::uuid
+      `;
+
+      return {
+        accepted: true,
+        remainingUsdMicros: remainingUsdMicros - input.reservationUsdMicros,
+      };
+    });
   }
 }

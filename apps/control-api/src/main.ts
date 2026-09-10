@@ -42,6 +42,10 @@ const EnvironmentSchema = z
     S3_SECRET_ACCESS_KEY: z.string().min(1).optional(),
     S3_KMS_KEY_ID: z.string().min(1).optional(),
     RUN_QUEUE_PREFIX: z.string().trim().min(1).optional(),
+    RUN_EXECUTION_ENABLED: z
+      .enum(["true", "false"])
+      .default("false")
+      .transform((value) => value === "true"),
     AUTH_REQUIRED: z
       .enum(["true", "false"])
       .default("true")
@@ -149,6 +153,7 @@ async function main(): Promise<void> {
   const app = await buildControlApi({
     repository,
     runQueue,
+    runExecutionEnabled: environment.RUN_EXECUTION_ENABLED,
     logger: true,
     closeDependencies: true,
     corsOrigins: environment.CONTROL_API_CORS_ORIGINS,

@@ -1,5 +1,6 @@
 "use client";
 
+import type { ProjectResponse, WorkspaceSummary } from "@atoms/contracts";
 import {
   InteractionRequiredAuthError,
   PublicClientApplication,
@@ -16,19 +17,10 @@ import {
   LogIn,
   LogOut,
 } from "lucide-react";
-import {
-  useEffect,
-  useMemo,
-  useState,
-  type FormEvent,
-  type ReactNode,
-} from "react";
+import { useEffect, useMemo, useState, type FormEvent, type ReactNode } from "react";
 
 import { createDevelopmentAccessTokenProvider } from "../lib/browser-auth";
-import {
-  ControlApiClient,
-  type ControlApiAccessTokenProvider,
-} from "../lib/control-api";
+import { ControlApiClient, type ControlApiAccessTokenProvider } from "../lib/control-api";
 import {
   createEntraAccessTokenProvider,
   createEntraRedirectUri,
@@ -39,7 +31,6 @@ import {
   createProjectAndVerify,
   type ProjectReadinessClient,
 } from "../lib/project-readiness";
-import type { ProjectResponse, WorkspaceSummary } from "@atoms/contracts";
 
 const CONTROL_API_URL =
   process.env.NEXT_PUBLIC_CONTROL_API_URL ?? "http://localhost:3001";
@@ -94,13 +85,12 @@ function EntraReadinessBoundary({
 
   useEffect(() => {
     let active = true;
-    const redirectUri = createEntraRedirectUri(globalThis.location.origin);
     const instance = new PublicClientApplication({
       auth: {
         clientId: configuration.clientId,
         authority: configuration.authority,
         knownAuthorities: [...configuration.knownAuthorities],
-        redirectUri,
+        redirectUri: createEntraRedirectUri(globalThis.location.origin),
         postLogoutRedirectUri: globalThis.location.origin,
       },
       cache: { cacheLocation: "sessionStorage" },
@@ -114,7 +104,6 @@ function EntraReadinessBoundary({
         instance.getActiveAccount() ??
         instance.getAllAccounts()[0] ??
         null;
-
       if (nextAccount !== null) instance.setActiveAccount(nextAccount);
       if (!active) return;
       setClient(instance);
@@ -132,11 +121,8 @@ function EntraReadinessBoundary({
     };
   }, [configuration]);
 
-  const accessTokenProvider = useMemo(() => {
-    if (client === undefined || account === undefined || account === null) {
-      return undefined;
-    }
-
+  const accessTokenProvider = useMemo<ControlApiAccessTokenProvider | undefined>(() => {
+    if (client === undefined || account === undefined || account === null) return undefined;
     const silentProvider = createEntraAccessTokenProvider(
       {
         acquireTokenSilent: async (request) => {
@@ -172,12 +158,7 @@ function EntraReadinessBoundary({
     setAuthError(undefined);
     try {
       await client.loginRedirect({
-        scopes: [
-          "openid",
-          "profile",
-          "offline_access",
-          configuration.apiScope,
-        ],
+        scopes: ["openid", "profile", "offline_access", configuration.apiScope],
       });
     } catch (error: unknown) {
       console.error("Failed to start Microsoft Entra project readiness sign-in", error);
@@ -188,7 +169,6 @@ function EntraReadinessBoundary({
   async function signOut() {
     if (client === undefined || account === undefined || account === null) return;
     setSigningOut(true);
-    setAuthError(undefined);
     try {
       await client.logoutRedirect({
         account,
@@ -201,15 +181,8 @@ function EntraReadinessBoundary({
     }
   }
 
-  if (account === undefined || client === undefined) {
-    return (
-      <ReadinessFrame>
-        <div className="flex items-center justify-center gap-3 rounded-2xl border border-[#252d3a] bg-[#0d121a] p-8 text-sm text-[#aab5c5]">
-          <LoaderCircle className="animate-spin text-[#78e6bd]" size={20} />
-          Restoring your secure session…
-        </div>
-      </ReadinessFrame>
-    );
+  if (client === undefined || account === undefined) {
+    return <LoadingFrame label="Restoring your secure session…" />;
   }
 
   if (account === null) {
@@ -241,13 +214,16 @@ function EntraReadinessBoundary({
     );
   }
 
+  if (accessTokenProvider === undefined) {
+    return <LoadingFrame label="Preparing Control API access…" />;
+  }
+
   return (
     <ProjectReadinessSurface
       accessTokenProvider={accessTokenProvider}
       identityLabel={account.name ?? account.username ?? account.homeAccountId}
       signingOut={signingOut}
       onSignOut={() => void signOut()}
-      authenticationError={authError}
     />
   );
 }
@@ -257,13 +233,11 @@ function ProjectReadinessSurface({
   identityLabel,
   signingOut = false,
   onSignOut,
-  authenticationError,
 }: {
-  readonly accessTokenProvider?: ControlApiAccessTokenProvider;
-  readonly identityLabel?: string;
+  readonly accessTokenProvider: ControlApiAccessTokenProvider;
+  readonly identityLabel: string;
   readonly signingOut?: boolean;
   readonly onSignOut?: () => void;
-  readonly authenticationError?: string;
 }) {
   const client = useMemo<ProjectReadinessClient>(
     () =>
@@ -284,7 +258,6 @@ function ProjectReadinessSurface({
 
   useEffect(() => {
     let active = true;
-    setLoadingWorkspaces(true);
     void client
       .listWorkspaces()
       .then((response) => {
@@ -294,13 +267,11 @@ function ProjectReadinessSurface({
         setError(undefined);
       })
       .catch((caught: unknown) => {
-        if (!active) return;
-        setError(`Could not load workspaces: ${toMessage(caught)}`);
+        if (active) setError(`Could not load workspaces: ${toMessage(caught)}`);
       })
       .finally(() => {
         if (active) setLoadingWorkspaces(false);
       });
-
     return () => {
       active = false;
     };
@@ -309,7 +280,6 @@ function ProjectReadinessSurface({
   async function createProjectOnly(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
     if (createdProject !== undefined || workspaceId.length === 0) return;
-
     setBusy(true);
     setError(undefined);
     try {
@@ -327,25 +297,18 @@ function ProjectReadinessSurface({
     }
   }
 
-  const locked = createdProject !== undefined || busy;
-
   return (
     <main className="min-h-screen px-4 py-8 text-white">
       <div className="mx-auto w-full max-w-3xl">
         <div className="mb-5 flex flex-wrap items-center justify-between gap-3">
-          <a
-            href="/"
-            className="inline-flex items-center gap-2 text-sm font-semibold text-[#9fc5ff] hover:text-[#c3d9ff]"
-          >
+          <a href="/" className="inline-flex items-center gap-2 text-sm font-semibold text-[#9fc5ff] hover:text-[#c3d9ff]">
             <ArrowLeft size={16} />
             Back to Atoms workspace
           </a>
           <div className="flex items-center gap-2 text-xs text-[#8f9bad]">
-            {identityLabel !== undefined ? (
-              <span className="max-w-64 truncate rounded-full border border-[#2b3442] px-2.5 py-1" title={identityLabel}>
-                {identityLabel}
-              </span>
-            ) : null}
+            <span className="max-w-64 truncate rounded-full border border-[#2b3442] px-2.5 py-1" title={identityLabel}>
+              {identityLabel}
+            </span>
             {onSignOut !== undefined ? (
               <button
                 type="button"
@@ -374,11 +337,6 @@ function ProjectReadinessSurface({
             </div>
           </div>
 
-          {authenticationError !== undefined ? (
-            <div className="mt-5 rounded-xl border border-[#67333a] bg-[#1c1014] px-3 py-2 text-sm text-[#ff9ca6]" role="alert">
-              {authenticationError}
-            </div>
-          ) : null}
           {error !== undefined ? (
             <div className="mt-5 rounded-xl border border-[#67333a] bg-[#1c1014] px-3 py-2 text-sm text-[#ff9ca6]" role="alert">
               {error}
@@ -391,20 +349,8 @@ function ProjectReadinessSurface({
                 <CheckCircle2 size={20} />
                 <h2 className="font-semibold">Project created and verified</h2>
               </div>
-              <dl className="mt-4 grid gap-3 text-sm sm:grid-cols-2">
-                <div>
-                  <dt className="text-[#7f8b9d]">Name</dt>
-                  <dd className="mt-1 text-[#dbe5f2]">{createdProject.name}</dd>
-                </div>
-                <div>
-                  <dt className="text-[#7f8b9d]">Slug</dt>
-                  <dd className="mt-1 font-mono text-[#dbe5f2]">{createdProject.slug}</dd>
-                </div>
-                <div className="sm:col-span-2">
-                  <dt className="text-[#7f8b9d]">Project ID</dt>
-                  <dd className="mt-1 break-all font-mono text-xs text-[#dbe5f2]">{createdProject.id}</dd>
-                </div>
-              </dl>
+              <p className="mt-4 text-sm text-[#dbe5f2]">{createdProject.name}</p>
+              <p className="mt-1 font-mono text-xs text-[#9fb0c4]">{createdProject.slug}</p>
               <p className="mt-4 text-xs leading-5 text-[#89a79c]">
                 Verified with a separate authenticated project readback. No run request was sent.
               </p>
@@ -416,7 +362,7 @@ function ProjectReadinessSurface({
                 <select
                   className="w-full rounded-xl border border-[#303a48] bg-[#0a0f16] px-3 py-2.5 text-sm text-white outline-none focus:border-[#5b8f7d] disabled:opacity-60"
                   value={workspaceId}
-                  disabled={loadingWorkspaces || locked || workspaces.length === 0}
+                  disabled={loadingWorkspaces || busy || workspaces.length === 0}
                   required
                   onChange={(event) => setWorkspaceId(event.target.value)}
                 >
@@ -436,10 +382,9 @@ function ProjectReadinessSurface({
                 <label className="block">
                   <span className="mb-1.5 block text-sm font-medium text-[#c8d1de]">Project name</span>
                   <input
-                    className="w-full rounded-xl border border-[#303a48] bg-[#0a0f16] px-3 py-2.5 text-sm text-white outline-none focus:border-[#5b8f7d] disabled:opacity-60"
+                    className="w-full rounded-xl border border-[#303a48] bg-[#0a0f16] px-3 py-2.5 text-sm text-white outline-none focus:border-[#5b8f7d]"
                     value={projectName}
                     maxLength={160}
-                    disabled={locked}
                     required
                     onChange={(event) => {
                       const nextName = event.target.value;
@@ -451,11 +396,10 @@ function ProjectReadinessSurface({
                 <label className="block">
                   <span className="mb-1.5 block text-sm font-medium text-[#c8d1de]">Slug</span>
                   <input
-                    className="w-full rounded-xl border border-[#303a48] bg-[#0a0f16] px-3 py-2.5 font-mono text-sm text-white outline-none focus:border-[#5b8f7d] disabled:opacity-60"
+                    className="w-full rounded-xl border border-[#303a48] bg-[#0a0f16] px-3 py-2.5 font-mono text-sm text-white outline-none focus:border-[#5b8f7d]"
                     value={projectSlug}
                     maxLength={100}
                     pattern="[a-z0-9]+(?:-[a-z0-9]+)*"
-                    disabled={locked}
                     required
                     onChange={(event) => setProjectSlug(event.target.value)}
                   />
@@ -481,6 +425,17 @@ function ProjectReadinessSurface({
         </section>
       </div>
     </main>
+  );
+}
+
+function LoadingFrame({ label }: { readonly label: string }) {
+  return (
+    <ReadinessFrame>
+      <div className="flex items-center justify-center gap-3 rounded-2xl border border-[#252d3a] bg-[#0d121a] p-8 text-sm text-[#aab5c5]">
+        <LoaderCircle className="animate-spin text-[#78e6bd]" size={20} />
+        {label}
+      </div>
+    </ReadinessFrame>
   );
 }
 

@@ -5,6 +5,7 @@ import type { CreateProjectInput, ProjectResponse } from "@atoms/contracts";
 
 import {
   createProjectAndVerify,
+  createUniqueReadinessSlug,
   type ProjectReadinessClient,
 } from "./project-readiness.js";
 
@@ -15,19 +16,22 @@ const input: CreateProjectInput = {
   description: "Project-only staging readiness",
 };
 
-const project: ProjectResponse = {
-  id: "22222222-2222-4222-8222-222222222222",
-  workspaceId: input.workspaceId,
-  name: input.name,
-  slug: input.slug,
-  description: input.description ?? null,
-  createdAt: "2026-09-10T03:00:00.000Z",
-  updatedAt: "2026-09-10T03:00:00.000Z",
-  archivedAt: null,
-};
+function projectFor(actual: CreateProjectInput): ProjectResponse {
+  return {
+    id: "22222222-2222-4222-8222-222222222222",
+    workspaceId: actual.workspaceId,
+    name: actual.name,
+    slug: actual.slug,
+    description: actual.description ?? null,
+    createdAt: "2026-09-10T03:00:00.000Z",
+    updatedAt: "2026-09-10T03:00:00.000Z",
+    archivedAt: null,
+  };
+}
 
-test("creates and verifies a project without any run capability", async () => {
+test("creates a unique default readiness slug and verifies without run capability", async () => {
   const calls: string[] = [];
+  let createdProject: ProjectResponse | undefined;
   const client: ProjectReadinessClient = {
     async listWorkspaces() {
       calls.push("listWorkspaces");
@@ -35,41 +39,80 @@ test("creates and verifies a project without any run capability", async () => {
     },
     async createProject(actual) {
       calls.push("createProject");
-      assert.deepEqual(actual, input);
-      return project;
+      assert.equal(actual.workspaceId, input.workspaceId);
+      assert.equal(actual.name, input.name);
+      assert.equal(actual.slug, "readiness-project-a1b2c3d4");
+      createdProject = projectFor(actual);
+      return createdProject;
     },
     async getProject(projectId) {
       calls.push("getProject");
-      assert.equal(projectId, project.id);
-      return project;
+      assert.equal(projectId, createdProject?.id);
+      assert.notEqual(createdProject, undefined);
+      return createdProject;
     },
   };
 
-  const result = await createProjectAndVerify(client, input);
+  const result = await createProjectAndVerify(client, input, {
+    slugSuffix: "A1B2-C3D4",
+  });
 
-  assert.deepEqual(result, project);
+  assert.equal(result.slug, "readiness-project-a1b2c3d4");
   assert.deepEqual(calls, ["createProject", "getProject"]);
   assert.equal("createRun" in client, false);
 });
 
+test("preserves an explicitly customized slug", async () => {
+  const customized = { ...input, slug: "my-custom-readiness" };
+  const expected = projectFor(customized);
+  const client: ProjectReadinessClient = {
+    async listWorkspaces() {
+      return { items: [] };
+    },
+    async createProject(actual) {
+      assert.deepEqual(actual, customized);
+      return expected;
+    },
+    async getProject() {
+      return expected;
+    },
+  };
+
+  const result = await createProjectAndVerify(client, customized, {
+    slugSuffix: "ignored",
+  });
+  assert.equal(result.slug, customized.slug);
+});
+
+test("keeps generated readiness slugs within the project slug limit", () => {
+  const slug = createUniqueReadinessSlug("a".repeat(100), "ABC-123-XYZ");
+  assert.equal(slug.length <= 100, true);
+  assert.match(slug, /^[a-z0-9]+(?:-[a-z0-9]+)*$/u);
+  assert.match(slug, /abc123xyz$/u);
+});
+
 test("fails closed when readback does not match the requested workspace", async () => {
+  const expected = projectFor({ ...input, slug: "readiness-project-a1b2c3d4" });
   const client: ProjectReadinessClient = {
     async listWorkspaces() {
       return { items: [] };
     },
     async createProject() {
-      return project;
+      return expected;
     },
     async getProject() {
       return {
-        ...project,
+        ...expected,
         workspaceId: "33333333-3333-4333-8333-333333333333",
       };
     },
   };
 
   await assert.rejects(
-    () => createProjectAndVerify(client, input),
+    () =>
+      createProjectAndVerify(client, input, {
+        slugSuffix: "A1B2-C3D4",
+      }),
     /could not be verified/u,
   );
 });

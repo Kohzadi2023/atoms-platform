@@ -1,14 +1,23 @@
 Clear-Host
 
-[CmdletBinding()]
-param(
-    [string]$WebOrigin = "https://atoms-staging-web.proudpond-7f6fcfdd.canadacentral.azurecontainerapps.io",
-    [string]$ControlApiOrigin = "https://atoms-staging-control-api.proudpond-7f6fcfdd.canadacentral.azurecontainerapps.io"
-)
-
 Set-StrictMode -Version Latest
 $ErrorActionPreference = "Stop"
 $ProgressPreference = "SilentlyContinue"
+
+$DefaultWebOrigin = "https://atoms-staging-web.proudpond-7f6fcfdd.canadacentral.azurecontainerapps.io"
+$DefaultControlApiOrigin = "https://atoms-staging-control-api.proudpond-7f6fcfdd.canadacentral.azurecontainerapps.io"
+$WebOrigin = if ([string]::IsNullOrWhiteSpace($env:ATOMS_STAGING_WEB_ORIGIN)) {
+    $DefaultWebOrigin
+}
+else {
+    $env:ATOMS_STAGING_WEB_ORIGIN
+}
+$ControlApiOrigin = if ([string]::IsNullOrWhiteSpace($env:ATOMS_STAGING_CONTROL_API_ORIGIN)) {
+    $DefaultControlApiOrigin
+}
+else {
+    $env:ATOMS_STAGING_CONTROL_API_ORIGIN
+}
 
 $TranscriptPath = Join-Path $env:TEMP (
     "atoms-staging-public-smoke-" + [Guid]::NewGuid().ToString("N") + ".log"

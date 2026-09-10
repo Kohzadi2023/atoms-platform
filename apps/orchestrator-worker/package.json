@@ -11,6 +11,7 @@
     "test": "pnpm build && node --test dist/*.test.js",
     "test:phase3-durability:built": "node --test dist/database-reconciliation.integration.test.js",
     "test:phase3-provider-exit:built": "node --test dist/phase3-provider-staging.live.test.js",
+    "test:provider-budget:built": "node --test dist/model-budget-postgres.integration.test.js",
     "typecheck": "tsc -p tsconfig.json --noEmit"
   },
   "dependencies": {

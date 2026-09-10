@@ -25,10 +25,11 @@ test("workspace project creation cannot start a run", async () => {
   assert.doesNotMatch(createProjectOnly, /\/runs/u);
 
   assert.match(launchRun, /validateLiveRunConsent\s*\(/u);
-  assert.match(launchRun, /LIVE_PROVIDER_CONFIRMATION/u);
-  assert.match(launchRun, /MAX_ALLOWED_COST_CAD/u);
+  assert.match(launchRun, /providerConfirmation/u);
+  assert.match(launchRun, /maximumCostCad:\s*MAX_ALLOWED_COST_CAD/u);
   assert.match(launchRun, /api\.createRun\s*\(/u);
 
+  assert.match(source, /LIVE_PROVIDER_CONFIRMATION/u);
   assert.match(source, /Create project only — no run/u);
   assert.match(source, /Launch run — may use OpenAI\/E2B/u);
   assert.doesNotMatch(source, /createProjectRun/u);

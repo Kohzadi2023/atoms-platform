@@ -11,50 +11,63 @@ This runbook records the current Azure Container Apps preview topology and the n
 - Environment default domain: `proudpond-7f6fcfdd.canadacentral.azurecontainerapps.io`.
 - Control API remains `AUTH_REQUIRED=true` and `RUN_EXECUTION_ENABLED=false`.
 - Provider-disabled worker exists with min/max replicas `0/1`, no ingress, provider budget `0`, and intentionally invalid OpenAI/E2B placeholders.
-- Preview Gateway private skeleton exists as `atoms-staging-preview-gateway` with min/max replicas `0/1`, no ingress, and `PREVIEW_BASE_DOMAIN=preview.invalid`.
+- Preview Gateway exists as `atoms-staging-preview-gateway` with min/max replicas `0/1`, `PREVIEW_BASE_DOMAIN=preview.invalid`, and **internal-only** ingress on target port `3002`.
+- The verified internal FQDN is `atoms-staging-preview-gateway.internal.proudpond-7f6fcfdd.canadacentral.azurecontainerapps.io`.
 - Preview Gateway image is `atomsstaging91ce9.azurecr.io/preview-gateway:private-skeleton-0482b37eab42`, digest `sha256:53b70e9f6fa2fee00af2c02d70c6d5fdc281acde31532af1c2ab7d7278c9d994`.
 - Redis and preview-signing secret references are Key Vault-backed and use the staging runtime managed identity.
-- No environment custom DNS suffix, environment certificate, Container App custom domain, or Azure DNS public zone is currently configured.
+- No environment custom DNS suffix, environment certificate, Container App custom domain, Azure DNS public zone, or environment HTTP route config is currently configured.
 - Public preview is therefore intentionally blocked.
 
-## Why the next gate is internal ingress
+The internal-ingress gate was executed successfully on 2026-09-11. It verified `external=false`, HTTPS-only ingress, no custom domain, no public DNS/TLS mutation, and re-checked the Control API auth/run-execution safety boundary after the change.
 
-Azure Container Apps supports an `internal` application ingress mode. The app receives an environment-scoped FQDN and is reachable only by other Container Apps in the same environment through its own FQDN. This lets us validate the gateway resource boundary without selecting or guessing a public domain.
+## Next safe gate: internal runtime health
 
-The next gate only enables internal ingress on port `3002`. It does **not**:
+The next gate proves that the deployed Preview Gateway can actually start and answer its unauthenticated `/healthz` endpoint through the **internal Container Apps network** before any public hostname is introduced.
 
-- enable external ingress;
+The guarded smoke script uses Azure Container Apps `debug --command` from the already-running Control API replica. Microsoft documents that the debug console is a separate troubleshooting container that shares the target replica's underlying resources and includes `wget`. The probe therefore performs one request to:
+
+`https://atoms-staging-preview-gateway.internal.proudpond-7f6fcfdd.canadacentral.azurecontainerapps.io/healthz`
+
+Expected body:
+
+```json
+{"status":"ok"}
+```
+
+This request may temporarily wake the Preview Gateway from scale `0` to `1`. It does **not**:
+
+- enable external/public ingress;
 - configure DNS, a custom domain, or a certificate;
 - change `PREVIEW_BASE_DOMAIN` away from `preview.invalid`;
 - enable run execution;
-- configure real OpenAI/E2B credentials;
-- intentionally wake the scale-to-zero Preview Gateway with a health request.
+- configure or use real OpenAI/E2B credentials;
+- create a preview session or contact an E2B upstream.
 
-An environment-level HTTP route can target an internal-ingress app and expose it through the environment route. The guarded script therefore fails closed if any `Microsoft.App/managedEnvironments/httpRouteConfigs` resource is present in the staging resource group.
+Before and after the probe, the script re-verifies:
+
+- the Atoms-Staging subscription lock and forbidden legacy subscription;
+- `AUTH_REQUIRED=true` and `RUN_EXECUTION_ENABLED=false`;
+- Control API `/readyz=200` and unauthenticated `/v1/me=401`;
+- the exact Preview Gateway image and ACR digest;
+- min/max replicas `0/1`;
+- internal-only ingress on port `3002`;
+- no custom domain;
+- no custom environment DNS suffix or certificate;
+- no Azure DNS public zone;
+- no environment-level HTTP route config.
 
 ## Guarded execution
 
-Run from a clean `main` checkout that exactly matches `origin/main`:
+Run:
 
 ```powershell
 & "C:\Program Files\PowerShell\7\pwsh.exe" `
   -NoProfile `
   -ExecutionPolicy Bypass `
-  -File ".\deploy\staging\preview-gateway-enable-internal-ingress.ps1"
+  -File ".\deploy\staging\preview-gateway-internal-health-smoke.ps1"
 ```
 
-The script:
-
-1. starts with `Clear-Host` and captures a transcript;
-2. locks Azure CLI to the Atoms-Staging subscription and blocks the legacy subscription;
-3. proves current `main` contains the accepted single-label preview-ticket baseline;
-4. proves Control API auth/run-execution safety remains intact;
-5. proves public DNS/TLS and environment HTTP route exposure are absent;
-6. proves the exact Preview Gateway image digest, scale-to-zero settings, and `preview.invalid` configuration;
-7. enables only `internal` HTTP ingress on target port `3002`;
-8. verifies `external=false`, HTTPS-only, no custom domain, and an Azure internal FQDN containing `.internal.`;
-9. repeats the public-routing and Control API safety checks;
-10. copies the complete transcript to the clipboard.
+The complete transcript is copied to the clipboard at the end.
 
 ## Public preview remains a later gate
 
@@ -71,7 +84,7 @@ The expected public shape is a single dynamic signed label below a controlled pr
 ## References
 
 - Microsoft Learn: Azure Container Apps ingress overview.
-- Microsoft Learn: Configure ingress for Azure Container Apps.
-- Microsoft Learn: Communicate between container apps in an Azure Container Apps environment.
+- Microsoft Learn: Connect to a container debug console in Azure Container Apps.
+- Microsoft Learn: Azure CLI `az containerapp debug`.
 
 Always re-check current Microsoft documentation before changing live ingress, custom-domain, certificate, or environment routing configuration.

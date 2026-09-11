@@ -59,7 +59,10 @@ function AzPath {
     return [string]$cmd.Source
 }
 
-function Invoke-AzProcess([string[]]$CommandArgs) {
+function Invoke-AzProcess(
+    [string[]]$CommandArgs,
+    [int]$TimeoutSeconds = 180
+) {
     $psi = [System.Diagnostics.ProcessStartInfo]::new()
     $psi.FileName = AzPath
     $psi.UseShellExecute = $false
@@ -85,7 +88,13 @@ function Invoke-AzProcess([string[]]$CommandArgs) {
 
     $stdoutTask = $process.StandardOutput.ReadToEndAsync()
     $stderrTask = $process.StandardError.ReadToEndAsync()
-    $process.WaitForExit()
+
+    if (-not $process.WaitForExit($TimeoutSeconds * 1000)) {
+        try { $process.Kill($true) } catch {}
+        try { $process.WaitForExit() } catch {}
+        $process.Dispose()
+        throw "Azure CLI command timed out after $TimeoutSeconds seconds."
+    }
 
     $stdout = $stdoutTask.GetAwaiter().GetResult()
     $stderr = $stderrTask.GetAwaiter().GetResult()
@@ -415,30 +424,13 @@ function Verify-PreviewInternalIngress {
     return $fqdn
 }
 
-function Verify-DebugCapability {
-    $help = Invoke-AzProcess @(
-        "containerapp","debug","--help"
-    )
-
-    if ([int]$help.ExitCode -ne 0) {
-        throw "Azure CLI containerapp debug command is unavailable."
-    }
-
-    $text = ([string]$help.Stdout) + "`n" + ([string]$help.Stderr)
-    if (-not $text.Contains("--command")) {
-        throw "Azure CLI containerapp debug command does not expose non-interactive --command support."
-    }
-
-    Ok "Azure CLI supports non-interactive containerapp debug --command"
-}
-
 function Invoke-InternalHealthSmoke([string]$InternalFqdn) {
     Step "Wake Preview Gateway only through the internal environment network and verify /healthz"
 
     $url = "https://$InternalFqdn/healthz"
     $command = "wget -qO- --timeout=30 '$url'"
 
-    $probe = Invoke-AzProcess @(
+    $probe = Invoke-AzProcess -TimeoutSeconds 120 -CommandArgs @(
         "containerapp","debug",
         "--subscription",$SubscriptionId,
         "-g",$ResourceGroup,
@@ -465,15 +457,13 @@ try {
     Start-Transcript -Path $TranscriptPath -Force | Out-Null
     $TranscriptStarted = $true
 
-    Write-Host "Atoms Staging Preview Gateway Internal Health Smoke" -ForegroundColor DarkGray
+    Write-Host "Atoms Staging Preview Gateway Internal Health Smoke v2" -ForegroundColor DarkGray
     Write-Host "This gate performs one internal /healthz request and may temporarily wake the scale-to-zero Preview Gateway." -ForegroundColor DarkGray
     Write-Host "It does NOT enable public ingress, DNS, certificates, custom domains, run execution, OpenAI, or E2B." -ForegroundColor DarkGray
+    Write-Host "A browser request to the .internal. FQDN from outside the Container Apps environment is expected to return HTTP 404." -ForegroundColor DarkGray
 
     Step "Lock Azure CLI to Atoms-Staging"
     Lock-Staging
-
-    Step "Verify non-interactive Azure Container Apps debug capability"
-    Verify-DebugCapability
 
     Step "Verify Control API auth and execution safety"
     Verify-ControlApiSafety
@@ -484,6 +474,7 @@ try {
     Step "Verify Preview Gateway internal-ingress contract"
     $internalFqdn = Verify-PreviewInternalIngress
 
+    Note "External/browser HTTP 404 for the .internal. FQDN is expected and confirms the isolation boundary; the real probe runs from inside the Container Apps environment."
     Invoke-InternalHealthSmoke -InternalFqdn $internalFqdn
 
     Step "Re-verify safety boundaries after the internal health request"

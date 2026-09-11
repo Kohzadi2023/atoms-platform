@@ -21,7 +21,11 @@ test("preview internal health smoke stays fail-closed and provider-disabled", ()
   assert.match(source, /\/healthz/);
   assert.match(
     source,
-    /atoms-staging-preview-gateway\.internal\.proudpond-7f6fcfdd\.canadacentral\.azurecontainerapps\.io/,
+    /\$ExpectedDefaultDomain = "proudpond-7f6fcfdd\.canadacentral\.azurecontainerapps\.io"/,
+  );
+  assert.match(
+    source,
+    /\$ExpectedInternalFqdn = "atoms-staging-preview-gateway\.internal\.\$ExpectedDefaultDomain"/,
   );
   assert.match(source, /Provider execution\s+: NONE/);
 

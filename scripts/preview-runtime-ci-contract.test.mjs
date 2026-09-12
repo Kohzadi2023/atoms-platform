@@ -1,7 +1,8 @@
 import assert from "node:assert/strict";
-import { readFileSync } from "node:fs";
+import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import test from "node:test";
-import { fileURLToPath } from "node:url";
 import { verifyPreviewRuntimeCompose } from "./verify-preview-runtime-compose.mjs";
 import { productionGraph, verifyPreviewPackage } from "./verify-preview-package.mjs";
 
@@ -34,6 +35,14 @@ function fixture() {
   };
 }
 test("resolved preview CI topology accepts only the isolated exact fixture", () => verifyPreviewRuntimeCompose(fixture()));
+test("resolved Compose JSON null commands and entrypoints inherit the image defaults", () => {
+  const c = fixture();
+  for (const service of Object.values(c.services)) {
+    service.entrypoint = null;
+    if (!service.command) service.command = null;
+  }
+  verifyPreviewRuntimeCompose(c);
+});
 for (const [name, change] of [
   ["public ports", (c) => { c.services.gateway.ports = [{ published: "3002", target: 3002 }]; }],
   ["non-internal network", (c) => { c.networks.fixture.internal = false; }],
@@ -41,7 +50,9 @@ for (const [name, change] of [
   ["production Redis", (c) => { c.services.gateway.environment.REDIS_URL = "rediss://live.invalid:10000/0"; }],
   ["provider credentials", (c) => { c.services.gateway.environment.OPENAI_API_KEY = "fixture-should-not-be-copied"; }],
   ["an application overlay", (c) => { c.services.gateway.volumes = [{ type: "bind", source: "/repo/deploy/ci/preview", target: "/app/ci", read_only: true }]; }],
-  ["an entry-point override", (c) => { c.services.gateway.command = ["node", "fake-main.js"]; }],
+  ["an image command override", (c) => { c.services.gateway.command = ["node", "fake-main.js"]; }],
+  ["an image entrypoint override", (c) => { c.services.gateway.entrypoint = ["node", "fake-main.js"]; }],
+  ["an explicitly cleared image command", (c) => { c.services.gateway.command = []; }],
   ["a host env file", (c) => { c.services.smoke.env_file = ["/repo/.env"]; }],
   ["privileged service", (c) => { c.services.smoke.privileged = true; }],
   ["an unconfirmed smoke", (c) => { delete c.services.smoke.environment.PREVIEW_RUNTIME_INTEGRATION_CONFIRMATION; }],
@@ -64,15 +75,30 @@ test("Gateway runtime copies only a portable production package and runs non-roo
     assert.deepEqual(JSON.parse(read(file)).files, ["dist"]);
   }
 });
-test("package graph verification checks the frozen source graph without a Redis/provider connection", () => {
-  const path = fileURLToPath(new URL("../apps/preview-gateway/package.json", import.meta.url));
-  const graph = productionGraph(path);
-  assert.ok(graph["@atoms/preview-gateway@0.0.0"]);
-  assert.ok(graph["@atoms/preview@0.0.0"]);
-  assert.ok(graph["ioredis@6.0.0"]);
-  assert.ok(graph["zod@4.4.3"]);
-  verifyPreviewPackage(path, path);
-  assert.throws(() => verifyPreviewPackage(path, fileURLToPath(new URL("../apps/control-api/package.json", import.meta.url))));
+test("package graph check needs no prior build and rejects portable transitive version drift", (context) => {
+  const root = mkdtempSync(join(tmpdir(), "atoms-preview-package-contract-"));
+  context.after(() => rmSync(root, { recursive: true, force: true }));
+  function packageFixture(name, dependencyVersion) {
+    const directory = join(root, name);
+    const dependency = join(directory, "node_modules", "fixture-dependency");
+    mkdirSync(dependency, { recursive: true });
+    writeFileSync(join(directory, "package.json"), JSON.stringify({
+      name: "fixture-gateway", version: "1.0.0", dependencies: { "fixture-dependency": "^1.0.0" },
+    }));
+    writeFileSync(join(dependency, "package.json"), JSON.stringify({
+      name: "fixture-dependency", version: dependencyVersion, main: "index.js",
+    }));
+    writeFileSync(join(dependency, "index.js"), "module.exports = {};");
+    return join(directory, "package.json");
+  }
+  const source = packageFixture("source", "1.0.0");
+  const deployed = packageFixture("deployed", "1.0.0");
+  assert.deepEqual(productionGraph(source), {
+    "fixture-gateway@1.0.0": { "fixture-dependency": "fixture-dependency@1.0.0" },
+    "fixture-dependency@1.0.0": {},
+  });
+  verifyPreviewPackage(source, deployed);
+  assert.throws(() => verifyPreviewPackage(source, packageFixture("drift", "1.0.1")));
 });
 test("packaged runtime CI cannot publish images, deploy Azure, or skip its integration", () => {
   const workflow = read(".github/workflows/ci.yml");

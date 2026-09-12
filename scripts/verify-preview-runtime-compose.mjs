@@ -20,6 +20,9 @@ export function verifyPreviewRuntimeCompose(config) {
     assert.equal(service.network_mode, undefined);
     assert.equal(service.pid, undefined);
     assert.equal(service.restart, undefined);
+    // compose-go emits an inherited entrypoint as JSON null, not an omitted field.
+    // An empty array is an explicit override, so do not treat it as inheritance.
+    assert.equal(service.entrypoint ?? undefined, undefined, "inherit the image entrypoint");
     assert.deepEqual(Object.keys(service.networks), ["fixture"]);
     if (name.startsWith("redis")) assert.equal(service.image, "redis:8-alpine");
     else {
@@ -39,7 +42,7 @@ export function verifyPreviewRuntimeCompose(config) {
   }
   const gateway = config.services.gateway;
   assert.equal(gateway.build.dockerfile, "apps/preview-gateway/Dockerfile");
-  assert.equal(gateway.command, undefined, "exercise the actual image entry point");
+  assert.equal(gateway.command ?? undefined, undefined, "exercise the actual image command");
   assert.equal(gateway.volumes, undefined, "never overlay the application under test");
   assert.equal(gateway.environment.PREVIEW_REDIS_MODE, "oss-cluster");
   assert.equal(gateway.environment.PREVIEW_BASE_DOMAIN, "preview.invalid");

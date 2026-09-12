@@ -9,6 +9,7 @@ import { OpenAIModelGateway } from "@atoms/model-gateway";
 import {
   PreviewTicketSigner,
   RedisPreviewSessionStore,
+  PreviewRedisModeSchema,
 } from "@atoms/preview";
 import {
   E2BSandboxAdapter,
@@ -48,6 +49,7 @@ const EnvironmentSchema = z
   .object({
     DATABASE_URL: z.string().min(1),
     REDIS_URL: z.string().url(),
+    PREVIEW_REDIS_MODE: PreviewRedisModeSchema,
     OPENAI_API_KEY: z.string().min(1),
     E2B_API_KEY: z.string().min(1),
     E2B_TEMPLATE: z.string().trim().min(1).optional(),
@@ -223,6 +225,7 @@ async function main(): Promise<void> {
   });
   const previewStore = new RedisPreviewSessionStore({
     redisUrl: environment.REDIS_URL,
+    redisMode: environment.PREVIEW_REDIS_MODE,
   });
   const previewSigner = new PreviewTicketSigner({
     secret: environment.PREVIEW_SIGNING_SECRET,

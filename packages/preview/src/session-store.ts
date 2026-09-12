@@ -1,5 +1,55 @@
-import { Redis } from "ioredis";
+import { isIP } from "node:net";
+
+import { Cluster, Redis, type ClusterOptions } from "ioredis";
 import { z } from "zod";
+
+export const PreviewRedisModeSchema = z
+  .enum(["standalone", "oss-cluster"])
+  .default("standalone");
+export type PreviewRedisMode = z.infer<typeof PreviewRedisModeSchema>;
+
+/** Parse locally; never infer a provider's clustering policy from its hostname. */
+export function previewRedisClusterConfiguration(redisUrl: string) {
+  try {
+    const url = new URL(redisUrl);
+    const host = url.hostname.replace(/^\[|\]$/g, "");
+    const port = Number(url.port || 6_379);
+    if (
+      !["redis:", "rediss:"].includes(url.protocol) ||
+      host.length === 0 || port < 1 || port > 65_535 ||
+      !["", "/", "/0"].includes(url.pathname) || url.search || url.hash
+    ) {
+      throw new TypeError();
+    }
+    const username = url.username ? decodeURIComponent(url.username) : undefined;
+    const password = url.password ? decodeURIComponent(url.password) : undefined;
+    return {
+      nodes: [{ host, port }],
+      options: {
+        enableOfflineQueue: false,
+        enableReadyCheck: true,
+        maxRedirections: 8,
+        slotsRefreshTimeout: 5_000,
+        // Keep DNS names intact for TLS; ioredis discovers shard ports itself.
+        dnsLookup: (address, callback) => callback(null, address),
+        redisOptions: {
+          db: 0,
+          connectTimeout: 5_000,
+          commandTimeout: 5_000,
+          maxRetriesPerRequest: 1,
+          ...(username === undefined ? {} : { username }),
+          ...(password === undefined ? {} : { password }),
+          ...(url.protocol === "rediss:" ? {
+            tls: { rejectUnauthorized: true, ...(isIP(host) ? {} : { servername: host }) },
+          } : {}),
+        },
+      },
+    } satisfies { nodes: { host: string; port: number }[]; options: ClusterOptions };
+  } catch {
+    // URL/decode errors may contain credentials. Only a fixed message escapes.
+    throw new TypeError("Invalid preview Redis cluster configuration");
+  }
+}
 
 const HeaderRecordSchema = z.record(
   z.string().trim().min(1).max(128),
@@ -42,10 +92,12 @@ export interface RedisPreviewClient {
   get(key: string): Promise<string | null>;
   del(key: string): Promise<unknown>;
   quit(): Promise<unknown>;
+  disconnect?(): void;
 }
 
 export interface RedisPreviewSessionStoreOptions {
   readonly redisUrl?: string;
+  readonly redisMode?: PreviewRedisMode;
   readonly client?: RedisPreviewClient;
   readonly keyPrefix?: string;
   readonly now?: () => Date;
@@ -61,12 +113,18 @@ export class RedisPreviewSessionStore implements PreviewSessionStore {
     if (options.client === undefined && options.redisUrl === undefined) {
       throw new TypeError("redisUrl is required when no Redis client is supplied");
     }
-    this.#client =
-      options.client ??
-      new Redis(options.redisUrl as string, {
+    const mode = PreviewRedisModeSchema.parse(options.redisMode);
+    if (options.client !== undefined) {
+      this.#client = options.client;
+    } else if (mode === "oss-cluster") {
+      const configuration = previewRedisClusterConfiguration(options.redisUrl as string);
+      this.#client = new Cluster(configuration.nodes, configuration.options);
+    } else {
+      this.#client = new Redis(options.redisUrl as string, {
         enableOfflineQueue: false,
         maxRetriesPerRequest: 1,
       });
+    }
     this.#ownsClient = options.client === undefined;
     this.#keyPrefix = options.keyPrefix ?? "atoms:preview:";
     this.#now = options.now ?? (() => new Date());
@@ -104,7 +162,13 @@ export class RedisPreviewSessionStore implements PreviewSessionStore {
   }
 
   async close(): Promise<void> {
-    if (this.#ownsClient) await this.#client.quit();
+    if (this.#ownsClient) {
+      try {
+        await this.#client.quit();
+      } finally {
+        this.#client.disconnect?.();
+      }
+    }
   }
 
   #key(sessionId: string): string {

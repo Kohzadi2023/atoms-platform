@@ -131,8 +131,64 @@ readiness. Keep the public-preview gate blocked without an owned domain/TLS
 path. A later private-only full-image rollout and local/mock-upstream staging
 probe needs a separately authorized deployment; this PR does not perform it.
 
+## Packaged image runtime gate
+
+The v11 ARM evidence reports `OSSCluster`. Unlike Enterprise clustering,
+OSSCluster requires a Redis Cluster-aware client and dynamic shard discovery;
+a successful seed PING is not evidence that GET/SET will route to other shards.
+The preview session store now supports explicit `PREVIEW_REDIS_MODE=oss-cluster`
+in both the Gateway and preview-session writer. Default `standalone` preserves
+local development and nonclustered/Enterprise-policy behavior. The mode is not
+inferred from a hostname. Cluster URIs must use `redis://` or `rediss://` with
+database 0; credentials are decoded locally, TLS certificate verification stays
+enabled, canonical SNI is preserved, and shard ports are discovered rather than
+hardcoded. This changes repository code only, not staging environment values.
+
+The Gateway Dockerfile prepares a portable production package using pnpm 11's
+`deploy --prod --legacy`. An independent graph check rejects any transitive
+re-resolution that differs from the frozen source build. Runtime contains only
+the Gateway/preview package artifacts and their production dependencies, runs
+as `node`, and starts `dist/main.js`; it no longer copies the whole monorepo.
+
+Full CI adds a separate `preview-runtime-integration` job:
+
+- Resolve `deploy/ci/compose.preview-runtime.yaml` and verify its exact seven
+  services, isolated project, internal network, no public ports, host env files,
+  secrets, privileged mode, application overlay or entry-point override.
+- Build the actual Dockerfile locally on the runner. No image login, push,
+  ACR publish, Azure workflow or deployment occurs.
+- Start three ephemeral Redis 8 shards (no persistence), the unchanged Gateway
+  entry point and an authenticated mock HTTP/WebSocket upstream.
+- Require the exact health body, production-only dependency resolution, signed
+  GET/POST/query/body routing across every shard, server-owned header injection,
+  and a reproducible `MOVED` failure from the original standalone-client form.
+- Require unsigned/tampered/wrong-domain/expired/missing/revoked session rejection,
+  HTTP/WebSocket origin-override rejection without upstream contact, authenticated
+  Upgrade byte forwarding, and actual Redis PX TTL/automatic expiration.
+- Delete only generated fixture keys, close clients, require clean SIGTERM exit,
+  and always remove only the job-owned Docker containers/network. No staging
+  Redis data is read or written; no OpenAI/E2B API is used.
+
+This is a Linux CI-only local image gate, not a staging rollout. Plain Redis in
+the fixture proves client cluster routing; unit tests check `rediss` options,
+AUTH parsing and verified TLS/SNI, while v12 separately proves historical live
+DNS/TLS/AUTH/PONG. Live cluster-shard DNS/ports/TLS, full application routing and
+the new image have **not** been validated in Azure by this work. The worker stays
+provider-disabled; BullMQ/other Redis consumers and worker cluster readiness are
+separate gates, not established by preview-store tests.
+
+Any later private-only rollout requires explicit approval for the exact source
+SHA/image digest, ACR build/publish and image mutation, preservation of internal
+HTTPS/min-max 0/1/execution kill switches/secrets, a bounded mock-upstream probe
+with only scoped expiring fixture keys, and rollback to the current digest.
+Re-baseline immutable-image smoke assertions by review rather than removing
+them. Public preview remains blocked without an owned domain/wildcard TLS.
+
 ## References
 
 - [Private endpoint DNS configuration](https://learn.microsoft.com/en-us/azure/private-link/private-endpoint-dns)
 - [Bicep private DNS zone group schema](https://learn.microsoft.com/en-us/azure/templates/microsoft.network/privateendpoints/privatednszonegroups)
 - [Referencing existing Bicep resources](https://learn.microsoft.com/en-us/azure/azure-resource-manager/bicep/existing-resource)
+- [Azure Managed Redis cluster policies and ports](https://learn.microsoft.com/en-us/azure/redis/architecture)
+- [ioredis Cluster, TLS and discovery](https://github.com/redis/ioredis#cluster)
+- [pnpm portable production deploy](https://pnpm.io/cli/deploy)

@@ -20,15 +20,15 @@ This runbook records the current Azure Container Apps preview topology and the n
 
 The internal-ingress gate was executed successfully on 2026-09-11. It verified `external=false`, HTTPS-only ingress, no custom domain, no public DNS/TLS mutation, and re-checked the Control API auth/run-execution safety boundary after the change.
 
-## Next safe gate: internal runtime health
+## Internal runtime health gate
 
 The next gate proves that the deployed Preview Gateway can actually start and answer its unauthenticated `/healthz` endpoint through the **internal Container Apps network** before any public hostname is introduced.
 
-The guarded smoke script uses Azure Container Apps `debug --command` from the already-running Control API replica. Microsoft documents that the debug console is a separate troubleshooting container that shares the target replica's underlying resources and includes `wget`. The probe therefore performs one request to:
+The repository v4 gate merged in PR #62 uses one ephemeral manual Container Apps Job in the same environment, not the interactive `debug`/`exec` transport. It reuses the current Control API image only as a Node runtime, copies no API secrets, and uses the existing managed identity only for ACR image pull. A JSON-form YAML file preserves JavaScript as a single argument on Windows. The job performs a bounded request to:
 
 `https://atoms-staging-preview-gateway.internal.proudpond-7f6fcfdd.canadacentral.azurecontainerapps.io/healthz`
 
-Expected body:
+Required result: HTTP 200 and the byte-exact body below, with no redirect. Job configuration is verified before execution, and deletion is independently verified before reporting success.
 
 ```json
 {"status":"ok"}
@@ -83,9 +83,9 @@ The expected public shape is a single dynamic signed label below a controlled pr
 
 ## References
 
-- Microsoft Learn: Azure Container Apps ingress overview.
-- Microsoft Learn: Connect to a container debug console in Azure Container Apps.
-- Microsoft Learn: Azure CLI `az containerapp debug`.
+- [Azure Container Apps ingress](https://learn.microsoft.com/en-us/azure/container-apps/ingress-overview)
+- [Azure Container Apps Jobs](https://learn.microsoft.com/en-us/azure/container-apps/jobs)
+- [Azure CLI Container Apps Job create](https://learn.microsoft.com/en-us/cli/azure/containerapp/job#az-containerapp-job-create)
 
 Always re-check current Microsoft documentation before changing live ingress, custom-domain, certificate, or environment routing configuration.
 
@@ -102,3 +102,12 @@ loopback-only routing/authentication tests. This is separate from PR #62's
 internal-health probe. Neither the v12 infrastructure result nor local contract
 tests establishes a live full-application preview deployment; public preview
 remains intentionally blocked.
+
+## Next gate: full-image runtime readiness before any rollout
+
+CI now builds the actual production Gateway image and tests its unchanged entry
+point on a disposable internal Docker network with a three-shard Redis cluster
+and mock upstream. See [the private image gate](preview-private-redis-and-routing.md#packaged-image-runtime-gate).
+This does not publish to ACR or update the deployed private-skeleton image. The
+operator's earlier health-v4/Redis-v12 logs are historical live evidence, not
+proof that the current repository health gate or full application was run live.

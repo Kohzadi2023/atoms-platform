@@ -1,0 +1,84 @@
+# Standalone disposable CI stack. Never merge this with production Compose.
+x-redis: &redis
+  image: redis:8-alpine
+  command: ["redis-server", "--cluster-enabled", "yes", "--cluster-config-file", "/data/nodes.conf", "--cluster-node-timeout", "5000", "--appendonly", "no", "--save", ""]
+  read_only: true
+  tmpfs: ["/data"]
+  healthcheck:
+    test: ["CMD", "redis-cli", "ping"]
+    interval: 1s
+    timeout: 2s
+    retries: 30
+  networks: [fixture]
+
+x-runtime: &runtime
+  image: atoms-ci/preview-gateway:local
+  pull_policy: never
+  read_only: true
+  cap_drop: ["ALL"]
+  security_opt: ["no-new-privileges:true"]
+  networks: [fixture]
+
+services:
+  redis-1:
+    <<: *redis
+  redis-2:
+    <<: *redis
+  redis-3:
+    <<: *redis
+  redis-cluster-init:
+    image: redis:8-alpine
+    command: ["/bin/sh", "/ci/cluster-init.sh"]
+    volumes: ["./preview:/ci:ro"]
+    depends_on:
+      redis-1: { condition: service_healthy }
+      redis-2: { condition: service_healthy }
+      redis-3: { condition: service_healthy }
+    networks: [fixture]
+  gateway:
+    <<: *runtime
+    build:
+      context: ../..
+      dockerfile: apps/preview-gateway/Dockerfile
+    environment:
+      REDIS_URL: redis://redis-1:6379/0
+      PREVIEW_REDIS_MODE: oss-cluster
+      PREVIEW_SIGNING_SECRET: ci-private-preview-signing-secret-never-use-live
+      PREVIEW_BASE_DOMAIN: preview.invalid
+      PREVIEW_UI_ORIGIN: https://ui.example.test
+      PREVIEW_PUBLIC_PROTOCOL: https
+      PREVIEW_GATEWAY_HOST: 0.0.0.0
+      PREVIEW_GATEWAY_PORT: "3002"
+    depends_on:
+      redis-cluster-init: { condition: service_completed_successfully }
+    healthcheck:
+      test: ["CMD", "node", "--input-type=module", "--eval", "const r=await fetch('http://127.0.0.1:3002/healthz',{signal:AbortSignal.timeout(2000),redirect:'manual'});process.exit(r.status===200&&Buffer.from(await r.arrayBuffer()).equals(Buffer.from('{\"status\":\"ok\"}'))?0:1)"]
+      interval: 1s
+      timeout: 3s
+      retries: 30
+  mock-upstream:
+    <<: *runtime
+    command: ["node", "ci/mock-upstream.mjs"]
+    volumes: ["./preview:/app/ci:ro"]
+    healthcheck:
+      test: ["CMD", "node", "--input-type=module", "--eval", "const r=await fetch('http://127.0.0.1:3100/__ci_diagnostics',{signal:AbortSignal.timeout(2000)});process.exit(r.status===200?0:1)"]
+      interval: 1s
+      timeout: 3s
+      retries: 30
+  smoke:
+    <<: *runtime
+    command: ["node", "ci/runtime-smoke.mjs"]
+    volumes: ["./preview:/app/ci:ro"]
+    environment:
+      RUN_PREVIEW_RUNTIME_INTEGRATION_TESTS: "true"
+      PREVIEW_RUNTIME_INTEGRATION_CONFIRMATION: DEDICATED_EPHEMERAL_REDIS_CLUSTER
+      REDIS_URL: redis://redis-1:6379/0
+      PREVIEW_BASE_DOMAIN: preview.invalid
+      RUN_EXECUTION_ENABLED: "false"
+    depends_on:
+      gateway: { condition: service_healthy }
+      mock-upstream: { condition: service_healthy }
+
+networks:
+  fixture:
+    internal: true

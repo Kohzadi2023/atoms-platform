@@ -2,6 +2,7 @@ import { once } from "node:events";
 
 import {
   PreviewTicketSigner,
+  PreviewRedisModeSchema,
   RedisPreviewSessionStore,
 } from "@atoms/preview";
 import { z } from "zod";
@@ -11,6 +12,7 @@ import { buildPreviewGateway } from "./gateway.js";
 const EnvironmentSchema = z
   .object({
     REDIS_URL: z.string().url(),
+    PREVIEW_REDIS_MODE: PreviewRedisModeSchema,
     PREVIEW_SIGNING_SECRET: z.string().min(32),
     PREVIEW_BASE_DOMAIN: z.string().min(3),
     PREVIEW_UI_ORIGIN: z.string().url(),
@@ -27,7 +29,10 @@ const EnvironmentSchema = z
 
 async function main(): Promise<void> {
   const environment = EnvironmentSchema.parse(process.env);
-  const store = new RedisPreviewSessionStore({ redisUrl: environment.REDIS_URL });
+  const store = new RedisPreviewSessionStore({
+    redisUrl: environment.REDIS_URL,
+    redisMode: environment.PREVIEW_REDIS_MODE,
+  });
   const signer = new PreviewTicketSigner({
     secret: environment.PREVIEW_SIGNING_SECRET,
     baseDomain: environment.PREVIEW_BASE_DOMAIN,
@@ -58,4 +63,3 @@ main().catch((error: unknown) => {
   console.error(error);
   process.exitCode = 1;
 });
-

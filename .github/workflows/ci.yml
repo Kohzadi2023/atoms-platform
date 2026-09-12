@@ -201,6 +201,42 @@ jobs:
           ATTACHMENT_INTEGRATION_CONFIRMATION: DEDICATED_EPHEMERAL_DATABASE
         run: pnpm staging:attachments:durability
 
+  preview-runtime-integration:
+    needs: changes
+    if: needs.changes.outputs.full_ci == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    env:
+      COMPOSE_FILE: deploy/ci/compose.preview-runtime.yaml
+      COMPOSE_PROJECT_NAME: atoms-ci-preview-runtime
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+      - name: Verify resolved isolated fixture topology
+        run: docker compose config --format json | node scripts/verify-preview-runtime-compose.mjs
+      - name: Build the actual production Gateway runtime without publishing
+        run: |
+          docker compose build gateway
+          docker image inspect atoms-ci/preview-gateway:local --format '{{.Config.User}}' | grep -Fx node
+      - name: Start the ephemeral cluster, actual Gateway entry point and mock upstream
+        run: docker compose up -d --no-build --wait --wait-timeout 90 gateway mock-upstream
+      - name: Require real cluster session routing, ticket rejection, TTL and WebSocket forwarding
+        run: docker compose run --rm --no-deps smoke
+      - name: Require clean production-entry-point shutdown
+        run: |
+          docker compose stop --timeout 10 gateway
+          gateway_container="$(docker compose ps --all --quiet gateway)"
+          test -n "$gateway_container"
+          docker inspect "$gateway_container" --format '{{.State.ExitCode}}' | grep -Fx 0
+      - name: Report isolated runtime logs on failure
+        if: failure()
+        run: docker compose logs --no-color gateway mock-upstream redis-cluster-init redis-1 redis-2 redis-3
+      - name: Remove only disposable runtime fixtures
+        if: always()
+        run: docker compose down --volumes --remove-orphans
+
   attachment-storage-integration:
     needs: changes
     if: needs.changes.outputs.full_ci == 'true'

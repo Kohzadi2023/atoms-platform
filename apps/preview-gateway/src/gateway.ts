@@ -57,7 +57,7 @@ export function buildPreviewGateway(options: PreviewGatewayOptions): Server {
 
     void resolveTarget(options, request.headers.host)
       .then((target) => {
-        const upstreamUrl = new URL(request.url ?? "/", target.upstreamUrl);
+        const upstreamUrl = upstreamRequestUrl(request.url, target);
         const transport = upstreamUrl.protocol === "https:" ? httpsRequest : httpRequest;
         const upstreamRequest = transport(
           upstreamUrl,
@@ -137,6 +137,25 @@ async function resolveTarget(
   return target;
 }
 
+function upstreamRequestUrl(
+  requestUrl: string | undefined,
+  target: PreviewTarget,
+): URL {
+  const path = requestUrl ?? "/";
+  // Only origin-form paths may use the server-selected target. Absolute URLs,
+  // //authority paths, and /\authority paths can otherwise make URL() forward
+  // the target's private provider headers to a caller-selected upstream.
+  if (!path.startsWith("/") || path.startsWith("//") || path.startsWith("/\\")) {
+    throw new GatewayRequestError(400, "Invalid preview request");
+  }
+  const upstream = new URL(target.upstreamUrl);
+  const url = new URL(path, upstream);
+  if (url.origin !== upstream.origin) {
+    throw new GatewayRequestError(400, "Invalid preview request");
+  }
+  return url;
+}
+
 function requestHeaders(
   incoming: IncomingHttpHeaders,
   target: PreviewTarget,
@@ -201,7 +220,7 @@ async function proxyUpgrade(
   head: Buffer,
 ): Promise<void> {
   const target = await resolveTarget(options, request.headers.host);
-  const upstreamUrl = new URL(request.url ?? "/", target.upstreamUrl);
+  const upstreamUrl = upstreamRequestUrl(request.url, target);
   const transport = upstreamUrl.protocol === "https:" ? httpsRequest : httpRequest;
   const headers = requestHeaders(
     request.headers,
@@ -268,6 +287,7 @@ function writeError(
 }
 
 function publicErrorMessage(statusCode: number): string {
+  if (statusCode === 400) return "Invalid preview request";
   if (statusCode === 401) return "Invalid preview URL";
   if (statusCode === 404) return "Preview not found";
   if (statusCode === 410) return "Preview expired";
@@ -275,6 +295,7 @@ function publicErrorMessage(statusCode: number): string {
 }
 
 function statusText(statusCode: number): string {
+  if (statusCode === 400) return "Bad Request";
   if (statusCode === 401) return "Unauthorized";
   if (statusCode === 404) return "Not Found";
   if (statusCode === 410) return "Gone";

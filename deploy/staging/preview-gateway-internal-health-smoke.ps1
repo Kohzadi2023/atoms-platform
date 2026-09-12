@@ -40,8 +40,9 @@ const timeout = setTimeout(() => controller.abort(), 60000);
       signal: controller.signal,
       redirect: "manual",
     });
-    const body = await response.text();
-    if (response.status !== 200 || body !== '{"status":"ok"}') {
+    const body = Buffer.from(await response.arrayBuffer());
+    const expected = Buffer.from('{"status":"ok"}', "utf8");
+    if (response.status !== 200 || !body.equals(expected)) {
       console.error("ATOMS_PREVIEW_HEALTH_FAIL");
       process.exitCode = 2;
       return;

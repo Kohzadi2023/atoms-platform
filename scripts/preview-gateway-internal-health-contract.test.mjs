@@ -37,7 +37,8 @@ test("preview internal health smoke uses a file-based job and stays fail-closed"
   assert.ok(source.indexOf("$script:JobMayExist = $true") < source.indexOf('"--yaml", $script:JobConfigPath'));
   assert.match(source, /ATOMS_PREVIEW_HEALTH_OK/);
   assert.ok(payload);
-  assert.match(payload, /response\.status !== 200 \|\| body !== '\{"status":"ok"\}'/);
+  assert.match(payload, /Buffer\.from\(await response\.arrayBuffer\(\)\)/);
+  assert.match(payload, /response\.status !== 200 \|\| !body\.equals\(expected\)/);
   assert.match(payload, /redirect: "manual"/);
   assert.match(payload, /clearTimeout\(timeout\)/);
   assert.match(source, /Provider execution\s+: NONE/);
@@ -87,6 +88,7 @@ async function healthFixture(context, status, body) {
 for (const [name, status, body, expected] of [
   ["exact HTTP 200/body succeeds and its timer does not keep Node alive", 200, '{"status":"ok"}', 0],
   ["whitespace is not an exact health response", 200, '{"status":"ok"}\n', 2],
+  ["a UTF-8 BOM is not a byte-exact health response", 200, '\uFEFF{"status":"ok"}', 2],
   ["additional JSON fields cannot pass the gate", 200, '{"status":"ok","extra":true}', 2],
   ["an unhealthy HTTP status cannot pass even with the right body", 503, '{"status":"ok"}', 2],
   ["health redirects are rejected without contacting their target", 302, '{"status":"ok"}', 2],
@@ -124,6 +126,7 @@ test("the bounded timeout aborts fetch and is cleared on failure", async () => {
   const fakeProcess = { env: { TARGET_URL: "http://loopback-fixture/healthz" }, exitCode: 0 };
   runInNewContext(payload, {
     AbortController,
+    Buffer,
     process: fakeProcess,
     console: { error: (token) => diagnostics.push(token), log: () => assert.fail("must not pass") },
     setTimeout: (callback, delay) => { assert.equal(delay, 60_000); abort = callback; return 1; },

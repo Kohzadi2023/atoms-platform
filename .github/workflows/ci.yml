@@ -221,9 +221,9 @@ jobs:
           docker compose build gateway
           docker image inspect atoms-ci/preview-gateway:local --format '{{.Config.User}}' | grep -Fx node
       - name: Start the ephemeral cluster, actual Gateway entry point and mock upstream
-        run: docker compose up -d --no-build gateway mock-upstream
+        run: docker compose up -d --no-build --wait --wait-timeout 90 gateway mock-upstream
       - name: Require real cluster session routing, ticket rejection, TTL and WebSocket forwarding
-        run: docker compose run --rm smoke
+        run: docker compose run --rm --no-deps smoke
       - name: Require clean production-entry-point shutdown
         run: |
           docker compose stop --timeout 10 gateway

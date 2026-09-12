@@ -110,8 +110,8 @@ test("packaged runtime CI cannot publish images, deploy Azure, or skip its integ
   assert.match(job, /docker compose config --format json \| node scripts\/verify-preview-runtime-compose\.mjs/);
   assert.match(job, /docker compose build gateway/);
   assert.match(job, /docker image inspect atoms-ci\/preview-gateway:local --format '\{\{\.Config\.User\}\}' \| grep -Fx node/);
-  assert.match(job, /docker compose up -d --no-build gateway mock-upstream/);
-  assert.match(job, /docker compose run --rm smoke/);
+  assert.match(job, /docker compose up -d --no-build --wait --wait-timeout 90 gateway mock-upstream/);
+  assert.match(job, /docker compose run --rm --no-deps smoke/);
   assert.match(job, /docker compose stop --timeout 10 gateway/);
   assert.match(job, /if: failure\(\)/);
   assert.match(job, /if: always\(\)/);

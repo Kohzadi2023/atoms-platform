@@ -13,7 +13,8 @@ test("storage CI selects an isolated overlay and builds before starting services
   assert.match(job, /docker compose build minio minio-init/);
   assert.ok(job.indexOf("docker compose build") < job.indexOf("docker compose up"));
   assert.match(job, /docker compose up -d --no-build minio clamav/);
-  assert.match(job, /docker compose run --rm --no-build minio-init/);
+  assert.match(job, /docker compose run --rm minio-init/);
+  assert.doesNotMatch(job, /docker compose run[^\n]*--no-build/, "Compose run does not support --no-build; the overlay already forbids pulls");
 });
 
 test("CI overlay changes only MinIO image/build selection, never runtime boundaries", async () => {

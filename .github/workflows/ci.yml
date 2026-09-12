@@ -231,7 +231,7 @@ jobs:
             if [ "$attempt" -eq 60 ]; then exit 1; fi
             sleep 2
           done
-          docker compose run --rm --no-build minio-init
+          docker compose run --rm minio-init
           for attempt in {1..60}; do
             if docker compose exec -T clamav clamdscan --ping 1; then
               break

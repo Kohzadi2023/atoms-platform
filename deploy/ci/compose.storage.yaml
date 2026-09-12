@@ -1,0 +1,19 @@
+# Overlay only: use with the repository-root compose.yaml in disposable CI.
+# All paths are relative to that first Compose file, not this directory.
+# Keep its commands, fixture credentials, KMS, CORS, ClamAV, and volumes intact.
+services:
+  minio:
+    image: atoms-ci/minio:RELEASE.2025-09-07T16-13-09Z
+    pull_policy: never
+    build:
+      context: deploy/ci
+      dockerfile: minio.Dockerfile
+      target: minio
+
+  minio-init:
+    image: atoms-ci/mc:RELEASE.2025-08-13T08-35-41Z
+    pull_policy: never
+    build:
+      context: deploy/ci
+      dockerfile: minio.Dockerfile
+      target: mc

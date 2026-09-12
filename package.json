@@ -52,7 +52,8 @@
     "test:local-development": "node --test scripts/check-local-development.test.mjs",
     "test:phase3-environment-protection": "node --test scripts/validate-phase3-staging-inputs.test.mjs scripts/verify-phase3-environment-protection.test.mjs",
     "test:azure-staging": "node --test scripts/bootstrap-azure-staging-oidc.test.mjs scripts/validate-azure-staging-inputs.test.mjs",
-    "test:staging-deployment": "node --test scripts/check-staging-deployment.test.mjs scripts/bootstrap-staging-persistence.test.mjs scripts/smoke-staging-authenticated.test.mjs scripts/smoke-staging-entra-auth.test.mjs scripts/rehearse-staging-recovery.test.mjs scripts/preview-gateway-internal-ingress-contract.test.mjs scripts/preview-gateway-internal-health-contract.test.mjs"
+    "test:preview-private": "pnpm --filter @atoms/preview-gateway... build && pnpm --filter @atoms/preview test && pnpm --filter @atoms/preview-gateway test && pnpm --filter @atoms/preview-gateway... typecheck",
+    "test:staging-deployment": "node --test scripts/check-staging-deployment.test.mjs scripts/bootstrap-staging-persistence.test.mjs scripts/smoke-staging-authenticated.test.mjs scripts/smoke-staging-entra-auth.test.mjs scripts/rehearse-staging-recovery.test.mjs scripts/preview-gateway-internal-ingress-contract.test.mjs scripts/preview-gateway-internal-health-contract.test.mjs scripts/verify-managed-redis-dns-template.test.mjs"
   },
   "devDependencies": {
     "@types/node": "catalog:",

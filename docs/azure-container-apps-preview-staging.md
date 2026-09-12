@@ -88,3 +88,17 @@ The expected public shape is a single dynamic signed label below a controlled pr
 - Microsoft Learn: Azure CLI `az containerapp debug`.
 
 Always re-check current Microsoft documentation before changing live ingress, custom-domain, certificate, or environment routing configuration.
+
+## Follow-up: private Redis and application contracts
+
+The operator's 2026-09-12 v12 transcript records a successful private Managed
+Redis DNS repair: one DNS zone group on the existing PE, exact private endpoint
+DNS resolution, validated TLS/AUTH/PONG, and restoration of Gateway min/max
+replicas `0/1` without public exposure or provider execution.
+
+See [private Redis IaC adoption and local Gateway contracts](preview-private-redis-and-routing.md)
+for the persistent child-resource declaration, read-only adoption review, and
+loopback-only routing/authentication tests. This is separate from PR #62's
+internal-health probe. Neither the v12 infrastructure result nor local contract
+tests establishes a live full-application preview deployment; public preview
+remains intentionally blocked.

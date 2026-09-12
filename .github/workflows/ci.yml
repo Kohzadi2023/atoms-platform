@@ -86,6 +86,8 @@ jobs:
         run: |
           az bicep install --version v0.46.1
           az bicep build --file infra/azure/staging/main.bicep --stdout > /dev/null
+          az bicep build --file infra/azure/staging/managed-redis-private-dns.bicep --outfile /tmp/atoms-managed-redis-private-dns.json
+          node scripts/verify-managed-redis-dns-template.mjs /tmp/atoms-managed-redis-private-dns.json
 
       - name: Validate the staging manifest, TLS ingress, and persistence contract
         if: needs.changes.outputs.full_ci == 'true'

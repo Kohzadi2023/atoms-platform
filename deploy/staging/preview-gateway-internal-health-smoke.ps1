@@ -2,534 +2,339 @@ Clear-Host
 Set-StrictMode -Version Latest
 $ErrorActionPreference = "Stop"
 $ProgressPreference = "SilentlyContinue"
-
-if ($PSVersionTable.PSVersion.Major -lt 7) {
-    throw "PowerShell 7+ is required."
-}
+if ($PSVersionTable.PSVersion.Major -lt 7) { throw "PowerShell 7+ required." }
 
 $SubscriptionId = "2ac8ed24-166b-4325-89dc-829d64391ce9"
 $ForbiddenSubscriptionId = "bbcaf423-9a71-43bc-9fc7-821ef012cd01"
-$ResourceGroup = "atoms-staging-rg"
-$EnvironmentName = "atoms-staging-env"
-$ControlApiName = "atoms-staging-control-api"
-$PreviewGatewayName = "atoms-staging-preview-gateway"
-$AcrName = "atomsstaging91ce9"
+$Rg = "atoms-staging-rg"
+$EnvName = "atoms-staging-env"
+$EnvironmentId = "/subscriptions/$SubscriptionId/resourceGroups/$Rg/providers/Microsoft.App/managedEnvironments/$EnvName"
+$ApiName = "atoms-staging-control-api"
+$PreviewName = "atoms-staging-preview-gateway"
+$Acr = "atomsstaging91ce9"
+$AcrServer = "$Acr.azurecr.io"
+$PullIdentity = "/subscriptions/$SubscriptionId/resourceGroups/$Rg/providers/Microsoft.ManagedIdentity/userAssignedIdentities/atoms-staging-acr-pull"
 $PreviewAcrRef = "preview-gateway:private-skeleton-0482b37eab42"
-$PreviewImage = "atomsstaging91ce9.azurecr.io/$PreviewAcrRef"
-$ExpectedPreviewDigest = "sha256:53b70e9f6fa2fee00af2c02d70c6d5fdc281acde31532af1c2ab7d7278c9d994"
-$ExpectedDefaultDomain = "proudpond-7f6fcfdd.canadacentral.azurecontainerapps.io"
-$ExpectedUiOrigin = "https://atoms-staging-web.$ExpectedDefaultDomain"
-$ExpectedInternalFqdn = "atoms-staging-preview-gateway.internal.$ExpectedDefaultDomain"
-$TargetPort = 3002
-
+$PreviewImage = "$AcrServer/$PreviewAcrRef"
+$PreviewDigest = "sha256:53b70e9f6fa2fee00af2c02d70c6d5fdc281acde31532af1c2ab7d7278c9d994"
+$DefaultDomain = "proudpond-7f6fcfdd.canadacentral.azurecontainerapps.io"
+$InternalFqdn = "$PreviewName.internal.$DefaultDomain"
+$UiOrigin = "https://atoms-staging-web.$DefaultDomain"
+$ProbeId = [Guid]::NewGuid().ToString("N")
+$JobName = "atoms-stg-pv-smoke-" + $ProbeId.Substring(0, 12)
+$JobMayExist = $false
+$JobConfigPath = $null
+$AzExecutable = $null
 $env:AZURE_CONFIG_DIR = "$env:USERPROFILE\.azure-atoms"
 $env:AZURE_CORE_ONLY_SHOW_ERRORS = "true"
-$env:AZURE_CORE_NO_COLOR = "true"
-$env:PYTHONUTF8 = "1"
-$env:PYTHONIOENCODING = "utf-8"
-
-$TranscriptPath = Join-Path $env:TEMP (
-    "atoms-preview-internal-health-" +
-    [Guid]::NewGuid().ToString("N") +
-    ".log"
-)
+$Transcript = Join-Path ([IO.Path]::GetTempPath()) ("atoms-preview-health-$ProbeId.log")
 $TranscriptStarted = $false
 
-function Step([string]$Message) {
-    Write-Host ""
-    Write-Host "==> $Message" -ForegroundColor Cyan
-}
-
-function Ok([string]$Message) {
-    Write-Host "    OK: $Message" -ForegroundColor Green
-}
-
-function Note([string]$Message) {
-    Write-Host "    NOTE: $Message" -ForegroundColor Yellow
-}
-
-function AzPath {
-    $cmd = Get-Command az.cmd -ErrorAction SilentlyContinue
-    if ($null -eq $cmd) {
-        $cmd = Get-Command az -ErrorAction SilentlyContinue
+# JSON is valid YAML. Keep JavaScript out of the Windows/az.cmd command line.
+$ProbeJavaScript = @'
+const controller = new AbortController();
+const timeout = setTimeout(() => controller.abort(), 60000);
+(async () => {
+  try {
+    const response = await fetch(process.env.TARGET_URL, {
+      signal: controller.signal,
+      redirect: "manual",
+    });
+    const body = Buffer.from(await response.arrayBuffer());
+    const expected = Buffer.from('{"status":"ok"}', "utf8");
+    if (response.status !== 200 || !body.equals(expected)) {
+      console.error("ATOMS_PREVIEW_HEALTH_FAIL");
+      process.exitCode = 2;
+      return;
     }
-    if ($null -eq $cmd) {
-        throw "Azure CLI was not found."
+    console.log('ATOMS_PREVIEW_HEALTH_OK {"status":"ok"}');
+  } catch {
+    console.error("ATOMS_PREVIEW_HEALTH_ERROR");
+    process.exitCode = 3;
+  } finally {
+    clearTimeout(timeout);
+  }
+})();
+'@
+
+function Ok($Message) { Write-Host "    OK: $Message" -ForegroundColor Green }
+function Step($Message) { Write-Host "`n==> $Message" -ForegroundColor Cyan }
+
+function Invoke-Az([string[]]$CommandArgs) {
+    if ([string]::IsNullOrWhiteSpace($script:AzExecutable)) {
+        $command = Get-Command az -CommandType Application -ErrorAction Stop
+        $script:AzExecutable = [string]$command.Source
     }
-    return [string]$cmd.Source
-}
-
-function Invoke-AzProcess([string[]]$CommandArgs) {
-    $psi = [System.Diagnostics.ProcessStartInfo]::new()
-    $psi.FileName = AzPath
-    $psi.UseShellExecute = $false
-    $psi.RedirectStandardOutput = $true
-    $psi.RedirectStandardError = $true
-    $psi.CreateNoWindow = $true
-
-    foreach ($arg in $CommandArgs) {
-        [void]$psi.ArgumentList.Add([string]$arg)
-    }
-
-    $psi.Environment["AZURE_CONFIG_DIR"] = $env:AZURE_CONFIG_DIR
-    $psi.Environment["AZURE_CORE_ONLY_SHOW_ERRORS"] = "true"
-    $psi.Environment["AZURE_CORE_NO_COLOR"] = "true"
-    $psi.Environment["PYTHONUTF8"] = "1"
-    $psi.Environment["PYTHONIOENCODING"] = "utf-8"
-
-    $process = [System.Diagnostics.Process]::new()
-    $process.StartInfo = $psi
-    if (-not $process.Start()) {
-        throw "Azure CLI process could not be started."
-    }
-
-    $stdoutTask = $process.StandardOutput.ReadToEndAsync()
-    $stderrTask = $process.StandardError.ReadToEndAsync()
-    $process.WaitForExit()
-
-    $stdout = $stdoutTask.GetAwaiter().GetResult()
-    $stderr = $stderrTask.GetAwaiter().GetResult()
-    $exitCode = $process.ExitCode
-    $process.Dispose()
-
-    return [PSCustomObject]@{
-        ExitCode = $exitCode
-        Stdout = if ($null -eq $stdout) { "" } else { [string]$stdout }
-        Stderr = if ($null -eq $stderr) { "" } else { [string]$stderr }
-    }
-}
-
-function Az([string[]]$CommandArgs) {
-    $result = Invoke-AzProcess $CommandArgs
-    if ([int]$result.ExitCode -ne 0) {
-        $safeStderr = ([string]$result.Stderr).Trim()
-        if ([string]::IsNullOrWhiteSpace($safeStderr)) {
-            $safeStderr = "<no stderr text>"
+    $stderrPath = [IO.Path]::GetTempFileName()
+    try {
+        # Warnings/progress on native stderr must never enter JSON stdout.
+        $stdout = & $script:AzExecutable @CommandArgs 2> $stderrPath
+        $exitCode = $LASTEXITCODE
+        if ($exitCode -ne 0) {
+            $stderr = [IO.File]::ReadAllText($stderrPath).Trim()
+            throw "Azure CLI failed safely (exit $exitCode).`n$stderr"
         }
-        throw "Azure CLI command failed safely.`n$safeStderr"
+        return ($stdout -join "`n").Trim()
+    } finally {
+        Remove-Item -LiteralPath $stderrPath -Force -ErrorAction SilentlyContinue
     }
-    return ([string]$result.Stdout).Trim()
 }
 
-function AzJson([string[]]$CommandArgs) {
-    $raw = Az $CommandArgs
-    if ([string]::IsNullOrWhiteSpace($raw)) {
-        return @()
-    }
+function J([string[]]$CommandArgs) {
+    $raw = Invoke-Az $CommandArgs
+    if ([string]::IsNullOrWhiteSpace($raw)) { return $null }
     return $raw | ConvertFrom-Json
 }
 
-function Prop($Object, [string]$Name) {
+function P($Object, $Name) {
     if ($null -eq $Object) { return $null }
     $property = $Object.PSObject.Properties[$Name]
     if ($null -eq $property) { return $null }
     return $property.Value
 }
 
-function EnvValue($App, [string]$Name) {
-    $containers = @(Prop $App.properties.template "containers")
-    if (@($containers).Count -ne 1) {
-        throw "Expected exactly one container while reading '$Name'."
-    }
+function Items($Value) { @($Value | Where-Object { $null -ne $_ }) }
 
-    $items = @(Prop $containers[0] "env")
-    $match = @(
-        $items |
-            Where-Object { [string](Prop $_ "name") -eq $Name }
-    )
-
-    if (@($match).Count -ne 1) {
-        return $null
-    }
-
-    $value = Prop $match[0] "value"
-    if ($null -eq $value) {
-        return $null
-    }
-    return [string]$value
+function EnvVal($App, $Name) {
+    $containers = @(Items (P $App.properties.template "containers"))
+    if ($containers.Count -ne 1) { throw "Expected one container." }
+    $matches = @((P $containers[0] "env") | Where-Object { (P $_ "name") -eq $Name })
+    if ($matches.Count -ne 1) { return $null }
+    return [string](P $matches[0] "value")
 }
 
 function Lock-Staging {
-    [void](Az @(
-        "account","set",
-        "--subscription",$SubscriptionId,
-        "--only-show-errors"
-    ))
-
-    $account = AzJson @(
-        "account","show",
-        "--subscription",$SubscriptionId,
-        "-o","json",
-        "--only-show-errors"
-    )
-
-    $activeId = [string](Prop $account "id")
-    $activeName = [string](Prop $account "name")
-    $activeState = [string](Prop $account "state")
-
-    if ($activeId -eq $ForbiddenSubscriptionId) {
-        throw "CRITICAL: forbidden legacy subscription is active."
+    [void](Invoke-Az @("account", "set", "--subscription", $SubscriptionId, "--only-show-errors"))
+    $account = J @("account", "show", "--subscription", $SubscriptionId, "-o", "json", "--only-show-errors")
+    if ((P $account "id") -eq $ForbiddenSubscriptionId) { throw "Forbidden legacy subscription active." }
+    if ((P $account "id") -ne $SubscriptionId -or (P $account "name") -ne "Atoms-Staging" -or (P $account "state") -ne "Enabled") {
+        throw "Subscription lock failed."
     }
-    if ($activeId -ne $SubscriptionId) {
-        throw "Unexpected subscription '$activeId'."
-    }
-    if ($activeName -ne "Atoms-Staging") {
-        throw "Expected subscription name Atoms-Staging; got '$activeName'."
-    }
-    if ($activeState -ne "Enabled") {
-        throw "Atoms-Staging subscription is not Enabled."
-    }
-
     Ok "Subscription locked to Atoms-Staging ($SubscriptionId)"
 }
 
-function Invoke-HttpProbe(
-    [string]$Name,
-    [string]$Uri,
-    [int]$ExpectedStatus,
-    [int]$Attempts = 4,
-    [int]$TimeoutSeconds = 20,
-    [int]$DelaySeconds = 5
-) {
-    $lastError = $null
-
-    for ($attempt = 1; $attempt -le $Attempts; $attempt++) {
+function Http($Uri, $Status) {
+    for ($attempt = 1; $attempt -le 4; $attempt++) {
         try {
-            $response = Invoke-WebRequest `
-                -Uri $Uri `
-                -Method Get `
-                -SkipHttpErrorCheck `
-                -MaximumRedirection 0 `
-                -ConnectionTimeoutSeconds $TimeoutSeconds
-
-            if ([int]$response.StatusCode -eq $ExpectedStatus) {
-                return
-            }
-
-            $lastError = "Expected HTTP $ExpectedStatus; got $([int]$response.StatusCode)."
-        }
-        catch {
-            $lastError = $_.Exception.Message
-        }
-
-        if ($attempt -lt $Attempts) {
-            Write-Host "    Probe '$Name' attempt $attempt/$Attempts did not pass; retrying." -ForegroundColor Yellow
-            Start-Sleep -Seconds $DelaySeconds
-        }
+            $response = Invoke-WebRequest -Uri $Uri -SkipHttpErrorCheck -MaximumRedirection 0 -ConnectionTimeoutSeconds 20
+            if ([int]$response.StatusCode -eq $Status) { return }
+        } catch { }
+        if ($attempt -lt 4) { Start-Sleep -Seconds 5 }
     }
-
-    throw "Probe '$Name' failed after $Attempts attempts. Last result: $lastError"
+    throw "HTTP safety probe failed: $Uri expected $Status"
 }
 
-function Verify-ControlApiSafety {
-    $api = AzJson @(
-        "containerapp","show",
-        "--subscription",$SubscriptionId,
-        "-g",$ResourceGroup,
-        "-n",$ControlApiName,
-        "-o","json",
-        "--only-show-errors"
-    )
-
-    if ((EnvValue $api "AUTH_REQUIRED") -ne "true") {
-        throw "AUTH_REQUIRED must remain true."
-    }
-    if ((EnvValue $api "RUN_EXECUTION_ENABLED") -ne "false") {
-        throw "RUN_EXECUTION_ENABLED must remain false."
-    }
-
-    Invoke-HttpProbe `
-        -Name "Control API /readyz" `
-        -Uri "https://$ControlApiName.$ExpectedDefaultDomain/readyz" `
-        -ExpectedStatus 200
-
-    Invoke-HttpProbe `
-        -Name "Control API unauthenticated /v1/me" `
-        -Uri "https://$ControlApiName.$ExpectedDefaultDomain/v1/me" `
-        -ExpectedStatus 401
-
+function Verify-Api {
+    $api = J @("containerapp", "show", "--subscription", $SubscriptionId, "-g", $Rg, "-n", $ApiName, "-o", "json", "--only-show-errors")
+    if ((EnvVal $api "AUTH_REQUIRED") -ne "true") { throw "AUTH_REQUIRED must remain true." }
+    if ((EnvVal $api "RUN_EXECUTION_ENABLED") -ne "false") { throw "RUN_EXECUTION_ENABLED must remain false." }
+    Http "https://$ApiName.$DefaultDomain/readyz" 200
+    Http "https://$ApiName.$DefaultDomain/v1/me" 401
     Ok "AUTH_REQUIRED=true, RUN_EXECUTION_ENABLED=false, readyz=200, unauth /v1/me=401"
+    return $api
 }
 
-function Verify-PublicRoutingAbsent {
-    $environment = AzJson @(
-        "containerapp","env","show",
-        "--subscription",$SubscriptionId,
-        "-g",$ResourceGroup,
-        "-n",$EnvironmentName,
-        "-o","json",
-        "--only-show-errors"
-    )
-
-    $properties = Prop $environment "properties"
-    if ([string](Prop $properties "defaultDomain") -ne $ExpectedDefaultDomain) {
-        throw "Container Apps default domain changed unexpectedly."
+function Verify-PublicBoundary {
+    $environment = J @("containerapp", "env", "show", "--subscription", $SubscriptionId, "-g", $Rg, "-n", $EnvName, "-o", "json", "--only-show-errors")
+    if ((P $environment "id") -ne $EnvironmentId -or (P $environment.properties "defaultDomain") -ne $DefaultDomain) {
+        throw "Environment identity/default domain changed."
     }
+    $custom = P $environment.properties "customDomainConfiguration"
+    if ($null -ne $custom -and (
+        -not [string]::IsNullOrWhiteSpace([string](P $custom "dnsSuffix")) -or
+        $null -ne (P $custom "certificateValue") -or $null -ne (P $custom "certificateKeyVaultProperties")
+    )) { throw "Custom environment DNS/TLS now exists." }
+    $certificates = @(Items (J @("containerapp", "env", "certificate", "list", "--subscription", $SubscriptionId, "-g", $Rg, "-n", $EnvName, "-o", "json", "--only-show-errors")))
+    if ($certificates.Count -gt 0) { throw "Environment certificates now exist." }
+    $zones = @(Items (J @("resource", "list", "--subscription", $SubscriptionId, "-g", $Rg, "--resource-type", "Microsoft.Network/dnszones", "-o", "json", "--only-show-errors")))
+    if ($zones.Count -gt 0) { throw "Azure DNS public zone now exists." }
+    $routes = @(Items (J @("resource", "list", "--subscription", $SubscriptionId, "-g", $Rg, "--resource-type", "Microsoft.App/managedEnvironments/httpRouteConfigs", "-o", "json", "--only-show-errors")))
+    if ($routes.Count -gt 0) { throw "Environment HTTP route config exists." }
+    Ok "No public DNS/TLS/custom route exposure detected"
+    return $environment
+}
 
-    $customConfig = Prop $properties "customDomainConfiguration"
-    if ($null -ne $customConfig) {
-        $dnsSuffix = [string](Prop $customConfig "dnsSuffix")
-        $inlineCertificate = Prop $customConfig "certificateValue"
-        $keyVaultCertificate = Prop $customConfig "certificateKeyVaultProperties"
+function Verify-Preview {
+    $preview = J @("containerapp", "show", "--subscription", $SubscriptionId, "-g", $Rg, "-n", $PreviewName, "-o", "json", "--only-show-errors")
+    $containers = @(Items (P $preview.properties.template "containers"))
+    if ($containers.Count -ne 1) { throw "Expected one preview container." }
+    if ((P $containers[0] "image") -ne $PreviewImage) { throw "Preview image changed." }
+    $digest = Invoke-Az @("acr", "repository", "show", "--subscription", $SubscriptionId, "-n", $Acr, "--image", $PreviewAcrRef, "--query", "digest", "-o", "tsv", "--only-show-errors")
+    if ($digest.ToLowerInvariant() -ne $PreviewDigest) { throw "Preview digest changed." }
+    $scale = P $preview.properties.template "scale"
+    if ($null -eq (P $scale "minReplicas") -or (P $scale "minReplicas") -ne 0 -or (P $scale "maxReplicas") -ne 1) {
+        throw "Preview scale must remain min=0/max=1."
+    }
+    if ((EnvVal $preview "PREVIEW_BASE_DOMAIN") -ne "preview.invalid") { throw "PREVIEW_BASE_DOMAIN must remain preview.invalid." }
+    if ((EnvVal $preview "PREVIEW_UI_ORIGIN") -ne $UiOrigin) { throw "PREVIEW_UI_ORIGIN changed." }
+    if ((EnvVal $preview "PREVIEW_PUBLIC_PROTOCOL") -ne "https" -or (EnvVal $preview "PREVIEW_GATEWAY_PORT") -ne "3002") {
+        throw "Preview HTTPS/runtime port contract failed."
+    }
+    $ingress = P $preview.properties.configuration "ingress"
+    if ($null -eq $ingress -or (P $ingress "external") -isnot [bool] -or (P $ingress "external") -ne $false -or
+        (P $ingress "targetPort") -ne 3002 -or (P $ingress "allowInsecure") -isnot [bool] -or (P $ingress "allowInsecure") -ne $false) {
+        throw "Preview ingress safety contract failed."
+    }
+    if (@(Items (P $ingress "customDomains")).Count -gt 0) { throw "Custom domains must remain absent." }
+    if ((P $ingress "fqdn") -ne $InternalFqdn) { throw "Unexpected internal FQDN." }
+    Ok "Preview Gateway external=false, HTTPS-only, immutable digest, min=0/max=1, preview.invalid verified"
+}
 
-        if (-not [string]::IsNullOrWhiteSpace($dnsSuffix) -or
-            $null -ne $inlineCertificate -or
-            $null -ne $keyVaultCertificate) {
-            throw "Custom environment DNS/certificate configuration now exists; stop and re-plan."
+function ProbeJobs {
+    return @(Items (J @("containerapp", "job", "list", "--subscription", $SubscriptionId, "-g", $Rg, "-o", "json", "--only-show-errors")) |
+        Where-Object { (P $_ "name") -eq $JobName })
+}
+
+function Require-ProbeOwnership($Job) {
+    if ((P $Job "name") -ne $JobName -or (P $Job.tags "probeId") -ne $ProbeId -or
+        (P $Job.tags "project") -ne "atoms" -or (P $Job.tags "environment") -ne "staging" -or
+        (P $Job.tags "purpose") -ne "preview-internal-health" -or (P $Job.tags "lifecycle") -ne "ephemeral" -or
+        (P $Job.properties "environmentId") -ne $EnvironmentId) {
+        throw "Probe ownership mismatch; do not start or delete this resource."
+    }
+}
+
+function Cleanup {
+    if (-not $script:JobMayExist) { return }
+    $jobs = @(ProbeJobs)
+    if ($jobs.Count -eq 0) { $script:JobMayExist = $false; return }
+    if ($jobs.Count -ne 1) { throw "Ambiguous probe resource; cleanup not confirmed." }
+    Require-ProbeOwnership $jobs[0]
+    Write-Host "    NOTE: deleting owned ephemeral probe job $JobName"
+    [void](Invoke-Az @("containerapp", "job", "delete", "--subscription", $SubscriptionId, "-g", $Rg, "-n", $JobName, "--yes", "--only-show-errors"))
+    if (@(ProbeJobs).Count -ne 0) { throw "Ephemeral probe job deletion could not be verified." }
+    $script:JobMayExist = $false
+    Ok "Ephemeral probe job deletion verified"
+}
+
+function New-ProbeConfig($Image, $Location) {
+    $identities = @{}
+    $identities[$PullIdentity] = @{}
+    return [ordered]@{
+        name = $JobName
+        location = $Location
+        identity = @{ type = "UserAssigned"; userAssignedIdentities = $identities }
+        tags = @{ project = "atoms"; environment = "staging"; purpose = "preview-internal-health"; lifecycle = "ephemeral"; probeId = $ProbeId }
+        properties = @{
+            environmentId = $EnvironmentId
+            configuration = @{
+                triggerType = "Manual"
+                replicaTimeout = 120
+                replicaRetryLimit = 0
+                manualTriggerConfig = @{ parallelism = 1; replicaCompletionCount = 1 }
+                registries = @(@{ server = $AcrServer; identity = $PullIdentity })
+            }
+            template = @{
+                containers = @(@{
+                    name = "preview-health-probe"
+                    image = $Image
+                    command = @("node")
+                    args = @("--eval", $ProbeJavaScript)
+                    env = @(@{ name = "TARGET_URL"; value = "https://$InternalFqdn/healthz" })
+                    resources = @{ cpu = 0.25; memory = "0.5Gi" }
+                })
+            }
         }
     }
-
-    $certificates = @(
-        AzJson @(
-            "containerapp","env","certificate","list",
-            "--subscription",$SubscriptionId,
-            "-g",$ResourceGroup,
-            "-n",$EnvironmentName,
-            "-o","json",
-            "--only-show-errors"
-        )
-    )
-    if (@($certificates).Count -gt 0) {
-        throw "Environment certificates now exist; stop and re-plan."
-    }
-
-    $zones = @(
-        AzJson @(
-            "resource","list",
-            "--subscription",$SubscriptionId,
-            "-g",$ResourceGroup,
-            "--resource-type","Microsoft.Network/dnszones",
-            "-o","json",
-            "--only-show-errors"
-        )
-    )
-    if (@($zones).Count -gt 0) {
-        throw "Azure DNS public zones now exist in the staging resource group; stop and re-plan."
-    }
-
-    $routeConfigs = @(
-        AzJson @(
-            "resource","list",
-            "--subscription",$SubscriptionId,
-            "-g",$ResourceGroup,
-            "--resource-type","Microsoft.App/managedEnvironments/httpRouteConfigs",
-            "-o","json",
-            "--only-show-errors"
-        )
-    )
-    if (@($routeConfigs).Count -gt 0) {
-        throw "Environment-level HTTP route configs exist; public exposure boundary changed."
-    }
-
-    Ok "No custom DNS suffix, certificates, Azure DNS public zone, or environment HTTP route config"
 }
 
-function Get-AcrDigest {
-    $digest = Az @(
-        "acr","repository","show",
-        "--subscription",$SubscriptionId,
-        "-n",$AcrName,
-        "--image",$PreviewAcrRef,
-        "--query","digest",
-        "-o","tsv",
-        "--only-show-errors"
-    )
-
-    $normalized = $digest.Trim().ToLowerInvariant()
-    if ($normalized -notmatch "^sha256:[0-9a-f]{64}$") {
-        throw "Preview image digest could not be verified."
+function Probe($Api, $Environment) {
+    Step "Prepare file-based same-environment health probe"
+    $containers = @(Items (P $Api.properties.template "containers"))
+    if ($containers.Count -ne 1) { throw "Expected one Control API container." }
+    $image = [string](P $containers[0] "image")
+    if (-not $image.StartsWith("$AcrServer/", [StringComparison]::OrdinalIgnoreCase)) { throw "Control API image is not from staging ACR." }
+    if ((P $Environment "id") -ne $EnvironmentId -or [string]::IsNullOrWhiteSpace([string](P $Environment "location"))) {
+        throw "Exact staging environment/location required."
     }
-    return $normalized
-}
+    $identity = Invoke-Az @("identity", "show", "--subscription", $SubscriptionId, "-g", $Rg, "-n", "atoms-staging-acr-pull", "--query", "id", "-o", "tsv", "--only-show-errors")
+    if ($identity -ne $PullIdentity) { throw "Staging ACR pull identity mismatch." }
+    $help = Invoke-Az @("containerapp", "job", "create", "--help")
+    if (-not $help.Contains("--yaml")) { throw "Container Apps Job --yaml support required." }
+    if (@(ProbeJobs).Count -ne 0) { throw "Probe name already exists; no mutation performed." }
 
-function Verify-PreviewInternalIngress {
-    $app = AzJson @(
-        "containerapp","show",
-        "--subscription",$SubscriptionId,
-        "-g",$ResourceGroup,
-        "-n",$PreviewGatewayName,
-        "-o","json",
-        "--only-show-errors"
-    )
-
-    $containers = @(Prop $app.properties.template "containers")
-    if (@($containers).Count -ne 1) {
-        throw "Expected exactly one Preview Gateway container."
+    $script:JobConfigPath = Join-Path ([IO.Path]::GetTempPath()) ("atoms-preview-probe-$ProbeId.yaml")
+    $config = New-ProbeConfig $image (P $Environment "location")
+    [IO.File]::WriteAllText($script:JobConfigPath, ($config | ConvertTo-Json -Depth 20), [Text.UTF8Encoding]::new($false))
+    # Creation may apply even if its CLI response fails. Finally must reconcile.
+    $script:JobMayExist = $true
+    Step "Create ephemeral same-environment Container Apps Job"
+    [void](Invoke-Az @("containerapp", "job", "create", "--subscription", $SubscriptionId, "-g", $Rg, "-n", $JobName, "--yaml", $script:JobConfigPath, "--output", "none", "--only-show-errors"))
+    $job = J @("containerapp", "job", "show", "--subscription", $SubscriptionId, "-g", $Rg, "-n", $JobName, "-o", "json", "--only-show-errors")
+    Require-ProbeOwnership $job
+    # Do not trust a Succeeded execution if ARM returned a changed payload.
+    $actual = P $job.properties.template "containers"
+    $expected = $config.properties.template.containers
+    $pullIds = @($job.identity.userAssignedIdentities.PSObject.Properties.Name)
+    $registries = @(Items (P $job.properties.configuration "registries"))
+    if (@($actual).Count -ne 1 -or (P $actual[0] "image") -ne $image -or
+        (P $job.identity "type") -ne "UserAssigned" -or $pullIds.Count -ne 1 -or $pullIds[0] -ne $PullIdentity -or
+        $registries.Count -ne 1 -or (P $registries[0] "server") -ne $AcrServer -or (P $registries[0] "identity") -ne $PullIdentity -or
+        $null -ne (P $registries[0] "username") -or $null -ne (P $registries[0] "passwordSecretRef") -or
+        (@(P $actual[0] "command") -join "`n") -cne "node" -or
+        (@(P $actual[0] "args") -join "`n") -cne ($expected[0].args -join "`n") -or
+        @(Items (P $actual[0] "env")).Count -ne 1 -or (P $actual[0].env[0] "name") -cne "TARGET_URL" -or
+        (P $actual[0].env[0] "value") -cne "https://$InternalFqdn/healthz" -or
+        @(Items (P $job.properties.configuration "secrets")).Count -ne 0 -or
+        $null -ne (P $job.properties.configuration "ingress") -or
+        @(Items (P $job.properties.template "initContainers")).Count -ne 0 -or
+        @(Items (P $job.properties.template "volumes")).Count -ne 0 -or
+        (P $job.properties.configuration "triggerType") -ne "Manual" -or
+        (P $job.properties.configuration "replicaRetryLimit") -ne 0 -or
+        (P $job.properties.configuration "replicaTimeout") -ne 120 -or
+        (P $job.properties.configuration.manualTriggerConfig "parallelism") -ne 1 -or
+        (P $job.properties.configuration.manualTriggerConfig "replicaCompletionCount") -ne 1) {
+        throw "Created probe payload/configuration changed; do not start it."
     }
+    Ok "Ephemeral job verified; exact payload, no ingress, secrets, init containers or volumes"
 
-    if ([string](Prop $containers[0] "image") -ne $PreviewImage) {
-        throw "Preview Gateway image changed unexpectedly."
+    Step "Run exact internal health probe"
+    $execution = Invoke-Az @("containerapp", "job", "start", "--subscription", $SubscriptionId, "-g", $Rg, "-n", $JobName, "--query", "name", "-o", "tsv", "--only-show-errors")
+    if ([string]::IsNullOrWhiteSpace($execution)) { throw "Could not resolve this exact probe execution." }
+    for ($attempt = 1; $attempt -le 36; $attempt++) {
+        $result = J @("containerapp", "job", "execution", "show", "--subscription", $SubscriptionId, "-g", $Rg, "-n", $JobName, "--job-execution-name", $execution, "-o", "json", "--only-show-errors")
+        $status = [string](P $result.properties "status")
+        if ($status -eq "Succeeded") {
+            Cleanup
+            Ok 'Probe required HTTP 200 and exact body {"status":"ok"}; cleanup verified'
+            return
+        }
+        if ($status -in @("Failed", "Stopped", "Degraded")) { throw "Probe job ended with status $status." }
+        if ($attempt -lt 36) { Start-Sleep -Seconds 5 }
     }
-
-    if ((Get-AcrDigest) -ne $ExpectedPreviewDigest) {
-        throw "Preview Gateway immutable ACR digest changed unexpectedly."
-    }
-
-    $scale = Prop $app.properties.template "scale"
-    if ([int](Prop $scale "minReplicas") -ne 0 -or
-        [int](Prop $scale "maxReplicas") -ne 1) {
-        throw "Preview Gateway must remain scale-to-zero with min=0/max=1."
-    }
-
-    if ((EnvValue $app "PREVIEW_BASE_DOMAIN") -ne "preview.invalid") {
-        throw "PREVIEW_BASE_DOMAIN must remain preview.invalid before public DNS/TLS."
-    }
-    if ((EnvValue $app "PREVIEW_UI_ORIGIN") -ne $ExpectedUiOrigin) {
-        throw "PREVIEW_UI_ORIGIN changed unexpectedly."
-    }
-    if ((EnvValue $app "PREVIEW_PUBLIC_PROTOCOL") -ne "https") {
-        throw "PREVIEW_PUBLIC_PROTOCOL must remain https."
-    }
-    if ((EnvValue $app "PREVIEW_GATEWAY_PORT") -ne "$TargetPort") {
-        throw "Preview Gateway target port configuration changed unexpectedly."
-    }
-
-    $ingress = Prop $app.properties.configuration "ingress"
-    if ($null -eq $ingress) {
-        throw "Preview Gateway internal ingress is missing."
-    }
-    if ([bool](Prop $ingress "external")) {
-        throw "CRITICAL: Preview Gateway ingress is external; expected internal-only."
-    }
-    if ([int](Prop $ingress "targetPort") -ne $TargetPort) {
-        throw "Preview Gateway targetPort mismatch."
-    }
-    if ([bool](Prop $ingress "allowInsecure")) {
-        throw "Preview Gateway insecure HTTP must remain disabled."
-    }
-
-    $customDomains = @(
-        (Prop $ingress "customDomains") |
-            Where-Object { $null -ne $_ }
-    )
-    if (@($customDomains).Count -gt 0) {
-        throw "Preview Gateway must not have custom domains before public DNS/TLS approval."
-    }
-
-    $fqdn = [string](Prop $ingress "fqdn")
-    if ($fqdn -ne $ExpectedInternalFqdn) {
-        throw "Unexpected Preview Gateway internal FQDN '$fqdn'."
-    }
-
-    Ok "Preview Gateway internal ingress metadata verified: external=false, HTTPS-only, min=0/max=1"
-    return $fqdn
-}
-
-function Verify-DebugCapability {
-    $help = Invoke-AzProcess @(
-        "containerapp","debug","--help"
-    )
-
-    if ([int]$help.ExitCode -ne 0) {
-        throw "Azure CLI containerapp debug command is unavailable."
-    }
-
-    $text = ([string]$help.Stdout) + "`n" + ([string]$help.Stderr)
-    if (-not $text.Contains("--command")) {
-        throw "Azure CLI containerapp debug command does not expose non-interactive --command support."
-    }
-
-    Ok "Azure CLI supports non-interactive containerapp debug --command"
-}
-
-function Invoke-InternalHealthSmoke([string]$InternalFqdn) {
-    Step "Wake Preview Gateway only through the internal environment network and verify /healthz"
-
-    $url = "https://$InternalFqdn/healthz"
-    $command = "wget -qO- --timeout=30 '$url'"
-
-    $probe = Invoke-AzProcess @(
-        "containerapp","debug",
-        "--subscription",$SubscriptionId,
-        "-g",$ResourceGroup,
-        "-n",$ControlApiName,
-        "--command",$command,
-        "--only-show-errors"
-    )
-
-    $combined = (([string]$probe.Stdout) + "`n" + ([string]$probe.Stderr)).Trim()
-
-    if ([int]$probe.ExitCode -ne 0) {
-        throw "Internal Preview Gateway health probe failed safely.`n$combined"
-    }
-
-    if (-not $combined.Contains('{"status":"ok"}')) {
-        throw "Internal Preview Gateway health response did not contain the expected JSON body.`n$combined"
-    }
-
-    Ok "Internal network request returned Preview Gateway health body: {`"status`":`"ok`"}"
-    Note "This request may wake the Preview Gateway from scale 0 to 1 temporarily. No OpenAI/E2B provider call is involved."
+    throw "Probe execution did not succeed within the bounded 180-second window."
 }
 
 try {
-    Start-Transcript -Path $TranscriptPath -Force | Out-Null
+    Start-Transcript -Path $Transcript -Force | Out-Null
     $TranscriptStarted = $true
-
-    Write-Host "Atoms Staging Preview Gateway Internal Health Smoke" -ForegroundColor DarkGray
-    Write-Host "This gate performs one internal /healthz request and may temporarily wake the scale-to-zero Preview Gateway." -ForegroundColor DarkGray
-    Write-Host "It does NOT enable public ingress, DNS, certificates, custom domains, run execution, OpenAI, or E2B." -ForegroundColor DarkGray
-
-    Step "Lock Azure CLI to Atoms-Staging"
-    Lock-Staging
-
-    Step "Verify non-interactive Azure Container Apps debug capability"
-    Verify-DebugCapability
-
-    Step "Verify Control API auth and execution safety"
-    Verify-ControlApiSafety
-
-    Step "Verify public exposure remains absent"
-    Verify-PublicRoutingAbsent
-
-    Step "Verify Preview Gateway internal-ingress contract"
-    $internalFqdn = Verify-PreviewInternalIngress
-
-    Invoke-InternalHealthSmoke -InternalFqdn $internalFqdn
-
-    Step "Re-verify safety boundaries after the internal health request"
-    Verify-PreviewInternalIngress | Out-Null
-    Verify-PublicRoutingAbsent
-    Verify-ControlApiSafety
-    Lock-Staging
-
-    Write-Host ""
-    Write-Host "============================================================" -ForegroundColor Green
-    Write-Host "PREVIEW GATEWAY INTERNAL HEALTH SMOKE SUCCEEDED" -ForegroundColor Green
-    Write-Host "============================================================" -ForegroundColor Green
-    Write-Host "Preview Gateway       : $PreviewGatewayName"
-    Write-Host "Internal FQDN         : $ExpectedInternalFqdn"
-    Write-Host "Health endpoint       : /healthz"
-    Write-Host "Health response       : {`"status`":`"ok`"}"
+    Write-Host "Atoms Staging Preview Gateway Internal Health Smoke v4 (repository)" -ForegroundColor DarkGray
+    Write-Host "Temporary same-environment Job; may wake Gateway scale 0 to 1. No public ingress, DNS/TLS, run execution, OpenAI or E2B." -ForegroundColor DarkGray
+    Step "Lock Azure to Atoms-Staging"; Lock-Staging
+    Step "Verify Control API safety"; $api = Verify-Api
+    Step "Verify public exposure remains absent"; $environment = Verify-PublicBoundary
+    Step "Verify Preview Gateway internal contract"; Verify-Preview
+    Probe $api $environment
+    Step "Re-verify safety"; Verify-Preview; [void](Verify-PublicBoundary); [void](Verify-Api); Lock-Staging
+    Write-Host "`nPREVIEW GATEWAY INTERNAL HEALTH SMOKE SUCCEEDED" -ForegroundColor Green
+    Write-Host 'Health response       : {"status":"ok"}'
     Write-Host "Ingress               : INTERNAL ONLY"
     Write-Host "Replicas              : min 0 / max 1"
     Write-Host "PREVIEW_BASE_DOMAIN   : preview.invalid"
-    Write-Host "Custom domain / TLS   : NOT configured"
     Write-Host "Public exposure       : NONE"
     Write-Host "RUN_EXECUTION_ENABLED : false"
     Write-Host "Provider execution    : NONE"
-    Write-Host ""
-    Write-Host "Public preview remains blocked until an owned domain, DNS control, and wildcard TLS path are proven." -ForegroundColor Yellow
-}
-finally {
-    try {
-        [void](Invoke-AzProcess @(
-            "account","set",
-            "--subscription",$SubscriptionId,
-            "--only-show-errors"
-        ))
+    Write-Host "Public preview stays blocked without an owned domain/wildcard TLS."
+} finally {
+    try { Cleanup } catch { Write-Warning "Cleanup NOT confirmed: $($_.Exception.Message). Review only $JobName in Atoms-Staging." }
+    if ($null -ne $JobConfigPath -and [IO.File]::Exists($JobConfigPath)) {
+        Remove-Item -LiteralPath $JobConfigPath -Force -ErrorAction SilentlyContinue
     }
-    catch {}
-
     if ($TranscriptStarted) {
         try {
             Stop-Transcript | Out-Null
-            Get-Content -LiteralPath $TranscriptPath -Raw | Set-Clipboard
-            Write-Host ""
-            Write-Host "Full transcript copied to clipboard." -ForegroundColor Green
-            Write-Host "Transcript: $TranscriptPath" -ForegroundColor DarkGray
-        }
-        catch {
-            Write-Warning "Could not copy transcript to clipboard."
-        }
+            Get-Content -LiteralPath $Transcript -Raw | Set-Clipboard
+            Write-Host "`nFull transcript copied to clipboard.`nTranscript: $Transcript"
+        } catch { Write-Warning "Could not copy transcript to clipboard." }
     }
 }

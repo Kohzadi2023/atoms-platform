@@ -65,7 +65,9 @@ jobs:
           $failed = $false
           foreach ($path in @(
             "deploy/staging/entra-web-cutover.ps1",
-            "scripts/staging-public-smoke.ps1"
+            "scripts/staging-public-smoke.ps1",
+            "deploy/staging/preview-gateway-internal-health-smoke.ps1",
+            "scripts/test-preview-internal-health.ps1"
           )) {
             $tokens = $null
             $errors = $null

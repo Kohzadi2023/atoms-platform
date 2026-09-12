@@ -48,7 +48,7 @@
     "db:migrate:dev": "pnpm prisma migrate dev",
     "db:migrate:deploy": "pnpm prisma migrate deploy",
     "db:seed:local": "pnpm --filter @atoms/db seed:local",
-    "test:ci-changes": "node --test scripts/classify-ci-changes.test.mjs scripts/fast-development-pipeline.test.mjs",
+    "test:ci-changes": "node --test scripts/classify-ci-changes.test.mjs scripts/fast-development-pipeline.test.mjs scripts/ci-storage-contract.test.mjs",
     "test:local-development": "node --test scripts/check-local-development.test.mjs",
     "test:phase3-environment-protection": "node --test scripts/validate-phase3-staging-inputs.test.mjs scripts/verify-phase3-environment-protection.test.mjs",
     "test:azure-staging": "node --test scripts/bootstrap-azure-staging-oidc.test.mjs scripts/validate-azure-staging-inputs.test.mjs",

@@ -203,7 +203,10 @@ jobs:
     needs: changes
     if: needs.changes.outputs.full_ci == 'true'
     runs-on: ubuntu-latest
-    timeout-minutes: 15
+    timeout-minutes: 20
+    env:
+      COMPOSE_FILE: compose.yaml:deploy/ci/compose.storage.yaml
+      COMPOSE_PROJECT_NAME: atoms-ci-storage
     steps:
       - uses: actions/checkout@v4
       - uses: pnpm/action-setup@v4
@@ -214,9 +217,13 @@ jobs:
           node-version: 24
           cache: pnpm
       - run: pnpm install --frozen-lockfile
+      - name: Build pinned disposable MinIO dependencies from official sources
+        run: |
+          docker compose config --quiet
+          docker compose build minio minio-init
       - name: Start disposable MinIO and ClamAV
         run: |
-          docker compose up -d minio clamav
+          docker compose up -d --no-build minio clamav
           for attempt in {1..60}; do
             if curl --fail --silent http://127.0.0.1:9000/minio/health/ready > /dev/null; then
               break
@@ -224,7 +231,7 @@ jobs:
             if [ "$attempt" -eq 60 ]; then exit 1; fi
             sleep 2
           done
-          docker compose run --rm minio-init
+          docker compose run --rm --no-build minio-init
           for attempt in {1..60}; do
             if docker compose exec -T clamav clamdscan --ping 1; then
               break

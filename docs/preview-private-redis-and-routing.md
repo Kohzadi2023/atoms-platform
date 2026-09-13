@@ -5,7 +5,7 @@ ephemeral-job change in [PR #62](https://github.com/Kohzadi2023/atoms-platform/p
 Neither this change nor its CI deploys Azure resources, enables run execution, or
 contacts OpenAI/E2B. An owned domain is not needed for the local contract tests.
 
-## Operator-provided live evidence: 2026-09-12
+## Historical DNS repair evidence: v12, 2026-09-12
 
 The successful `managed-redis-private-dns-repair-v12.ps1` transcript establishes:
 
@@ -20,11 +20,29 @@ The successful `managed-redis-private-dns-repair-v12.ps1` transcript establishes
 | Final safety state | Internal-only HTTPS; min/max `0/1`; `RUN_EXECUTION_ENABLED=false`; no public preview, provider calls, secret disclosure, or Redis data writes |
 
 This evidence came from the operator's live transcript, not from a cloud
-deployment performed by this PR. The deployed image remains the pinned
+deployment performed by this PR. At that checkpoint, the deployed image was the pinned
 `private-skeleton-0482b37eab42` image recorded in the
 [Container Apps runbook](azure-container-apps-preview-staging.md).
 Infrastructure DNS/TLS/AUTH/PONG does **not** prove that the full application
 image can retrieve sessions and proxy previews in staging.
+
+## Later operator evidence: v17 rollout and v18 live session
+
+The [2026-09-12 live evidence record](preview-private-live-evidence-2026-09-12.md)
+supersedes the skeleton-image deployment state above. v17 deployed the full
+application at immutable digest
+`sha256:5b23a82293be920654d9c65b95d4ebfa9ea9bb2601045698d17375b9d8f69d0b`,
+reusing ACR run `cxg`, and passed read-only runtime and internal-health probes.
+v18 then passed signed GET/POST forwarding, stored header injection, WebSocket
+handshake/byte forwarding and real Redis PX TTL/expiration/cleanup using one
+temporary session and a loopback upstream in the deployed replica.
+
+v18 intentionally wrote one expiring fixture key; the earlier v12/v17 claims
+of no Redis data writes do not describe v18. Its transcript reports the key
+absent after cleanup, configured min/max replicas restored to `0/1`, private
+ingress and Redis networking retained, and run/provider execution disabled.
+This is operator-reported Azure evidence with the scope limits listed in the
+record, not a deployment performed by the documentation change.
 
 ## One-resource IaC adoption
 
@@ -127,9 +145,9 @@ server. Only origin-form paths on the stored upstream are accepted.
 
 These tests prove local application contracts, not live Redis client behavior,
 Redis persistence, real E2B routing, browser wildcard TLS, or staging application
-readiness. Keep the public-preview gate blocked without an owned domain/TLS
-path. A later private-only full-image rollout and local/mock-upstream staging
-probe needs a separately authorized deployment; this PR does not perform it.
+readiness on their own. The later v17/v18 operator executions provide the
+separate bounded staging evidence. Public preview still requires an owned
+domain/TLS path; neither these local tests nor v18 establishes public access.
 
 ## Packaged image runtime gate
 
@@ -172,12 +190,14 @@ Full CI adds a separate `preview-runtime-integration` job:
 This is a Linux CI-only local image gate, not a staging rollout. Plain Redis in
 the fixture proves client cluster routing; unit tests check `rediss` options,
 AUTH parsing and verified TLS/SNI, while v12 separately proves historical live
-DNS/TLS/AUTH/PONG. Live cluster-shard DNS/ports/TLS, full application routing and
-the new image have **not** been validated in Azure by this work. The worker stays
-provider-disabled; BullMQ/other Redis consumers and worker cluster readiness are
-separate gates, not established by preview-store tests.
+DNS/TLS/AUTH/PONG. This CI job does not validate Azure. The later v17/v18
+operator evidence validates the deployed full image and the live session's
+cluster operations; one random session does not establish coverage of every
+live shard, failover or resharding. The worker stays provider-disabled;
+BullMQ/other Redis consumers and worker cluster readiness are separate gates,
+not established by preview-store tests.
 
-Any later private-only rollout requires explicit approval for the exact source
+Any future private-only rollout requires explicit approval for the exact source
 SHA/image digest, ACR build/publish and image mutation, preservation of internal
 HTTPS/min-max 0/1/execution kill switches/secrets, a bounded mock-upstream probe
 with only scoped expiring fixture keys, and rollback to the current digest.

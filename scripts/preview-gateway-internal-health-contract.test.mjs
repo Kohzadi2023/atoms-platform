@@ -154,7 +154,7 @@ test("PowerShell parses and exercises real control flow with an offline fake CLI
   const line = result.stdout.split(/\r?\n/).find((entry) => entry.startsWith("ATOMS_HEALTH_TEST_RESULT "));
   assert.ok(line, result.stdout);
   const evidence = JSON.parse(line.slice("ATOMS_HEALTH_TEST_RESULT ".length));
-  assert.equal(evidence.cases.length, 15);
+  assert.equal(evidence.cases.length, 19);
   const job = evidence.config;
   assert.equal(job.properties.environmentId.endsWith("/managedEnvironments/atoms-staging-env"), true);
   assert.equal(job.properties.configuration.triggerType, "Manual");

@@ -21,6 +21,7 @@ const textExtensions = new Set([
   ".md",
   ".mjs",
   ".prisma",
+  ".ps1",
   ".sql",
   ".ts",
   ".tsx",

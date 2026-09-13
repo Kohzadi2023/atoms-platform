@@ -14,9 +14,11 @@ $PreviewName = "atoms-staging-preview-gateway"
 $Acr = "atomsstaging91ce9"
 $AcrServer = "$Acr.azurecr.io"
 $PullIdentity = "/subscriptions/$SubscriptionId/resourceGroups/$Rg/providers/Microsoft.ManagedIdentity/userAssignedIdentities/atoms-staging-acr-pull"
-$PreviewAcrRef = "preview-gateway:private-skeleton-0482b37eab42"
-$PreviewImage = "$AcrServer/$PreviewAcrRef"
-$PreviewDigest = "sha256:53b70e9f6fa2fee00af2c02d70c6d5fdc281acde31532af1c2ab7d7278c9d994"
+# Operator-verified full image: v17 rollout and v18 live session, 2026-09-12.
+# The tag is reconciled against the digest; the deployed image must use @sha256.
+$PreviewAcrRef = "preview-gateway:private-runtime-b7947fa783f4-e95400a79f02"
+$PreviewDigest = "sha256:5b23a82293be920654d9c65b95d4ebfa9ea9bb2601045698d17375b9d8f69d0b"
+$PreviewImage = "$AcrServer/preview-gateway@$PreviewDigest"
 $DefaultDomain = "proudpond-7f6fcfdd.canadacentral.azurecontainerapps.io"
 $InternalFqdn = "$PreviewName.internal.$DefaultDomain"
 $UiOrigin = "https://atoms-staging-web.$DefaultDomain"
@@ -166,6 +168,7 @@ function Verify-Preview {
         throw "Preview scale must remain min=0/max=1."
     }
     if ((EnvVal $preview "PREVIEW_BASE_DOMAIN") -ne "preview.invalid") { throw "PREVIEW_BASE_DOMAIN must remain preview.invalid." }
+    if ((EnvVal $preview "PREVIEW_REDIS_MODE") -cne "oss-cluster") { throw "Preview Redis mode must remain oss-cluster." }
     if ((EnvVal $preview "PREVIEW_UI_ORIGIN") -ne $UiOrigin) { throw "PREVIEW_UI_ORIGIN changed." }
     if ((EnvVal $preview "PREVIEW_PUBLIC_PROTOCOL") -ne "https" -or (EnvVal $preview "PREVIEW_GATEWAY_PORT") -ne "3002") {
         throw "Preview HTTPS/runtime port contract failed."

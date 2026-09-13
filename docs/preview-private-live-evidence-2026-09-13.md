@@ -78,5 +78,12 @@ passed all six jobs on PR #65 commit
 `cb001e2bdf5a8660098285b42da3892bc9f7f02c`, including the offline Windows job.
 That CI result verifies repository tests, while the supplied v19 transcript is
 the separate live Azure evidence. The documentation follow-up preserves all
-three delivered v17/v18/v19 script files unchanged. PR review/merge is the
-remaining repository step; the private runtime gates recorded here are complete.
+three delivered v17/v18/v19 script files unchanged.
+
+PR #65 was merged into `main` as
+`fc3bfc6b679b0cb7a928fb4393332432a54edb8f`. The post-merge
+[CI #177](https://github.com/Kohzadi2023/atoms-platform/actions/runs/34763614281)
+passed all six jobs, including the Windows, preview-runtime and migration
+matrix jobs. The private runtime gates and their repository integration are
+complete; the remaining work is the separately protected, billable Phase 3
+provider-exit gate described in Issue #14.

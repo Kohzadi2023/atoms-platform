@@ -45,9 +45,13 @@ const EnvironmentSchema = z
       .min(1)
       .max(191)
       .regex(/^[A-Za-z0-9][A-Za-z0-9._:/-]*$/),
-    PHASE3_STAGING_MEASURED_COST_CAD: z
+    PHASE3_STAGING_APPROVED_BUDGET_CAD: z
       .string()
       .regex(/^(?:0|[1-9]\d*)(?:\.\d{1,6})?$/),
+    GITHUB_REPOSITORY: z.string().regex(/^[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+$/),
+    GITHUB_RUN_ID: z.string().regex(/^[1-9]\d*$/),
+    GITHUB_RUN_ATTEMPT: z.coerce.number().int().positive().safe(),
+    GITHUB_SHA: z.string().regex(/^[a-f0-9]{40}$/),
     PHASE3_STAGING_EVIDENCE_PATH: z.string().trim().min(1).max(1_024),
     DATABASE_URL: z.string().url(),
     SUPABASE_ACCESS_TOKEN: z.string().min(1),
@@ -86,6 +90,9 @@ test(
   },
   async () => {
     const environment = EnvironmentSchema.parse(process.env);
+    const approvedBudgetCadMicros = parseCadMicros(environment.PHASE3_STAGING_APPROVED_BUDGET_CAD);
+    assert.ok(approvedBudgetCadMicros > 0 && approvedBudgetCadMicros <= 4_000_000,
+      "Approved budget must be positive and at most CAD 4 before provider access");
     const prisma = createPrismaClient(environment.DATABASE_URL);
     const repository = new PrismaDatabaseReconciliationRepository(prisma);
     const recoveryQueue = new RejectingRecoveryQueue();
@@ -141,9 +148,13 @@ test(
         migrationRunner,
         fixtureFiles: await readFixtureFiles(fixtureRoot),
         changeTicket: environment.PHASE3_STAGING_CHANGE_TICKET,
-        measuredVariableCostCadMicros: parseCadMicros(
-          environment.PHASE3_STAGING_MEASURED_COST_CAD,
-        ),
+        approvedBudgetCadMicros,
+        workflowRun: {
+          repository: environment.GITHUB_REPOSITORY,
+          runId: environment.GITHUB_RUN_ID,
+          runAttempt: environment.GITHUB_RUN_ATTEMPT,
+          commitSha: environment.GITHUB_SHA,
+        },
         region: environment.PHASE3_STAGING_DATABASE_REGION,
         inventoryEvidence: {
           visibleProjects: inventoryAudit.visibleProjects,
@@ -240,7 +251,7 @@ test(
       });
       assert.equal(
         evidence.result,
-        "PASSED",
+        "AWAITING_COST",
         `Phase 3 staging failed: ${evidence.errors.map((error) => error.code).join(", ")}`,
       );
       assert.ok(

@@ -3,7 +3,7 @@ import { z } from "zod";
 import { JsonValueSchema } from "./json.js";
 
 export const PHASE3_PROVIDER_STAGING_EVIDENCE_VERSION =
-  "phase3-provider-staging.v1" as const;
+  "phase3-provider-staging.v2" as const;
 export const PHASE3_VARIABLE_COST_TARGET_CAD_MICROS = 4_000_000 as const;
 
 export const Phase3StagingGateNameSchema = z.enum([
@@ -25,7 +25,7 @@ export type Phase3StagingGateName = z.infer<
 export const Phase3StagingGateEvidenceSchema = z
   .object({
     name: Phase3StagingGateNameSchema,
-    status: z.enum(["PASSED", "FAILED"]),
+    status: z.enum(["PASSED", "FAILED", "PENDING"]),
     durationMs: z.number().int().nonnegative(),
     details: JsonValueSchema,
   })
@@ -44,6 +44,20 @@ const Phase3StagingErrorSchema = z
 
 const expectedGateNames = Phase3StagingGateNameSchema.options;
 
+export const Phase3WorkflowRunSchema = z.object({
+  repository: z.string().regex(/^[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+$/),
+  runId: z.string().regex(/^[1-9]\d*$/),
+  runAttempt: z.number().int().positive().safe(),
+  commitSha: z.string().regex(/^[a-f0-9]{40}$/),
+}).strict();
+
+export const Phase3CostMeasurementSchema = z.object({
+  recordedAt: z.string().datetime({ offset: true }),
+  recordedBy: z.string().regex(/^[A-Za-z0-9][A-Za-z0-9-]{0,38}(?:\[bot\])?$/),
+  measurementSourceSha256: z.string().regex(/^[a-f0-9]{64}$/),
+  sourceEvidenceSha256: z.string().regex(/^[a-f0-9]{64}$/),
+}).strict();
+
 export const Phase3ProviderStagingEvidenceSchema = z
   .object({
     version: z.literal(PHASE3_PROVIDER_STAGING_EVIDENCE_VERSION),
@@ -55,7 +69,7 @@ export const Phase3ProviderStagingEvidenceSchema = z
       .max(191)
       .regex(/^[A-Za-z0-9][A-Za-z0-9._:/-]*$/),
     environment: z.literal("staging"),
-    result: z.enum(["PASSED", "FAILED"]),
+    result: z.enum(["PASSED", "FAILED", "AWAITING_COST"]),
     startedAt: z.string().datetime({ offset: true }),
     completedAt: z.string().datetime({ offset: true }),
     externalResourceFingerprint: z
@@ -66,7 +80,10 @@ export const Phase3ProviderStagingEvidenceSchema = z
     managedResourcesAfter: z.number().int().nonnegative(),
     createdResources: z.number().int().nonnegative().max(1),
     deletedResources: z.number().int().nonnegative().max(1),
-    measuredVariableCostCadMicros: z.number().int().nonnegative(),
+    workflowRun: Phase3WorkflowRunSchema.nullable(),
+    approvedBudgetCadMicros: z.number().int().nonnegative().safe(),
+    measuredVariableCostCadMicros: z.number().int().nonnegative().safe().nullable(),
+    costMeasurement: Phase3CostMeasurementSchema.nullable(),
     variableCostTargetCadMicros: z.literal(
       PHASE3_VARIABLE_COST_TARGET_CAD_MICROS,
     ),
@@ -109,7 +126,35 @@ export const Phase3ProviderStagingEvidenceSchema = z
       });
     }
 
-    if (evidence.result === "PASSED") {
+    const costGate = evidence.gates.find((gate) => gate.name === "variable_cost");
+    const hasMeasurement = evidence.measuredVariableCostCadMicros !== null;
+    if (hasMeasurement !== (evidence.costMeasurement !== null)) {
+      context.addIssue({ code: "custom", message: "cost and its measurement provenance must be recorded together" });
+    }
+    if (Date.parse(evidence.completedAt) < Date.parse(evidence.startedAt)) {
+      context.addIssue({ code: "custom", message: "completion must follow the scenario start" });
+    }
+    if (evidence.costMeasurement !== null && (
+      evidence.workflowRun === null ||
+      Date.parse(evidence.costMeasurement.recordedAt) < Date.parse(evidence.completedAt)
+    )) {
+      context.addIssue({ code: "custom", message: "cost must be bound to a workflow run and recorded after the scenario" });
+    }
+    if (costGate?.status === "PASSED" && !hasMeasurement) {
+      context.addIssue({ code: "custom", message: "the cost gate cannot pass without an actual measurement" });
+    }
+    if (evidence.result === "AWAITING_COST" && (
+      hasMeasurement || evidence.costMeasurement !== null || costGate?.status !== "PENDING"
+    )) {
+      context.addIssue({ code: "custom", message: "awaiting-cost evidence must have an unmeasured pending cost gate" });
+    }
+    if (evidence.result === "PASSED" || evidence.result === "AWAITING_COST") {
+      if (evidence.approvedBudgetCadMicros <= 0 || evidence.approvedBudgetCadMicros > evidence.variableCostTargetCadMicros) {
+        context.addIssue({ code: "custom", message: "approved budget must be positive and no greater than the Phase 3 target" });
+      }
+      if (evidence.managedResourcesBefore !== evidence.managedResourcesAfter) {
+        context.addIssue({ code: "custom", message: "provider inventory must be restored" });
+      }
       if (evidence.externalResourceFingerprint === null) {
         context.addIssue({
           code: "custom",
@@ -134,21 +179,23 @@ export const Phase3ProviderStagingEvidenceSchema = z
           message: "passed evidence cannot contain errors",
         });
       }
-      if (evidence.gates.some((gate) => gate.status !== "PASSED")) {
+      if (evidence.gates.some((gate) => gate.name !== "variable_cost" && gate.status !== "PASSED")) {
         context.addIssue({
           code: "custom",
           path: ["gates"],
-          message: "every staging gate must pass",
+          message: "every lifecycle gate must pass",
         });
       }
-      if (
-        evidence.measuredVariableCostCadMicros >
-        evidence.variableCostTargetCadMicros
-      ) {
+      if (evidence.result === "PASSED" && (
+        evidence.measuredVariableCostCadMicros === null ||
+        evidence.costMeasurement === null || costGate?.status !== "PASSED" ||
+        evidence.measuredVariableCostCadMicros > evidence.approvedBudgetCadMicros ||
+        evidence.measuredVariableCostCadMicros > evidence.variableCostTargetCadMicros
+      )) {
         context.addIssue({
           code: "custom",
           path: ["measuredVariableCostCadMicros"],
-          message: "measured variable cost exceeds the Phase 3 target",
+          message: "passed evidence requires a measured cost within the approved budget and Phase 3 target",
         });
       }
     }

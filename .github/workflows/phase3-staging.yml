@@ -26,9 +26,9 @@ on:
         description: Type I_ACCEPT_SOLO_PHASE3_PROVIDER_EXIT_WITHOUT_REVIEWER for a live solo run
         required: false
         type: string
-      measured_variable_cost_cad:
-        description: Measured variable cost in CAD, with at most six decimals
-        required: true
+      approved_budget_cad:
+        description: Approved live-run budget in CAD, greater than zero and at most 4; not an actual cost measurement
+        required: false
         type: string
       database_region:
         description: Generated-database region
@@ -50,6 +50,7 @@ concurrency:
 
 jobs:
   preflight:
+    if: github.ref == 'refs/heads/main'
     runs-on: ubuntu-latest
     timeout-minutes: 5
     steps:
@@ -67,7 +68,7 @@ jobs:
           PHASE3_WORKFLOW_CONFIRMATION: ${{ inputs.workflow_confirmation }}
           PHASE3_RUN_LIVE_PROVIDER: ${{ inputs.run_live_provider }}
           PHASE3_STAGING_CHANGE_TICKET: ${{ inputs.change_ticket }}
-          PHASE3_STAGING_MEASURED_COST_CAD: ${{ inputs.measured_variable_cost_cad }}
+          PHASE3_STAGING_APPROVED_BUDGET_CAD: ${{ inputs.approved_budget_cad }}
           PHASE3_STAGING_DESTRUCTIVE_CONFIRMATION: ${{ inputs.destructive_confirmation }}
           PHASE3_SOLO_OPERATOR_CONFIRMATION: ${{ inputs.solo_operator_confirmation }}
         run: node scripts/validate-phase3-staging-inputs.mjs
@@ -248,7 +249,7 @@ jobs:
           PHASE3_STAGING_DESTRUCTIVE_CONFIRMATION: ${{ inputs.destructive_confirmation }}
           PHASE3_INTEGRATION_DATABASE_CONFIRMATION: DEDICATED_EPHEMERAL_DATABASE
           PHASE3_STAGING_CHANGE_TICKET: ${{ inputs.change_ticket }}
-          PHASE3_STAGING_MEASURED_COST_CAD: ${{ inputs.measured_variable_cost_cad }}
+          PHASE3_STAGING_APPROVED_BUDGET_CAD: ${{ inputs.approved_budget_cad }}
           PHASE3_STAGING_EVIDENCE_PATH: artifacts/phase3-provider-evidence.json
           DATABASE_URL: postgresql://atoms:atoms@localhost:5432/atoms_provider_exit
           REDIS_URL: redis://localhost:6379
@@ -275,7 +276,7 @@ jobs:
           RUN_LIVE_PHASE3_STAGING: "true"
           PHASE3_STAGING_DESTRUCTIVE_CONFIRMATION: ${{ inputs.destructive_confirmation }}
           PHASE3_STAGING_CHANGE_TICKET: ${{ inputs.change_ticket }}
-          PHASE3_STAGING_MEASURED_COST_CAD: ${{ inputs.measured_variable_cost_cad }}
+          PHASE3_STAGING_APPROVED_BUDGET_CAD: ${{ inputs.approved_budget_cad }}
           PHASE3_STAGING_DATABASE_REGION: ${{ inputs.database_region }}
           PHASE3_STAGING_EVIDENCE_PATH: artifacts/phase3-provider-evidence.json
           PHASE3_INTEGRATION_DATABASE_CONFIRMATION: DEDICATED_EPHEMERAL_DATABASE
@@ -293,10 +294,16 @@ jobs:
       - uses: actions/upload-artifact@v4
         if: always()
         with:
-          name: phase3-provider-evidence
+          name: phase3-provider-evidence-${{ github.run_attempt }}
           path: artifacts/phase3-provider-evidence.json
           if-no-files-found: warn
           retention-days: 30
       - name: Stop ephemeral Vault
         if: always()
         run: docker rm --force phase3-staging-vault 2> /dev/null || true
+      - name: Await cost finalization
+        if: success()
+        run: |
+          echo 'Lifecycle finished; final provider exit is AWAITING_COST.' >> "$GITHUB_STEP_SUMMARY"
+          echo 'Finalize this exact run and attempt with measured cost after cleanup. Do not rerun the provider job to record cost.' >> "$GITHUB_STEP_SUMMARY"
+          exit 1

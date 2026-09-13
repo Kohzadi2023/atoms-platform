@@ -5,6 +5,7 @@ import {
   PHASE3_VARIABLE_COST_TARGET_CAD_MICROS,
   Phase3ProviderStagingEvidenceSchema,
   Phase3StagingGateNameSchema,
+  Phase3WorkflowRunSchema,
   type Phase3ProviderStagingEvidence,
   type Phase3StagingGateEvidence,
   type Phase3StagingGateName,
@@ -25,7 +26,8 @@ const ScenarioInputSchema = z
       .min(1)
       .max(191)
       .regex(/^[A-Za-z0-9][A-Za-z0-9._:/-]*$/),
-    measuredVariableCostCadMicros: z.number().int().nonnegative(),
+    approvedBudgetCadMicros: z.number().int().nonnegative().safe(),
+    workflowRun: Phase3WorkflowRunSchema.nullable(),
     region: z.enum(["americas", "emea", "apac"]),
     fixtureFiles: z
       .array(
@@ -52,7 +54,8 @@ export interface Phase3ProviderStagingScenarioOptions {
     readonly content: string;
   }>;
   readonly changeTicket: string;
-  readonly measuredVariableCostCadMicros: number;
+  readonly approvedBudgetCadMicros: number;
+  readonly workflowRun?: Phase3ProviderStagingEvidence["workflowRun"];
   readonly region?: "americas" | "emea" | "apac";
   readonly scenarioId?: string;
   readonly projectId?: string;
@@ -90,7 +93,8 @@ export async function runPhase3ProviderStagingScenario(
     scenarioId: options.scenarioId ?? randomUUID(),
     projectId: options.projectId ?? randomUUID(),
     changeTicket: options.changeTicket,
-    measuredVariableCostCadMicros: options.measuredVariableCostCadMicros,
+    approvedBudgetCadMicros: options.approvedBudgetCadMicros,
+    workflowRun: options.workflowRun ?? null,
     region: options.region ?? "americas",
     fixtureFiles: options.fixtureFiles,
   });
@@ -118,7 +122,7 @@ export async function runPhase3ProviderStagingScenario(
 
   const setGate = (
     name: Phase3StagingGateName,
-    status: "PASSED" | "FAILED",
+    status: "PASSED" | "FAILED" | "PENDING",
     gateStartedAt: Date,
     details: Phase3StagingGateEvidence["details"],
   ): void => {
@@ -131,24 +135,25 @@ export async function runPhase3ProviderStagingScenario(
   };
 
   const costStartedAt = now();
-  const costWithinTarget =
-    input.measuredVariableCostCadMicros <=
+  const budgetWithinTarget =
+    input.approvedBudgetCadMicros > 0 && input.approvedBudgetCadMicros <=
     PHASE3_VARIABLE_COST_TARGET_CAD_MICROS;
   setGate(
     "variable_cost",
-    costWithinTarget ? "PASSED" : "FAILED",
+    budgetWithinTarget ? "PENDING" : "FAILED",
     costStartedAt,
     {
-      measuredCadMicros: input.measuredVariableCostCadMicros,
+      reason: budgetWithinTarget ? "awaiting_post_run_measurement" : "invalid_approved_budget",
+      approvedBudgetCadMicros: input.approvedBudgetCadMicros,
       targetCadMicros: PHASE3_VARIABLE_COST_TARGET_CAD_MICROS,
     },
   );
 
   try {
-    if (!costWithinTarget) {
+    if (!budgetWithinTarget) {
       throw stagingError(
-        "VARIABLE_COST_TARGET_EXCEEDED",
-        "Measured variable cost exceeds the approved Phase 3 target",
+        "APPROVED_BUDGET_INVALID",
+        "Approved budget must be positive and no greater than the Phase 3 target",
       );
     }
 
@@ -381,8 +386,8 @@ export async function runPhase3ProviderStagingScenario(
     return gate;
   });
   const result =
-    !scenarioFailed && orderedGates.every((gate) => gate.status === "PASSED")
-      ? "PASSED"
+    !scenarioFailed && orderedGates.every((gate) => gate.name === "variable_cost" || gate.status === "PASSED")
+      ? "AWAITING_COST"
       : "FAILED";
   return Phase3ProviderStagingEvidenceSchema.parse({
     version: PHASE3_PROVIDER_STAGING_EVIDENCE_VERSION,
@@ -397,7 +402,10 @@ export async function runPhase3ProviderStagingScenario(
     managedResourcesAfter,
     createdResources,
     deletedResources,
-    measuredVariableCostCadMicros: input.measuredVariableCostCadMicros,
+    workflowRun: input.workflowRun,
+    approvedBudgetCadMicros: input.approvedBudgetCadMicros,
+    measuredVariableCostCadMicros: null,
+    costMeasurement: null,
     variableCostTargetCadMicros: PHASE3_VARIABLE_COST_TARGET_CAD_MICROS,
     gates: orderedGates,
     errors: deduplicateErrors(errors),

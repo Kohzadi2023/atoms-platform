@@ -404,7 +404,15 @@ test("Phase 3 staging evidence is complete, cost-bounded, and credential-free", 
     managedResourcesAfter: 2,
     createdResources: 1,
     deletedResources: 1,
+    workflowRun: { repository: "atoms/platform", runId: "100", runAttempt: 1, commitSha: "a".repeat(40) },
+    approvedBudgetCadMicros: 1_000_000,
     measuredVariableCostCadMicros: 750_000,
+    costMeasurement: {
+      recordedAt: "2026-08-01T23:00:00.000Z",
+      recordedBy: "operator",
+      measurementSourceSha256: "a".repeat(64),
+      sourceEvidenceSha256: "b".repeat(64),
+    },
     variableCostTargetCadMicros: PHASE3_VARIABLE_COST_TARGET_CAD_MICROS,
     gates: gateNames.map((name) => ({
       name,
@@ -435,6 +443,21 @@ test("Phase 3 staging evidence is complete, cost-bounded, and credential-free", 
       measuredVariableCostCadMicros: 4_000_001,
     }),
   );
+  for (const changed of [
+    { measuredVariableCostCadMicros: null, costMeasurement: null },
+    { measuredVariableCostCadMicros: 1_000_001 },
+    { managedResourcesAfter: 3 },
+    { costMeasurement: { ...evidence.costMeasurement, recordedAt: evidence.startedAt } },
+  ]) {
+    assert.equal(Phase3ProviderStagingEvidenceSchema.safeParse({ ...evidence, ...changed }).success, false);
+  }
+  const pending = {
+    ...evidence, result: "AWAITING_COST", measuredVariableCostCadMicros: null, costMeasurement: null,
+    gates: evidence.gates.map((gate) => gate.name === "variable_cost" ? { ...gate, status: "PENDING" } : gate),
+  };
+  assert.equal(Phase3ProviderStagingEvidenceSchema.parse(pending).result, "AWAITING_COST");
+  assert.equal(Phase3ProviderStagingEvidenceSchema.safeParse({ ...pending, deletedResources: 0 }).success, false);
+  assert.equal(Phase3ProviderStagingEvidenceSchema.safeParse({ ...pending, result: "PASSED" }).success, false);
 });
 
 test("SEO_PACKAGE v1 accepts sitemap, robots, route metadata, and findings", () => {

@@ -2,6 +2,7 @@
 
 import { mkdir, writeFile } from "node:fs/promises";
 import { dirname, resolve } from "node:path";
+import { parseApprovedBudget } from "./phase3-cost.mjs";
 
 const options = parseArgs(process.argv.slice(2));
 if (options.help) {
@@ -44,11 +45,15 @@ const liveChecks = [
     /^[A-Za-z0-9][A-Za-z0-9._:/-]*$/u,
     "must be a non-empty ticket identifier",
   ),
-  pattern(
-    "PHASE3_STAGING_MEASURED_COST_CAD",
-    /^(?:0|[1-9]\d*)(?:\.\d{1,6})?$/u,
-    "must be a decimal CAD amount with up to 6 fractional digits",
-  ),
+  () => {
+    const key = "PHASE3_STAGING_APPROVED_BUDGET_CAD";
+    try {
+      parseApprovedBudget(process.env[key]);
+      return ok(key);
+    } catch {
+      return fail(key, "must be a positive decimal CAD budget at most 4, with up to 6 fractional digits");
+    }
+  },
   required("PHASE3_STAGING_EVIDENCE_PATH"),
   required("DATABASE_URL"),
   required("SUPABASE_ACCESS_TOKEN"),

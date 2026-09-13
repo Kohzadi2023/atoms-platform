@@ -67,7 +67,13 @@ jobs:
             "deploy/staging/entra-web-cutover.ps1",
             "scripts/staging-public-smoke.ps1",
             "deploy/staging/preview-gateway-internal-health-smoke.ps1",
-            "scripts/test-preview-internal-health.ps1"
+            "scripts/test-preview-internal-health.ps1",
+            "scripts/atoms-staging-preview-gateway-private-rollout-resume-v17.ps1",
+            "scripts/atoms-staging-preview-gateway-private-live-session-smoke-v18.ps1",
+            "scripts/atoms-staging-preview-gateway-private-rejection-smoke-v19.ps1",
+            "scripts/test-private-rollout-v17.ps1",
+            "scripts/test-private-live-session-v18.ps1",
+            "scripts/test-private-rejection-v19.ps1"
           )) {
             $tokens = $null
             $errors = $null
@@ -101,6 +107,25 @@ jobs:
 
       - name: Smoke the production standalone MSAL redirect bridge
         run: pnpm staging:smoke:web-standalone-redirect
+
+  preview-private-smoke-windows:
+    needs: changes
+    if: needs.changes.outputs.full_ci == 'true'
+    runs-on: windows-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 11.7.0
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: pnpm
+      - name: Install only the local Gateway test dependencies
+        run: pnpm install --frozen-lockfile --filter @atoms/preview-gateway... --ignore-scripts
+      - name: Exercise offline PowerShell, native argv, and local Gateway probes
+        run: pnpm test:preview-smoke-offline
 
   migration-matrix:
     needs: changes

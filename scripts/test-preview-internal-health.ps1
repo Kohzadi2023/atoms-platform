@@ -60,6 +60,7 @@ function Reset-Case {
     $script:Calls = [Collections.Generic.List[object]]::new()
     $script:AccountId = $SubscriptionId
     $script:AccountState = "Enabled"
+    $script:ReportedDigest = $PreviewDigest
 }
 function Invoke-Az([string[]]$CommandArgs) {
     $script:Calls.Add($CommandArgs)
@@ -69,7 +70,7 @@ function Invoke-Az([string[]]$CommandArgs) {
         if ($CommandArgs[1] -eq "set") { return "" }
         return ([pscustomobject]@{ id = $script:AccountId; name = "Atoms-Staging"; state = $script:AccountState } | ConvertTo-Json -Compress)
     }
-    if ($CommandArgs[0] -eq "acr") { return $PreviewDigest }
+    if ($CommandArgs[0] -eq "acr") { return $script:ReportedDigest }
     if ($CommandArgs[0] -eq "containerapp" -and $CommandArgs[1] -eq "show") { return ($script:FixturePreview | ConvertTo-Json -Depth 20 -Compress) }
     if ($CommandArgs[0] -eq "containerapp" -and $CommandArgs[1] -eq "env") {
         if ($CommandArgs[2] -eq "show") { return ($script:FixtureEnvironment | ConvertTo-Json -Depth 20 -Compress) }
@@ -182,6 +183,7 @@ Case "null domain lists are empty, not public exposure" {
                 [pscustomobject]@{ name = "PREVIEW_BASE_DOMAIN"; value = "preview.invalid" },
                 [pscustomobject]@{ name = "PREVIEW_UI_ORIGIN"; value = $UiOrigin },
                 [pscustomobject]@{ name = "PREVIEW_PUBLIC_PROTOCOL"; value = "https" },
+                [pscustomobject]@{ name = "PREVIEW_REDIS_MODE"; value = "oss-cluster" },
                 [pscustomobject]@{ name = "PREVIEW_GATEWAY_PORT"; value = "3002" }
             ) })
         }
@@ -193,6 +195,28 @@ Case "null domain lists are empty, not public exposure" {
 Case "absent ingress isolation metadata fails closed" {
     $script:FixturePreview.properties.configuration.ingress.PSObject.Properties.Remove("external")
     Throws { Verify-Preview } "ingress safety"
+}
+Case "old skeleton image cannot pass the full-image baseline" {
+    $script:FixturePreview.properties.template.containers[0].image = "$AcrServer/preview-gateway:private-skeleton-0482b37eab42"
+    Throws { Verify-Preview } "Preview image changed"
+    $script:FixturePreview.properties.template.containers[0].image = $PreviewImage
+}
+Case "a mutable tag cannot replace the deployed digest reference" {
+    $script:FixturePreview.properties.template.containers[0].image = "$AcrServer/$PreviewAcrRef"
+    Throws { Verify-Preview } "Preview image changed"
+    $script:FixturePreview.properties.template.containers[0].image = $PreviewImage
+}
+Case "tag digest disagreement fails before creating a job" {
+    $script:ReportedDigest = "sha256:" + ("a" * 64)
+    Throws { Verify-Preview } "Preview digest changed"
+    Check ($script:StartCalls -eq 0) "Digest drift cannot run the Job"
+    $script:ReportedDigest = $PreviewDigest
+}
+Case "the full-image baseline requires explicit cluster mode" {
+    $mode = $script:FixturePreview.properties.template.containers[0].env | Where-Object { $_.name -eq "PREVIEW_REDIS_MODE" }
+    $mode.value = "standalone"
+    Throws { Verify-Preview } "Redis mode must remain oss-cluster"
+    $mode.value = "oss-cluster"
 }
 
 Reset-Case

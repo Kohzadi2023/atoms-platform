@@ -1,0 +1,2 @@
+# Preserve published PowerShell checksums on Windows as well as Linux.
+*.ps1 text eol=lf

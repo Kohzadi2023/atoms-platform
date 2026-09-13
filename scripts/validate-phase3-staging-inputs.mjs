@@ -16,6 +16,9 @@ if (!/^[A-Za-z0-9][A-Za-z0-9._:/-]{0,190}$/.test(changeTicket)) {
   throw new Error("A normalized staging change-ticket identifier is required");
 }
 if (liveProviderRequested) {
+  if (process.env.GITHUB_RUN_ATTEMPT !== "1") {
+    throw new Error("Do not rerun a billable lifecycle; record actual cost with the separate finalization workflow");
+  }
   parseApprovedBudget(approvedBudgetCad);
   if (process.env.PHASE3_STAGING_MEASURED_COST_CAD) {
     throw new Error("Actual cost must be recorded after the run in the cost finalization workflow");

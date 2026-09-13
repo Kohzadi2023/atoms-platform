@@ -90,6 +90,8 @@ test(
   },
   async () => {
     const environment = EnvironmentSchema.parse(process.env);
+    assert.equal(environment.GITHUB_RUN_ATTEMPT, 1,
+      "A billable lifecycle may execute only on the first workflow attempt");
     const approvedBudgetCadMicros = parseCadMicros(environment.PHASE3_STAGING_APPROVED_BUDGET_CAD);
     assert.ok(approvedBudgetCadMicros > 0 && approvedBudgetCadMicros <= 4_000_000,
       "Approved budget must be positive and at most CAD 4 before provider access");

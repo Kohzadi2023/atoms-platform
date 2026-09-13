@@ -16,6 +16,7 @@ function runValidator(overrides = {}) {
       PHASE3_RUN_LIVE_PROVIDER: "false",
       PHASE3_STAGING_CHANGE_TICKET: "issue-14",
       PHASE3_STAGING_APPROVED_BUDGET_CAD: "4",
+      GITHUB_RUN_ATTEMPT: "1",
       PHASE3_WORKFLOW_CONFIRMATION: "RUN_PHASE3_STAGING",
       ...overrides,
     },
@@ -74,6 +75,9 @@ test("live budget rejects missing, zero, over-cap and malformed inputs without s
     assert.notEqual(runValidator({ ...live, PHASE3_STAGING_APPROVED_BUDGET_CAD: amount }).status, 0);
   }
   assert.equal(runValidator({ ...live, PHASE3_STAGING_APPROVED_BUDGET_CAD: "4.000000" }).status, 0);
+  assert.notEqual(runValidator({ ...live, GITHUB_RUN_ATTEMPT: "2" }).status, 0);
+  assert.notEqual(runValidator({ ...live, GITHUB_RUN_ATTEMPT: undefined }).status, 0);
+  assert.equal(runValidator({ GITHUB_RUN_ATTEMPT: "2" }).status, 0);
   assert.notEqual(runValidator({ ...live, PHASE3_STAGING_MEASURED_COST_CAD: "4" }).status, 0);
   assert.equal(runValidator({ PHASE3_STAGING_APPROVED_BUDGET_CAD: undefined }).status, 0);
 });

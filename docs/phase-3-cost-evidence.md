@@ -27,7 +27,9 @@ The final `Await cost finalization` step deliberately fails. This keeps the
 provider exit unapproved until actual cost is known. All preceding lifecycle
 jobs/steps must have succeeded, including the cleanup check. Do not use
 GitHub's rerun button to resolve this expected failure: it can create another
-billable resource. Record the cost with the second workflow instead.
+billable resource in older workflows. The updated validator and runtime harness
+both reject live execution when `GITHUB_RUN_ATTEMPT` is not `1`, so a rerun cannot
+repeat provider provisioning. Record the cost with the second workflow instead.
 
 ## 2. Measure after cleanup
 

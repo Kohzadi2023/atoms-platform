@@ -52,10 +52,10 @@ The successful result requires neither image rollback nor another smoke run.
 
 ## Coverage that remains separate
 
-- Invalid/tampered/expired ticket rejection, missing/revoked sessions, and
-  origin-override rejection have local/CI coverage; v18 did not execute those
-  negative paths in Azure. Redis key expiration is not proof of the HTTP
-  response to an expired ticket or a request after session deletion.
+- v18 did not execute invalid/tampered/expired ticket rejection,
+  missing/revoked sessions or origin-override rejection in Azure. These paths
+  subsequently passed in the [separate v19 execution on 2026-09-13](preview-private-live-evidence-2026-09-13.md).
+  Redis key expiration in v18 is not itself proof of those HTTP responses.
 - The signed session requests used localhost with a signed Host header. They
   did not test signed-host routing through ACA ingress. The separate v17 Job
   tested the internal ingress path for `/healthz` only.
@@ -66,9 +66,11 @@ The successful result requires neither image rollback nor another smoke run.
 - Public preview remains blocked because an owned domain and wildcard TLS
   path have not been configured.
 
-The bounded next runtime gate is [v19 private rejection behavior](preview-private-rejection-v19.md),
-prepared and tested offline under the same execution-disabled boundary. Its
-live result is pending. Public/provider enablement remains a separate decision.
+The subsequent [v19 private rejection gate](preview-private-rejection-v19.md)
+passed on 2026-09-13 under the same execution-disabled boundary. Its
+[live evidence](preview-private-live-evidence-2026-09-13.md) is recorded
+separately from this v17/v18 checkpoint. Public/provider enablement remains a
+separate decision.
 
 ## PR #62 disposition and repository follow-up
 

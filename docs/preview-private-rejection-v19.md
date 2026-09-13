@@ -1,9 +1,12 @@
 # Private Preview Gateway rejection gate v19
 
-Status: **prepared and tested offline; LIVE RESULT PENDING**. The operator
-completed [v17/v18](preview-private-live-evidence-2026-09-12.md) and authorized
-the next private checks. This gate requires no owned domain or public exposure.
-It is not a provider-backed run or a public-preview release gate.
+Status: **LIVE SMOKE PASSED on 2026-09-13**, based on the operator-provided
+06:15:36 to 06:20:34 PowerShell transcript. See the
+[v19 evidence record](preview-private-live-evidence-2026-09-13.md) for artifact
+identity, observed results, cleanup and coverage limits. This follows the
+successful [v17/v18 executions](preview-private-live-evidence-2026-09-12.md).
+This gate requires no owned domain or public exposure. It is not a
+provider-backed run or a public-preview release gate.
 
 ## Scope
 
@@ -53,7 +56,11 @@ This does not observe the live Gateway's individual Redis lookups or test all
 cluster shards. It does not establish browser/TLS behavior, signed-host routing
 through ACA ingress, real provider upstreams, or worker/BullMQ readiness.
 
-## Operator commands
+## Operator commands for a future rerun
+
+The recorded v19 execution succeeded, including cleanup and scale restoration.
+No rerun or recovery command is required for that successful checkpoint. The
+commands below are retained for a future deliberate revalidation.
 
 Save the standalone script in Downloads. Its SHA-256 is:
 

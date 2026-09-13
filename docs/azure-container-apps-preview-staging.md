@@ -2,11 +2,13 @@
 
 This runbook records the current Azure Container Apps preview topology and the next safe staging gate. It supplements the provider-neutral Phase 2 preview design with the verified Atoms-Staging deployment state.
 
-## Latest operator-verified state: 2026-09-12
+## Latest operator-verified state: 2026-09-13
 
-The v17 and v18 transcripts establish the state below at the end of those
-executions. This is recorded live evidence, not a fresh Azure observation when
-reading this document. See the [evidence and coverage record](preview-private-live-evidence-2026-09-12.md).
+The v17/v18 transcripts and the subsequent v19 rejection smoke establish the
+state below at completion of those executions. This is recorded live evidence,
+not a fresh Azure observation when reading this document. See the
+[v17/v18 record](preview-private-live-evidence-2026-09-12.md) and
+[v19 record](preview-private-live-evidence-2026-09-13.md).
 
 - Subscription: `Atoms-Staging` (`2ac8ed24-166b-4325-89dc-829d64391ce9`).
 - The legacy subscription `bbcaf423-9a71-43bc-9fc7-821ef012cd01` is explicitly out of scope and must never be mutated by this runbook.
@@ -14,7 +16,7 @@ reading this document. See the [evidence and coverage record](preview-private-li
 - Container Apps environment: `atoms-staging-env`.
 - Environment default domain: `proudpond-7f6fcfdd.canadacentral.azurecontainerapps.io`.
 - Control API remains `AUTH_REQUIRED=true` and `RUN_EXECUTION_ENABLED=false`.
-- Previously recorded worker baseline: provider-disabled, min/max replicas `0/1`, no ingress, provider budget `0`, and intentionally invalid OpenAI/E2B placeholders. v17/v18 do not revalidate worker runtime readiness.
+- Previously recorded worker baseline: provider-disabled, min/max replicas `0/1`, no ingress, provider budget `0`, and intentionally invalid OpenAI/E2B placeholders. v17/v18/v19 do not revalidate worker runtime readiness.
 - Preview Gateway exists as `atoms-staging-preview-gateway` with min/max replicas `0/1`, `PREVIEW_BASE_DOMAIN=preview.invalid`, and **internal-only** ingress on target port `3002`.
 - The verified internal FQDN is `atoms-staging-preview-gateway.internal.proudpond-7f6fcfdd.canadacentral.azurecontainerapps.io`.
 - Preview Gateway image is `atomsstaging91ce9.azurecr.io/preview-gateway@sha256:5b23a82293be920654d9c65b95d4ebfa9ea9bb2601045698d17375b9d8f69d0b`, from source `b7947fa783f45b0dcbf96036f0313ba387812da9`, reusing ACR run `cxg`.
@@ -133,9 +135,12 @@ session key's PX TTL, expiration, deletion and absence. The upstream was a
 loopback fixture inside the exact Gateway replica. The image stayed pinned and
 configured min/max replicas returned to `0/1`.
 
-The v18 checkpoint completes this positive-path private smoke. The prepared
-[v19 rejection gate](preview-private-rejection-v19.md) covers invalid/expired
-tickets, missing/revoked sessions and origin-override attempts. It is tested
-offline and pending operator execution; do not record a live v19 pass yet. Public
-browser/TLS, real provider upstreams, and worker/BullMQ cluster behavior remain
-separate gates. No additional Azure execution is required to record this pass.
+The v18 checkpoint completes the positive-path private smoke. The
+[v19 rejection gate](preview-private-rejection-v19.md) subsequently passed on
+2026-09-13: invalid/expired tickets, missing/revoked sessions and origin-override
+attempts were rejected for both HTTP and WebSocket Upgrade, with no selected
+or decoy upstream contact. The positive header-override control, one-key Redis
+revocation/cleanup and final `0/1` configuration also passed. Public browser/TLS,
+real provider upstreams, and worker/BullMQ cluster behavior remain separate
+gates. No additional Azure execution is required to record these successful
+checkpoints.

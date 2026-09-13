@@ -26,7 +26,7 @@ deployment performed by this PR. At that checkpoint, the deployed image was the 
 Infrastructure DNS/TLS/AUTH/PONG does **not** prove that the full application
 image can retrieve sessions and proxy previews in staging.
 
-## Later operator evidence: v17 rollout and v18 live session
+## Later operator evidence: v17 rollout, v18 live session and v19 rejection
 
 The [2026-09-12 live evidence record](preview-private-live-evidence-2026-09-12.md)
 supersedes the skeleton-image deployment state above. v17 deployed the full
@@ -43,6 +43,14 @@ absent after cleanup, configured min/max replicas restored to `0/1`, private
 ingress and Redis networking retained, and run/provider execution disabled.
 This is operator-reported Azure evidence with the scope limits listed in the
 record, not a deployment performed by the documentation change.
+
+The [2026-09-13 v19 evidence record](preview-private-live-evidence-2026-09-13.md)
+adds live HTTP/WebSocket rejection for invalid/expired tickets,
+missing/revoked sessions and origin-override attempts. Rejections caused no
+selected or decoy loopback upstream contact; a positive routing/header-override
+control passed. Its separate random Redis fixture was revoked, deleted and
+verified absent, and configured min/max returned to `0/1`. The exact image and
+private execution boundary were reverified at completion.
 
 ## One-resource IaC adoption
 

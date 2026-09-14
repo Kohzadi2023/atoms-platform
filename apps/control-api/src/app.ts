@@ -51,6 +51,10 @@ import {
   type AttachmentRoutesOptions,
 } from "./attachment-routes.js";
 import {
+  registerReleaseRoutes,
+  type ReleaseRoutesOptions,
+} from "./release-routes.js";
+import {
   type Authenticator,
   InvalidAccessTokenError,
   parseBearerToken,
@@ -116,6 +120,7 @@ export interface BuildControlApiOptions {
   readonly authenticator?: Authenticator;
   readonly databaseOperations?: DatabaseRoutesOptions;
   readonly attachmentOperations?: AttachmentRoutesOptions;
+  readonly releaseOperations?: ReleaseRoutesOptions;
 }
 
 export async function buildControlApi(
@@ -269,6 +274,12 @@ export async function buildControlApi(
   if (options.attachmentOperations !== undefined) {
     registerAttachmentRoutes(api, {
       ...options.attachmentOperations,
+      now,
+    });
+  }
+  if (options.releaseOperations !== undefined) {
+    registerReleaseRoutes(api, {
+      ...options.releaseOperations,
       now,
     });
   }

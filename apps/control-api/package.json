@@ -16,6 +16,7 @@
     "@atoms/contracts": "workspace:*",
     "@atoms/db": "workspace:*",
     "@atoms/model-gateway": "workspace:*",
+    "@atoms/quality": "workspace:*",
     "@atoms/sandbox-provider": "workspace:*",
     "@atoms/storage-provider": "workspace:*",
     "@fastify/cors": "catalog:",

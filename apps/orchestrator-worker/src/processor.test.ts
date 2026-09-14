@@ -29,6 +29,7 @@ import type {
   WorkerTaskStatus,
 } from "./domain.js";
 import { RunProcessor } from "./processor.js";
+import type { AssessReleaseInput, ReleaseAssessor } from "./release-assessor.js";
 import type { RunValidationInput, RunValidator } from "./validation.js";
 
 const RUN_ID = "00000000-0000-4000-8000-000000000001";
@@ -990,6 +991,82 @@ test("Sarah output fails when canonical URLs are duplicated", async () => {
     "David",
     "Sarah",
   ]);
+});
+
+test("the release assessor runs after validation and before completing the durable run", async () => {
+  const repository = new MemoryRepository();
+  const agents = new ScriptedAgentRuntime(outputs());
+  const calls: string[] = [];
+  const validator: RunValidator = {
+    validate: async () => {
+      calls.push("validate");
+    },
+  };
+  const inputs: AssessReleaseInput[] = [];
+  const assessor: ReleaseAssessor = {
+    assess: async (input) => {
+      calls.push("assess");
+      inputs.push(input);
+      assert.equal(repository.run.status, "RUNNING");
+    },
+  };
+  const runProcessor = new RunProcessor({
+    repository,
+    agents,
+    checkpointer: new MemorySaver(),
+    validator,
+    assessor,
+    now: () => FIXED_NOW,
+  });
+
+  assert.deepEqual(
+    await runProcessor.process(startJob(), { attempt: 3, maxAttempts: 3 }),
+    { outcome: "stopped", status: "PAUSED" },
+  );
+  const approvedVersion = repository.approve();
+  assert.deepEqual(
+    await runProcessor.process(approveJob(approvedVersion, "content"), {
+      attempt: 3,
+      maxAttempts: 3,
+    }),
+    { outcome: "completed" },
+  );
+  assert.deepEqual(calls, ["validate", "assess"]);
+  assert.equal(inputs.length, 1);
+  assert.equal(inputs[0]?.attempt, 3);
+  assert.equal(inputs[0]?.run.projectId, PROJECT_ID);
+  assert.equal(repository.run.status, "COMPLETED");
+});
+
+test("a release assessor that throws never blocks, fails, or retries the run", async () => {
+  const repository = new MemoryRepository();
+  const agents = new ScriptedAgentRuntime(outputs());
+  const assessor: ReleaseAssessor = {
+    assess: async () => {
+      throw new Error("evaluator exploded");
+    },
+  };
+  const runProcessor = new RunProcessor({
+    repository,
+    agents,
+    checkpointer: new MemorySaver(),
+    assessor,
+    now: () => FIXED_NOW,
+  });
+
+  assert.deepEqual(
+    await runProcessor.process(startJob(), { attempt: 1, maxAttempts: 3 }),
+    { outcome: "stopped", status: "PAUSED" },
+  );
+  const approvedVersion = repository.approve();
+  assert.deepEqual(
+    await runProcessor.process(approveJob(approvedVersion, "content"), {
+      attempt: 1,
+      maxAttempts: 3,
+    }),
+    { outcome: "completed" },
+  );
+  assert.equal(repository.run.status, "COMPLETED");
 });
 
 test("a generated-file CAS conflict preserves the manual revision and fails safely", async () => {

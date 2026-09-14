@@ -38,6 +38,8 @@ import {
   PostgresRunProviderBudgetStore,
 } from "./model-budget.js";
 import { RunProcessor } from "./processor.js";
+import { DeterministicReleaseAssessor } from "./release-assessor.js";
+import { PrismaReleaseAssessmentRepository } from "./release-repository.js";
 import { PrismaWorkerRepository } from "./repository.js";
 import { Phase2RunValidator } from "./validation.js";
 import { BullMqAttachmentWorker } from "./attachment-bullmq-worker.js";
@@ -256,11 +258,15 @@ async function main(): Promise<void> {
       ? {}
       : { kmsKeyId: environment.S3_KMS_KEY_ID }),
   });
+  const releaseAssessor = new DeterministicReleaseAssessor({
+    repository: new PrismaReleaseAssessmentRepository(prisma),
+  });
   const processor = new RunProcessor({
     repository,
     agents,
     checkpointer,
     validator,
+    assessor: releaseAssessor,
     attachmentLoader: new PrismaRunAttachmentLoader(prisma, attachmentStorage),
   });
   const worker = new BullMqOrchestratorWorker({

@@ -81,7 +81,7 @@ invariants.
 
 Production builds receive `NEXT_PUBLIC_STORAGE_ORIGIN` as browser-public
 metadata. The generated CSP adds only its normalized origin to `connect-src`,
-alongside the exact Control API and Supabase origins; no wildcard storage source
+alongside the exact Control API and Entra authority origins; no wildcard storage source
 is permitted. Upload and download URLs remain short-lived signed capabilities
 returned by the Control API and are never copied into browser persistence.
 

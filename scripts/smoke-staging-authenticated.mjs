@@ -10,7 +10,7 @@ import {
 import { dirname, isAbsolute, relative, resolve } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
 
-import { validateStagingDeployment } from "./check-staging-deployment.mjs";
+import { validateSmokeAccessTokens, validateStagingDeployment } from "./check-staging-deployment.mjs";
 
 export const SMOKE_CONFIRMATION =
   "RUN_AUTHENTICATED_ATOMS_STAGING_SMOKE";
@@ -91,13 +91,14 @@ export async function executeAuthenticatedStagingSmoke(
   const sleep = dependencies.sleep ?? delay;
   const deadline = Date.now() + (configuration.timeoutMs ?? DEFAULT_TIMEOUT_MS);
   const checks = [];
+  const primaryToken = configuration.primary?.accessToken;
+  const foreignToken = configuration.foreign?.accessToken;
+  const tokenViolations = validateSmokeAccessTokens(primaryToken, foreignToken);
+  if (tokenViolations.length > 0) throw new Error(tokenViolations.join("; "));
   const sensitiveValues = new Set([
-    configuration.primary.email,
-    configuration.primary.password,
-    configuration.foreign.email,
-    configuration.foreign.password,
+    primaryToken,
+    foreignToken,
     configuration.foreign.projectId,
-    configuration.supabasePublishableKey,
   ]);
 
   const webResponse = await request(
@@ -154,21 +155,6 @@ export async function executeAuthenticatedStagingSmoke(
   requireStatus(unauthenticated, [401], "unauthenticated API boundary");
   checks.push("cors_and_auth_boundary");
 
-  const primaryToken = await signIn(
-    fetchImplementation,
-    configuration,
-    configuration.primary,
-    deadline,
-  );
-  const foreignToken = await signIn(
-    fetchImplementation,
-    configuration,
-    configuration.foreign,
-    deadline,
-  );
-  sensitiveValues.add(primaryToken);
-  sensitiveValues.add(foreignToken);
-
   const primaryMe = await apiJson(
     fetchImplementation,
     configuration,
@@ -200,6 +186,7 @@ export async function executeAuthenticatedStagingSmoke(
   }
   sensitiveValues.add(primaryMe.userId);
   sensitiveValues.add(foreignMe.userId);
+  checks.push("entra_control_api_identity");
   const administrativeMembership = primaryMemberships.find((membership) =>
     ["OWNER", "ADMIN"].includes(membership.role),
   );
@@ -469,6 +456,7 @@ export async function executeAuthenticatedStagingSmoke(
 
   const evidence = {
     schemaVersion: "atoms.staging.authenticated-smoke.v1",
+    identityProvider: "ENTRA_EXTERNAL_ID",
     outcome: "passed",
     completedAt: now().toISOString(),
     changeTicket: configuration.changeTicket,
@@ -737,37 +725,6 @@ async function waitForCleanAttachment(options) {
     await options.sleep(1_000);
   }
   throw new Error("attachment scan did not reach CLEAN before its timeout");
-}
-
-async function signIn(fetchImplementation, configuration, identity, deadline) {
-  const response = await requestJson(
-    fetchImplementation,
-    new URL(
-      "/auth/v1/token?grant_type=password",
-      configuration.supabaseOrigin,
-    ),
-    {
-      method: "POST",
-      headers: {
-        apikey: configuration.supabasePublishableKey,
-        "content-type": "application/json",
-      },
-      body: JSON.stringify({
-        email: identity.email,
-        password: identity.password,
-      }),
-    },
-    [200],
-    deadline,
-    "Supabase password authentication",
-  );
-  if (
-    typeof response?.access_token !== "string" ||
-    response.access_token.length < 20
-  ) {
-    throw new Error("Supabase authentication returned no access token");
-  }
-  return response.access_token;
 }
 
 async function apiJson(
@@ -1040,20 +997,16 @@ async function loadConfiguration(options, maximumCostCad) {
     webOrigin: new URL(publicEnvironment.ATOMS_WEB_ORIGIN).origin,
     controlApiOrigin: new URL(publicEnvironment.ATOMS_CONTROL_API_ORIGIN).origin,
     storageOrigin: new URL(publicEnvironment.ATOMS_STORAGE_ORIGIN).origin,
-    supabaseOrigin: new URL(publicEnvironment.ATOMS_SUPABASE_URL).origin,
-    supabasePublishableKey: publicEnvironment.ATOMS_SUPABASE_PUBLISHABLE_KEY,
     previewBaseDomain: publicEnvironment.ATOMS_PREVIEW_BASE_DOMAIN,
     s3Bucket: publicEnvironment.ATOMS_S3_BUCKET,
     revision: publicEnvironment.ATOMS_IMAGE_TAG,
     changeTicket: options.changeTicket,
     maximumCostCad,
     primary: {
-      email: smokeEnvironment.ATOMS_SMOKE_PRIMARY_EMAIL,
-      password: smokeEnvironment.ATOMS_SMOKE_PRIMARY_PASSWORD,
+      accessToken: smokeEnvironment.ATOMS_SMOKE_PRIMARY_ACCESS_TOKEN,
     },
     foreign: {
-      email: smokeEnvironment.ATOMS_SMOKE_FOREIGN_EMAIL,
-      password: smokeEnvironment.ATOMS_SMOKE_FOREIGN_PASSWORD,
+      accessToken: smokeEnvironment.ATOMS_SMOKE_FOREIGN_ACCESS_TOKEN,
       projectId: smokeEnvironment.ATOMS_SMOKE_FOREIGN_PROJECT_ID,
     },
   };
@@ -1124,6 +1077,7 @@ async function main() {
   const preflight = await validateStagingDeployment({
     environmentFile: options.environmentFile,
     secretsDirectory: options.secretsDirectory,
+    requireAuthenticatedSmoke: true,
   });
   if (!preflight.ok) {
     console.error("Authenticated smoke stopped because staging preflight failed.");

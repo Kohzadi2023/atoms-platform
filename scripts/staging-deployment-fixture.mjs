@@ -22,8 +22,9 @@ export async function createStagingDeploymentFixture(options = {}) {
     e2bCredential: "configured-e2b-credential-0123456789abcdef",
     supabaseCredential: "configured-supabase-credential-0123456789abcdef",
     vaultCredential: "configured-vault-credential-0123456789abcdef",
-    smokePrimaryPassword: "primary-smoke-password-0123456789abcdef",
-    smokeForeignPassword: "foreign-smoke-password-0123456789abcdef",
+    // JWT-shaped mock values only; no token issuer or signature is involved.
+    smokePrimaryToken: "fixture-primary.jwt-payload.not-a-signature",
+    smokeForeignToken: "fixture-foreign.jwt-payload.not-a-signature",
   };
   values.databaseUrl = `postgresql://atoms:${encodeURIComponent(values.databasePassword)}@postgres:5432/atoms?schema=public`;
   values.redisUrl = `redis://:${encodeURIComponent(values.redisPassword)}@redis:6379`;
@@ -42,6 +43,7 @@ export async function createStagingDeploymentFixture(options = {}) {
       ATOMS_PREVIEW_BASE_DOMAIN: "preview.staging.atoms.dev",
       ATOMS_ENTRA_WEB_CLIENT_ID: "11111111-2222-4333-8444-555555555555",
       ATOMS_ENTRA_AUTHORITY: "https://fixture-tenant.ciamlogin.com/",
+      ATOMS_ENTRA_TENANT_ID: "aaaaaaaa-bbbb-4ccc-8ddd-eeeeeeeeeeee",
       ATOMS_ENTRA_API_SCOPE:
         "api://66666666-7777-4888-8999-aaaaaaaaaaaa/access_as_user",
       ATOMS_AUTH_ISSUER_URL:
@@ -92,10 +94,8 @@ export async function createStagingDeploymentFixture(options = {}) {
     PREVIEW_SIGNING_SECRET: values.previewSigningSecret,
   });
   await writeSecureEnvironment(secretsDirectory, "authenticated-smoke.env", {
-    ATOMS_SMOKE_PRIMARY_EMAIL: "primary-smoke@staging.atoms.dev",
-    ATOMS_SMOKE_PRIMARY_PASSWORD: values.smokePrimaryPassword,
-    ATOMS_SMOKE_FOREIGN_EMAIL: "foreign-smoke@staging.atoms.dev",
-    ATOMS_SMOKE_FOREIGN_PASSWORD: values.smokeForeignPassword,
+    ATOMS_SMOKE_PRIMARY_ACCESS_TOKEN: values.smokePrimaryToken,
+    ATOMS_SMOKE_FOREIGN_ACCESS_TOKEN: values.smokeForeignToken,
     ATOMS_SMOKE_FOREIGN_PROJECT_ID: "00000000-0000-4000-8000-000000000099",
   });
 

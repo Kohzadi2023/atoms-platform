@@ -45,3 +45,30 @@ test("public staging smoke stays read-only and covers the shared readiness gates
   assert.doesNotMatch(smoke, /acr build/u);
   assert.doesNotMatch(smoke, /Connect-MgGraph/u);
 });
+
+test("every Web build entry point supplies all four Entra settings", async () => {
+  const dockerfile = await read("apps/web/Dockerfile");
+  const compose = await read("deploy/staging/compose.yaml");
+  const publicExample = await read("deploy/staging/staging.env.example");
+  const turbo = JSON.parse(await read("turbo.json"));
+  const scripts = await Promise.all([
+    read("deploy/staging/entra-web-cutover.ps1"),
+    read("deploy/staging/entra-web-create-or-cutover.ps1"),
+  ]);
+  const mappings = [
+    ["CLIENT_ID", "WEB_CLIENT_ID", "ExpectedWebClientId"],
+    ["AUTHORITY", "AUTHORITY", "ExpectedAuthority"],
+    ["TENANT_ID", "TENANT_ID", "ExpectedTenantId"],
+    ["API_SCOPE", "API_SCOPE", "ExpectedApiScope"],
+  ];
+  for (const [suffix, composeSuffix, psVariable] of mappings) {
+    const name = `NEXT_PUBLIC_ENTRA_${suffix}`;
+    const source = `ATOMS_ENTRA_${composeSuffix}`;
+    assert.ok(dockerfile.includes(`ARG ${name}\n`), name);
+    assert.ok(compose.includes(`${name}: \${${source}:?${source} is required}`), name);
+    assert.ok(publicExample.includes(`${source}=`), source);
+    assert.ok(turbo.tasks.build.env.includes(name), name);
+    for (const script of scripts) assert.ok(script.includes(`--build-arg "${name}=$${psVariable}"`), name);
+  }
+  assert.ok(!turbo.tasks.build.env.some((name) => name.startsWith("NEXT_PUBLIC_SUPABASE_")));
+});

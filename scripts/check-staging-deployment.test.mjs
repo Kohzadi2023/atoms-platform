@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { spawnSync } from "node:child_process";
-import { chmod, copyFile, readFile, writeFile } from "node:fs/promises";
+import { chmod, copyFile, readFile, rm, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import test from "node:test";
 import { fileURLToPath } from "node:url";
@@ -40,7 +40,7 @@ test("accepts a complete secret-safe staging contract", async (t) => {
     violations: [],
     checked: {
       publicEnvironmentFiles: 1,
-      serviceEnvironmentFiles: 5,
+      serviceEnvironmentFiles: 4,
       opaqueSecretFiles: 7,
       tlsFiles: 2,
     },
@@ -66,6 +66,66 @@ test("storage ingress is shared only by Caddy and MinIO", async () => {
 
   assert.deepEqual(connectedServices, ["minio", "reverse-proxy"]);
 });
+
+test("service preflight does not need operator smoke tokens, but smoke preflight does", async (t) => {
+  const fixture = await fixtureForTest(t);
+  await rm(join(fixture.secretsDirectory, "authenticated-smoke.env"));
+  const options = { environmentFile: fixture.environmentFile, secretsDirectory: fixture.secretsDirectory };
+  assert.equal((await validateStagingDeployment(options)).ok, true);
+  const smoke = await validateStagingDeployment({ ...options, requireAuthenticatedSmoke: true });
+  assert.equal(smoke.ok, false);
+  assert.match(smoke.violations.join("\n"), /authenticated-smoke\.env is missing/u);
+});
+
+test("smoke preflight accepts operator JWTs and rejects legacy password fields without disclosure", async (t) => {
+  const fixture = await fixtureForTest(t);
+  const options = {
+    environmentFile: fixture.environmentFile, secretsDirectory: fixture.secretsDirectory,
+    requireAuthenticatedSmoke: true,
+  };
+  const valid = await validateStagingDeployment(options);
+  assert.equal(valid.ok, true);
+  assert.equal(valid.checked.serviceEnvironmentFiles, 5);
+  const file = join(fixture.secretsDirectory, "authenticated-smoke.env");
+  await chmod(file, 0o600);
+  await writeFile(file, `${await readFile(file, "utf8")}ATOMS_SMOKE_PRIMARY_PASSWORD=private-password-canary\n`);
+  await chmod(file, 0o444);
+  const invalid = await validateStagingDeployment(options);
+  assert.equal(invalid.ok, false);
+  assert.match(invalid.violations.join("\n"), /unsupported variable ATOMS_SMOKE_PRIMARY_PASSWORD/u);
+  for (const value of ["private-password-canary", fixture.values.smokePrimaryToken, fixture.values.smokeForeignToken]) {
+    assert.ok(!JSON.stringify(invalid).includes(value));
+  }
+});
+
+test("GUID issuer alias and named JWKS work for the exact browser tenant", async (t) => {
+  const fixture = await fixtureForTest(t);
+  const content = await readFile(fixture.environmentFile, "utf8");
+  await writeFile(fixture.environmentFile, content.replace(
+    "ATOMS_AUTH_ISSUER_URL=https://fixture-tenant.ciamlogin.com/",
+    "ATOMS_AUTH_ISSUER_URL=https://aaaaaaaa-bbbb-4ccc-8ddd-eeeeeeeeeeee.ciamlogin.com/",
+  ));
+  assert.equal((await validateStagingDeployment({
+    environmentFile: fixture.environmentFile, secretsDirectory: fixture.secretsDirectory,
+  })).ok, true);
+});
+
+for (const [name, replace] of [
+  ["missing tenant", (text) => text.replace(/^ATOMS_ENTRA_TENANT_ID=.*\n/mu, "")],
+  ["different tenant", (text) => text.replace("ATOMS_ENTRA_TENANT_ID=aaaaaaaa-bbbb-4ccc-8ddd-eeeeeeeeeeee", "ATOMS_ENTRA_TENANT_ID=bbbbbbbb-bbbb-4ccc-8ddd-eeeeeeeeeeee")],
+  ["foreign issuer", (text) => text.replace("ATOMS_AUTH_ISSUER_URL=https://fixture-tenant.ciamlogin.com/", "ATOMS_AUTH_ISSUER_URL=https://unrelated-tenant.ciamlogin.com/")],
+  ["foreign JWKS", (text) => text.replace("ATOMS_AUTH_JWKS_URL=https://fixture-tenant.ciamlogin.com/", "ATOMS_AUTH_JWKS_URL=https://unrelated-tenant.ciamlogin.com/")],
+]) {
+  test(`rejects ${name} before a staging build`, async (t) => {
+    const fixture = await fixtureForTest(t);
+    await writeFile(fixture.environmentFile, replace(await readFile(fixture.environmentFile, "utf8")));
+    const result = await validateStagingDeployment({
+      environmentFile: fixture.environmentFile, secretsDirectory: fixture.secretsDirectory,
+    });
+    assert.equal(result.ok, false);
+    assert.match(result.violations.join("\n"), /[Tt]enant|JWKS/u);
+  });
+}
 
 test("rejects a certificate without the required wildcard preview SAN", async (t) => {
   const fixture = await fixtureForTest(t, {
@@ -274,7 +334,7 @@ test("requires all live provider credentials in the worker-only env file", async
   assert.match(result.violations.join("\n"), /worker\.env is missing SUPABASE_ACCESS_TOKEN/u);
 });
 
-test("requires distinct authenticated smoke identities", async (t) => {
+test("explicit authenticated-smoke preflight rejects identical bearer tokens", async (t) => {
   const fixture = await fixtureForTest(t);
   const smokeEnvironmentPath = join(
     fixture.secretsDirectory,
@@ -285,8 +345,8 @@ test("requires distinct authenticated smoke identities", async (t) => {
   await writeFile(
     smokeEnvironmentPath,
     content.replace(
-      "ATOMS_SMOKE_FOREIGN_EMAIL=foreign-smoke@staging.atoms.dev",
-      "ATOMS_SMOKE_FOREIGN_EMAIL=primary-smoke@staging.atoms.dev",
+      `ATOMS_SMOKE_FOREIGN_ACCESS_TOKEN=${fixture.values.smokeForeignToken}`,
+      `ATOMS_SMOKE_FOREIGN_ACCESS_TOKEN=${fixture.values.smokePrimaryToken}`,
     ),
   );
   await chmod(smokeEnvironmentPath, 0o444);
@@ -294,12 +354,13 @@ test("requires distinct authenticated smoke identities", async (t) => {
   const result = await validateStagingDeployment({
     environmentFile: fixture.environmentFile,
     secretsDirectory: fixture.secretsDirectory,
+    requireAuthenticatedSmoke: true,
   });
 
   assert.equal(result.ok, false);
   assert.match(
     result.violations.join("\n"),
-    /authenticated smoke identities must be different users/u,
+    /authenticated smoke requires two different bearer tokens/u,
   );
 });
 
@@ -359,8 +420,8 @@ test("CLI diagnostics identify contracts without printing credential values", as
     fixture.values.e2bCredential,
     fixture.values.supabaseCredential,
     fixture.values.vaultCredential,
-    fixture.values.smokePrimaryPassword,
-    fixture.values.smokeForeignPassword,
+    fixture.values.smokePrimaryToken,
+    fixture.values.smokeForeignToken,
   ]) {
     assert.doesNotMatch(output, new RegExp(secret, "u"));
   }

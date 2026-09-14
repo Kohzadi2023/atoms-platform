@@ -101,10 +101,10 @@ except `/healthz` and `/readyz`.
 
 - Token verification is strict OIDC/JWT with JWKS signature validation.
 - Required claim checks include issuer, audience, expiration, and subject
-  (`sub`). Not-before (`nbf`) is validated when the issuer supplies it;
-  Supabase access tokens may omit that optional claim.
+  (`sub`). Not-before (`nbf`) is validated when the issuer supplies it.
 - Unsigned or unverified tokens are rejected.
-- The internal user ID is derived from the verified `sub` claim.
+- The internal user ID uses verified Entra `oid`, with verified `sub` as the
+  fallback for OIDC issuers that do not supply `oid`.
 - Cross-workspace resource requests are non-enumerating and return `404`.
 - Known-workspace role violations return structured `403` errors.
 
@@ -122,34 +122,41 @@ Auth configuration placeholders are documented in `.env.example`:
 - `AUTH_JWKS_URL`
 - `AUTH_ALLOWED_ALGORITHMS`
 
-Production identity is provided by Supabase Auth. Configure the project with an
-asymmetric signing key (ES256 is recommended), then set:
+Production customer identity is provided by Microsoft Entra External ID. Resolve
+the exact issuer and `jwks_uri` from the external tenant's v2.0 OIDC metadata:
 
-- `AUTH_ISSUER_URL=https://<project-ref>.supabase.co/auth/v1`
-- `AUTH_AUDIENCE=authenticated`
-- `AUTH_JWKS_URL=https://<project-ref>.supabase.co/auth/v1/.well-known/jwks.json`
-- `AUTH_ALLOWED_ALGORITHMS=ES256` (or the single asymmetric algorithm actually
-  selected for the project)
-- `NEXT_PUBLIC_SUPABASE_URL` and `NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY`
+- `AUTH_REQUIRED=true`
+- `AUTH_ISSUER_URL=<exact metadata issuer>`
+- `AUTH_AUDIENCE=<Control API application client ID>`
+- `AUTH_JWKS_URL=<exact metadata jwks_uri>`
+- `AUTH_ALLOWED_ALGORITHMS=RS256`
+- `NEXT_PUBLIC_ENTRA_CLIENT_ID=<Web application client ID>`
+- `NEXT_PUBLIC_ENTRA_AUTHORITY=https://<tenant-subdomain>.ciamlogin.com/`
+- `NEXT_PUBLIC_ENTRA_TENANT_ID=<external tenant directory ID GUID>`
+- `NEXT_PUBLIC_ENTRA_API_SCOPE=api://<Control API application client ID>/access_as_user`
 - `NEXT_PUBLIC_STORAGE_ORIGIN` for the exact presigned attachment data plane
 
-The web app uses the Supabase browser client for password sign-in, automatic
-session refresh, local-session sign-out, and short-lived access-token delivery
-to REST and SSE requests. Browser session state gates only the user experience;
-the Control API independently verifies every JWT and applies workspace roles.
-The publishable key is safe for a public client, but secret and service-role
-keys must never use a `NEXT_PUBLIC_` variable.
+The web app uses MSAL for Entra sign-in, silent token acquisition, sign-out, and
+short-lived bearer delivery to REST and SSE requests. Register the Web origin's
+`/redirect` path as the SPA redirect URI. Browser session state gates the user
+experience; the Control API independently verifies every JWT and applies
+workspace roles. Credentials must never use a `NEXT_PUBLIC_` variable.
 
 Because Next.js embeds `NEXT_PUBLIC_*` values during compilation, container
-builds must pass the five public settings as build arguments. The web Dockerfile
-declares arguments for the Control API URL, Supabase URL, Supabase publishable
-key, attachment storage origin, and preview base domain. The generated Content
-Security Policy permits browser connections only to the exact API, Supabase,
-and storage origins.
+builds must supply all four Entra settings along with the Control API URL,
+attachment storage origin, and preview base domain. Changing runtime environment
+variables alone does not update those browser values. The generated Content
+Security Policy includes the exact API, configured identity authority, and storage
+origins. The explicit Turbo build inputs track the same public configuration.
 
-Atoms is invite-only. A Supabase user's UUID (`sub`) must match the `userId` of
-an existing `memberships` row before a workspace is visible. This keeps account
-creation separate from tenant and role assignment.
+Workspace access remains membership-scoped. Use the identity resolved by
+`GET /v1/me` when preparing membership fixtures; an Entra subject is not assumed
+to be a UUID. See [the Entra cutover runbook](docs/entra-staging-cutover.md) for
+the dedicated staging tenant and identity smoke commands.
+
+Supabase remains a separate generated-app database provider in
+`packages/database-provider`. Its Management API credentials belong to the
+private worker and are unrelated to Atoms customer login.
 
 The static development authenticator is disabled by default. To use the local
 seeded workspace, generate a random token of at least 32 characters and set
@@ -157,7 +164,7 @@ seeded workspace, generate a random token of at least 32 characters and set
 `AUTH_DEV_USER_ID=local-demo-user`, and
 `NEXT_PUBLIC_CONTROL_API_ACCESS_TOKEN=<same-token>` in an untracked local env
 file. The `NEXT_PUBLIC_*` token is browser-visible and is rejected by production
-builds. Outside development, missing or partial Supabase browser configuration
+builds. Outside development, missing or partial Entra browser configuration
 fails closed and the workspace is not rendered.
 
 See `docs/control-api-security-matrix.md` for route-to-role permissions,

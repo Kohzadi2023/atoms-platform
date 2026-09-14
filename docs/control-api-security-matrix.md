@@ -14,8 +14,10 @@
   - Subject (`sub`)
   - Explicit algorithm allowlist
 - Unsigned tokens (`alg=none`) or decode-only flows are rejected.
-- Principal user identity is derived from verified `sub`.
-- Supabase Auth user UUIDs are used directly as membership `userId` values.
+- Principal user identity uses verified Entra `oid`, falling back to verified
+  `sub` for issuers without `oid`; the original subject remains in the principal.
+- Customer login uses Microsoft Entra External ID. Membership fixtures must use
+  the user identity returned by `/v1/me`, not assume that `sub` is a UUID.
 
 ## Identity endpoints
 

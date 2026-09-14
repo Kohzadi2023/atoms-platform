@@ -21,14 +21,64 @@ const ids = {
   attachment: "00000000-0000-4000-8000-000000000011",
   run: "00000000-0000-4000-8000-000000000012",
 };
-const primaryToken = "primary-access-token-0123456789";
-const foreignToken = "foreign-access-token-0123456789";
+// Format-only mock fixtures. Real signatures/expiry are checked by Control API.
+const primaryToken = "fixture-primary.jwt-payload.not-a-signature";
+const foreignToken = "fixture-foreign.jwt-payload.not-a-signature";
 const uploadUrl =
   "https://storage.staging.atoms.dev/atoms-attachments/quarantine/source.txt?X-Amz-Signature=upload-signature";
 const downloadUrl =
   "https://storage.staging.atoms.dev/atoms-attachments/clean/source.txt?X-Amz-Signature=download-signature";
 const previewUrl =
   "https://signed-ticket.preview.staging.atoms.dev/";
+
+test("missing, malformed or identical bearer tokens fail before any request", async () => {
+  for (const invalid of [undefined, "private-token-canary", `${primaryToken}\n`, foreignToken]) {
+    const input = configuration();
+    input.primary.accessToken = invalid;
+    let calls = 0;
+    await assert.rejects(executeAuthenticatedStagingSmoke(input, {
+      fetch: async () => { calls += 1; throw new Error("must not fetch"); },
+    }), (error) => {
+      assert.ok(!error.message.includes("private-token-canary"));
+      assert.ok(!error.message.includes(primaryToken));
+      return /bounded JWT|different bearer tokens/u.test(error.message);
+    });
+    assert.equal(calls, 0);
+  }
+});
+
+test("Control API rejection of a JWT-shaped token stops before any resource write", async () => {
+  const mock = createMockFetch();
+  let writes = 0;
+  await assert.rejects(executeAuthenticatedStagingSmoke(configuration(), {
+    fetch: async (input, init = {}) => {
+      const url = new URL(String(input));
+      if (!["GET", "OPTIONS"].includes(init.method ?? "GET")) writes += 1;
+      if (url.pathname === "/v1/me" && new Headers(init.headers).has("authorization")) {
+        return json({ code: "INVALID_ACCESS_TOKEN" }, 401);
+      }
+      return mock.fetch(input, init);
+    },
+  }), /primary identity returned HTTP 401/u);
+  assert.equal(writes, 0);
+});
+
+test("different tokens resolving to the same verified user stop before resource writes", async () => {
+  const mock = createMockFetch();
+  let writes = 0;
+  await assert.rejects(executeAuthenticatedStagingSmoke(configuration(), {
+    fetch: async (input, init = {}) => {
+      if (!["GET", "OPTIONS"].includes(init.method ?? "GET")) writes += 1;
+      const response = await mock.fetch(input, init);
+      if (new URL(String(input)).pathname === "/v1/me" && response.status === 200) {
+        const body = await response.json();
+        return json({ ...body, userId: "same-verified-directory-object" }, 200);
+      }
+      return response;
+    },
+  }), /two distinct verified users/u);
+  assert.equal(writes, 0);
+});
 
 test("live command inputs require two exact confirmations and a bounded audit cost", () => {
   const valid = validateSmokeCommandOptions({
@@ -72,6 +122,8 @@ test("authenticated smoke exercises the complete redacted mock journey", async (
   );
 
   assert.equal(result.evidence.outcome, "passed");
+  assert.equal(result.evidence.identityProvider, "ENTRA_EXTERNAL_ID");
+  assert.ok(result.evidence.checks.includes("entra_control_api_identity"));
   assert.deepEqual(result.evidence.orchestration.approvals, ["plan", "content"]);
   assert.equal(result.evidence.orchestration.forcedReconnect, true);
   assert.equal(result.evidence.orchestration.resumedWithLastEventId, true);
@@ -156,8 +208,6 @@ function configuration() {
     webOrigin: "https://app.staging.atoms.dev",
     controlApiOrigin: "https://api.staging.atoms.dev",
     storageOrigin: "https://storage.staging.atoms.dev",
-    supabaseOrigin: "https://fixture-project.supabase.co",
-    supabasePublishableKey: "sb_publishable_fixture_0123456789abcdef",
     previewBaseDomain: "preview.staging.atoms.dev",
     s3Bucket: "atoms-attachments",
     revision: "a".repeat(40),
@@ -165,12 +215,10 @@ function configuration() {
     maximumCostCad: 4,
     timeoutMs: 60_000,
     primary: {
-      email: "primary-smoke@staging.atoms.dev",
-      password: "primary-password-0123456789",
+      accessToken: primaryToken,
     },
     foreign: {
-      email: "foreign-smoke@staging.atoms.dev",
-      password: "foreign-password-0123456789",
+      accessToken: foreignToken,
       projectId: ids.foreignProject,
     },
   };
@@ -195,21 +243,8 @@ function createMockFetch() {
         status: 200,
         headers: ingressHeaders({
           "content-security-policy":
-            "default-src 'self'; connect-src 'self' https://api.staging.atoms.dev https://fixture-project.supabase.co https://storage.staging.atoms.dev",
+            "default-src 'self'; connect-src 'self' https://api.staging.atoms.dev https://fixture-tenant.ciamlogin.com https://storage.staging.atoms.dev",
         }),
-      });
-    }
-
-    if (url.origin === "https://fixture-project.supabase.co") {
-      assert.equal(method, "POST");
-      assert.equal(headers.get("apikey"), "sb_publishable_fixture_0123456789abcdef");
-      const body = JSON.parse(String(init.body));
-      return json({
-        access_token:
-          body.email === "primary-smoke@staging.atoms.dev"
-            ? primaryToken
-            : foreignToken,
-        refresh_token: "not-observed-by-the-harness",
       });
     }
 

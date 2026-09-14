@@ -15,8 +15,10 @@ record the explicit exception required by Issue #22.
 ## Security boundary
 
 `deploy/staging/staging.env.example` contains only public deployment metadata.
-The real public env file may contain domains, a full Git SHA, the Supabase URL,
-and its browser-safe publishable key. The preflight rejects every variable
+The real public env file contains domains, a full Git SHA, Entra application and
+tenant IDs, authority, delegated scope, and OIDC issuer/JWKS metadata. The separate
+Supabase Management API origin configures generated-app database provisioning.
+The preflight rejects every variable
 outside that allowlist.
 
 Runtime credentials live in an absolute directory outside the repository. The
@@ -56,6 +58,12 @@ Install a copy of the example outside the checkout and replace every example
 value. `ATOMS_IMAGE_TAG` must be the complete lowercase 40-character SHA that
 was verified by CI. The web, API, storage, and preview names must be real DNS names, and
 all public/auth endpoints must use HTTPS.
+
+Set `ATOMS_ENTRA_TENANT_ID` as well as the Web client ID, authority and API scope.
+Compose passes all four values into the Web build. OIDC discovery can return a
+tenant-GUID `ciamlogin.com` issuer while the browser uses the tenant's named
+authority. Preflight permits only those two exact origins and requires the
+issuer/JWKS paths to identify the configured tenant.
 
 ```bash
 sudo install -d -m 0755 /etc/atoms/staging
@@ -144,10 +152,12 @@ REDIS_URL=redis://:<encoded-password>@redis:6379
 PREVIEW_SIGNING_SECRET=<same-worker-signing-secret>
 ```
 
-The host-only `authenticated-smoke.env` is not mounted into any container. It
-contains two dedicated Supabase test-user email/password pairs and a known
-foreign-workspace project UUID. See `docs/staging-authenticated-smoke.md` for
-its exact five-variable contract and tenant-isolation setup.
+The host-only `authenticated-smoke.env` is not mounted into any container. It is
+required only when running the authenticated smoke, not for service deployment
+preflight. Supply fresh Entra access tokens for two dedicated identities and a
+known foreign-workspace project UUID immediately before that test. See
+`docs/staging-authenticated-smoke.md` for its three-variable contract and
+tenant-isolation setup. Password-based Supabase Auth fixtures are retired.
 
 Keep the directory owner-only and make every mounted file read-only after
 delivery. Do not loosen the directory mode: it is the host-side confidentiality

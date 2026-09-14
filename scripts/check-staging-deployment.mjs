@@ -19,6 +19,7 @@ const PUBLIC_VARIABLES = [
   "ATOMS_PREVIEW_BASE_DOMAIN",
   "ATOMS_ENTRA_WEB_CLIENT_ID",
   "ATOMS_ENTRA_AUTHORITY",
+  "ATOMS_ENTRA_TENANT_ID",
   "ATOMS_ENTRA_API_SCOPE",
   "ATOMS_AUTH_ISSUER_URL",
   "ATOMS_AUTH_AUDIENCE",
@@ -73,10 +74,8 @@ const SECRET_ENVIRONMENTS = {
   },
   "authenticated-smoke.env": {
     required: [
-      "ATOMS_SMOKE_PRIMARY_EMAIL",
-      "ATOMS_SMOKE_PRIMARY_PASSWORD",
-      "ATOMS_SMOKE_FOREIGN_EMAIL",
-      "ATOMS_SMOKE_FOREIGN_PASSWORD",
+      "ATOMS_SMOKE_PRIMARY_ACCESS_TOKEN",
+      "ATOMS_SMOKE_FOREIGN_ACCESS_TOKEN",
       "ATOMS_SMOKE_FOREIGN_PROJECT_ID",
     ],
     optional: [],
@@ -153,6 +152,9 @@ export async function validateStagingDeployment(options = {}) {
 
   const secretEnvironments = {};
   for (const [fileName, contract] of Object.entries(SECRET_ENVIRONMENTS)) {
+    // Short-lived operator smoke credentials are not a service deployment prerequisite.
+    // The full authenticated smoke explicitly requests this additional preflight.
+    if (fileName === "authenticated-smoke.env" && options.requireAuthenticatedSmoke !== true) continue;
     const environment = await loadEnvironmentFile(
       resolve(secretsDirectory, fileName),
       fileName,
@@ -198,7 +200,7 @@ export async function validateStagingDeployment(options = {}) {
     violations,
     checked: {
       publicEnvironmentFiles: 1,
-      serviceEnvironmentFiles: Object.keys(SECRET_ENVIRONMENTS).length,
+      serviceEnvironmentFiles: Object.keys(secretEnvironments).length,
       opaqueSecretFiles: OPAQUE_SECRET_FILES.length,
       tlsFiles: TLS_FILES.length,
     },
@@ -393,6 +395,10 @@ function validatePublicEnvironment(environment, violations) {
       "ATOMS_ENTRA_WEB_CLIENT_ID must be a Microsoft Entra application client ID",
     );
   }
+  const tenantId = environment.ATOMS_ENTRA_TENANT_ID?.toLowerCase();
+  if (!/^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/u.test(tenantId ?? "")) {
+    violations.push("ATOMS_ENTRA_TENANT_ID must be the external-tenant directory ID GUID");
+  }
   const managementOrigin = validateHttpsOrigin(
     environment.ATOMS_SUPABASE_MANAGEMENT_API_URL,
     "ATOMS_SUPABASE_MANAGEMENT_API_URL",
@@ -452,19 +458,22 @@ function validatePublicEnvironment(environment, violations) {
   if (issuer !== undefined && tenantMatch === null) {
     violations.push("ATOMS_AUTH_ISSUER_URL must be an Entra External ID v2 issuer");
   }
+  const allowedIdentityOrigins = new Set([
+    entraAuthority?.origin,
+    `https://${tenantId}.ciamlogin.com`,
+  ]);
   if (
     issuer !== undefined &&
-    entraAuthority !== undefined &&
-    issuer.origin !== entraAuthority.origin
+    (!allowedIdentityOrigins.has(issuer.origin) || tenantMatch?.[1]?.toLowerCase() !== tenantId)
   ) {
-    violations.push("Entra browser authority and API issuer origins must match");
+    violations.push("Entra API issuer must match the configured tenant and its named or GUID authority");
   }
   if (
     issuer !== undefined &&
     jwks !== undefined &&
     tenantMatch !== null &&
     tenantMatch !== undefined &&
-    (jwks.origin !== issuer.origin ||
+    (!allowedIdentityOrigins.has(jwks.origin) ||
       jwks.pathname !== `/${tenantMatch[1]}/discovery/v2.0/keys`)
   ) {
     violations.push(
@@ -629,7 +638,7 @@ function validateSecretContract(publicEnvironment, environments, secrets, violat
   const controlApi = environments["control-api.env"] ?? {};
   const worker = environments["worker.env"] ?? {};
   const previewGateway = environments["preview-gateway.env"] ?? {};
-  const authenticatedSmoke = environments["authenticated-smoke.env"] ?? {};
+  const authenticatedSmoke = environments["authenticated-smoke.env"];
 
   compareValues(
     [migration.DATABASE_URL, controlApi.DATABASE_URL, worker.DATABASE_URL],
@@ -740,36 +749,34 @@ function validateSecretContract(publicEnvironment, environments, secrets, violat
   ]) {
     if (isPlaceholder(value)) violations.push(`${name} must be configured`);
   }
-  validateSmokeCredentials(authenticatedSmoke, violations);
+  if (authenticatedSmoke !== undefined) validateSmokeCredentials(authenticatedSmoke, violations);
+}
+
+/** Format check only. Control API must independently verify every bearer token. */
+export function validateSmokeAccessTokens(primaryToken, foreignToken) {
+  const violations = [];
+  for (const [name, value] of [
+    ["ATOMS_SMOKE_PRIMARY_ACCESS_TOKEN", primaryToken],
+    ["ATOMS_SMOKE_FOREIGN_ACCESS_TOKEN", foreignToken],
+  ]) {
+    if (
+      typeof value !== "string" || value.length < 20 || value.length > 16_384 ||
+      !/^[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+$/u.test(value)
+    ) {
+      violations.push(`${name} must contain one bounded JWT without whitespace`);
+    }
+  }
+  if (primaryToken !== undefined && primaryToken === foreignToken) {
+    violations.push("authenticated smoke requires two different bearer tokens");
+  }
+  return violations;
 }
 
 function validateSmokeCredentials(environment, violations) {
-  const primaryEmail = environment.ATOMS_SMOKE_PRIMARY_EMAIL;
-  const foreignEmail = environment.ATOMS_SMOKE_FOREIGN_EMAIL;
-  for (const [name, value] of [
-    ["ATOMS_SMOKE_PRIMARY_EMAIL", primaryEmail],
-    ["ATOMS_SMOKE_FOREIGN_EMAIL", foreignEmail],
-  ]) {
-    if (
-      value !== undefined &&
-      (!/^[^@\s]+@[^@\s]+\.[^@\s]+$/u.test(value) || value.length > 254)
-    ) {
-      violations.push(`${name} must contain a normalized test-user email address`);
-    }
-  }
-  for (const [name, value] of [
-    ["ATOMS_SMOKE_PRIMARY_PASSWORD", environment.ATOMS_SMOKE_PRIMARY_PASSWORD],
-    ["ATOMS_SMOKE_FOREIGN_PASSWORD", environment.ATOMS_SMOKE_FOREIGN_PASSWORD],
-  ]) {
-    requireSecretLength(value, 12, name, violations);
-  }
-  if (
-    primaryEmail !== undefined &&
-    foreignEmail !== undefined &&
-    primaryEmail.toLowerCase() === foreignEmail.toLowerCase()
-  ) {
-    violations.push("authenticated smoke identities must be different users");
-  }
+  violations.push(...validateSmokeAccessTokens(
+    environment.ATOMS_SMOKE_PRIMARY_ACCESS_TOKEN,
+    environment.ATOMS_SMOKE_FOREIGN_ACCESS_TOKEN,
+  ));
   if (
     environment.ATOMS_SMOKE_FOREIGN_PROJECT_ID !== undefined &&
     !/^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/iu.test(

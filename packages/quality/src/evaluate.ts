@@ -44,7 +44,15 @@ export function evaluateRelease(raw: unknown): ReleaseAssessment {
     if (age < 0) reject("EVIDENCE_FROM_FUTURE");
     else if (age > input.policy.maxEvidenceAgeSeconds * 1_000) reject("EVIDENCE_TOO_OLD");
     if (evidence.kind === "ACCEPTANCE") {
-      if (!acceptanceMatches || evidence.acceptanceTaskId !== acceptance?.taskId) {
+      if (
+        !acceptanceMatches ||
+        evidence.acceptanceTaskId !== acceptance?.taskId ||
+        evidence.acceptanceTaskAttempt !== acceptance?.taskAttempt
+      ) {
+        // Same code as a task-id mismatch: both mean this evidence does not attest the exact,
+        // current attempt of the Emma task it claims to. A task retried in place keeps its id but
+        // can carry different criteria text under the same positional criterion ids, so the id
+        // alone is not "exact" enough on its own.
         reject("ACCEPTANCE_TASK_MISMATCH");
       }
       for (const criterionId of evidence.criterionIds) {

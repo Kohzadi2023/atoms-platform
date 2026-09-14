@@ -23,6 +23,11 @@ const EmmaCriteriaSchema = z.object({
 export function createAcceptanceSnapshot(input: {
   readonly scope: QualityScope;
   readonly taskId: string;
+  /** The AgentTask row's own `attempt` counter. A task is retried in place (same id, `attempt`
+   *  incremented, `output` overwritten), so this snapshot must be bound to the exact attempt its
+   *  criteria came from, not just the task id, or evidence gathered against a superseded attempt
+   *  could keep matching a later one. */
+  readonly taskAttempt: number;
   readonly output: unknown;
 }): AcceptanceSnapshot {
   const output = parseQualityInput(EmmaCriteriaSchema, input.output);
@@ -32,6 +37,7 @@ export function createAcceptanceSnapshot(input: {
   return parseQualityInput(AcceptanceSnapshotSchema, {
     scope: input.scope,
     taskId: input.taskId,
+    taskAttempt: input.taskAttempt,
     criteria: output.userStories.flatMap((story) => story.acceptanceCriteria.map((text, index) => ({
       id: `${story.id}:${String(index + 1)}`,
       text,
@@ -68,6 +74,7 @@ export function evidenceFromValidationStep(input: {
     status: step.result.error !== undefined ? "ERROR" : step.result.exitCode === 0 ? "PASSED" : "FAILED",
     completedAt: step.completedAt,
     acceptanceTaskId: null,
+    acceptanceTaskAttempt: null,
     criterionIds: [],
   });
 }

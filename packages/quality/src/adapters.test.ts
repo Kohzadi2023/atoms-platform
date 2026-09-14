@@ -27,18 +27,34 @@ function step(): ValidationStepReport {
 }
 
 test("current EmmaOutput shape maps to stable story and one-based criterion references", () => {
-  const snapshot = createAcceptanceSnapshot({ scope, taskId: uuid(4), output: emma });
+  const snapshot = createAcceptanceSnapshot({ scope, taskId: uuid(4), taskAttempt: 0, output: emma });
   assert.deepEqual(snapshot.criteria, [
     { id: "US-001:1", text: "Own workspace is accessible." },
     { id: "US-001:2", text: "Foreign workspace is inaccessible." },
   ]);
   assert.equal(snapshot.taskId, uuid(4));
+  assert.equal(snapshot.taskAttempt, 0);
 });
 
 test("ambiguous duplicate story IDs fail before creating acceptance references", () => {
-  assert.throws(() => createAcceptanceSnapshot({ scope, taskId: uuid(4), output: {
+  assert.throws(() => createAcceptanceSnapshot({ scope, taskId: uuid(4), taskAttempt: 0, output: {
     ...emma, userStories: [...emma.userStories, emma.userStories[0]],
   } }), QualityInputError);
+});
+
+test("a retried task keeps its id but a later attempt's snapshot is distinct from an earlier one", () => {
+  const first = createAcceptanceSnapshot({ scope, taskId: uuid(4), taskAttempt: 0, output: emma });
+  const revisedEmma: EmmaOutput = {
+    ...emma,
+    userStories: [{ ...emma.userStories[0]!, acceptanceCriteria: ["Own workspace is accessible.", "Revised: an admin can archive the workspace."] }],
+  };
+  const second = createAcceptanceSnapshot({ scope, taskId: uuid(4), taskAttempt: 1, output: revisedEmma });
+  // Same task id and the same positional criterion ids, but the second attempt's criterion text
+  // has genuinely changed and its attempt number reflects that.
+  assert.equal(first.taskId, second.taskId);
+  assert.deepEqual(first.criteria.map((c) => c.id), second.criteria.map((c) => c.id));
+  assert.notEqual(first.taskAttempt, second.taskAttempt);
+  assert.notDeepEqual(first.criteria, second.criteria);
 });
 
 for (const name of ["lint", "typecheck", "test", "build"] as const) {

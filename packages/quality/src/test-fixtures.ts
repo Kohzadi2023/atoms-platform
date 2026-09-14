@@ -8,7 +8,7 @@ export const scope = {
 
 export function fixture(): QualityEvaluationInput {
   const acceptance = {
-    taskId: uuid(4), scope: { ...scope },
+    taskId: uuid(4), taskAttempt: 0, scope: { ...scope },
     criteria: [
       { id: "US-001:1", text: "A member can view their workspace." },
       { id: "US-001:2", text: "Foreign workspaces remain inaccessible." },
@@ -17,12 +17,13 @@ export function fixture(): QualityEvaluationInput {
   const checks: QualityEvidence[] = STANDARD_RELEASE_POLICY.requiredChecks.map((kind, index) => ({
     id: uuid(10 + index), sourceArtifactId: uuid(110 + index), scope: { ...scope }, kind,
     status: "PASSED", completedAt: "2026-09-14T00:00:00.000Z",
-    acceptanceTaskId: null, criterionIds: [],
+    acceptanceTaskId: null, acceptanceTaskAttempt: null, criterionIds: [],
   }));
   const acceptanceEvidence: QualityEvidence[] = acceptance.criteria.map((criterion, index) => ({
     id: uuid(30 + index), sourceArtifactId: uuid(130 + index), scope: { ...scope }, kind: "ACCEPTANCE",
     status: "PASSED", completedAt: "2026-09-14T00:00:00.000Z",
-    acceptanceTaskId: acceptance.taskId, criterionIds: [criterion.id],
+    acceptanceTaskId: acceptance.taskId, acceptanceTaskAttempt: acceptance.taskAttempt,
+    criterionIds: [criterion.id],
   }));
   return {
     scope: { ...scope }, evaluatedAt: "2026-09-14T00:01:00.000Z",

@@ -18,8 +18,18 @@ export const QualityScopeSchema = z.object({
 export type QualityScope = z.infer<typeof QualityScopeSchema>;
 
 const CriterionIdSchema = z.string().regex(/^US-[0-9]{3}:[1-9][0-9]?$/);
+// AgentTask rows are retried in place: `AgentTask.attempt` increments on the same row id and its
+// `output` is overwritten, so the same Emma taskId can carry different acceptance-criteria text
+// across attempts within a single run attempt/controlVersion (Mike budgets each task up to three
+// attempts independently of the run-level retry that QualityScope.attempt already tracks). Binding
+// only to taskId would let evidence gathered against a superseded attempt's criteria keep matching
+// a later attempt just because the id string happens to repeat (ids are positional, not
+// content-derived). taskAttempt closes that gap the same way scope.attempt already guards against
+// stale run-level evidence.
+const TaskAttemptSchema = z.number().int().min(0).max(Number.MAX_SAFE_INTEGER);
 export const AcceptanceSnapshotSchema = z.object({
   taskId: z.string().uuid(),
+  taskAttempt: TaskAttemptSchema,
   scope: QualityScopeSchema,
   criteria: z.array(z.object({
     id: CriterionIdSchema,
@@ -40,13 +50,14 @@ export const QualityEvidenceSchema = z.object({
   status: EvidenceStatusSchema,
   completedAt: z.string().datetime({ offset: true }),
   acceptanceTaskId: z.string().uuid().nullable(),
+  acceptanceTaskAttempt: TaskAttemptSchema.nullable(),
   criterionIds: z.array(CriterionIdSchema).max(1_000),
 }).strict().superRefine((value, context) => {
   if (value.kind === "ACCEPTANCE") {
-    if (value.acceptanceTaskId === null || value.criterionIds.length === 0) {
-      context.addIssue({ code: "custom", message: "Acceptance evidence requires a task and criteria" });
+    if (value.acceptanceTaskId === null || value.acceptanceTaskAttempt === null || value.criterionIds.length === 0) {
+      context.addIssue({ code: "custom", message: "Acceptance evidence requires a task, its attempt, and criteria" });
     }
-  } else if (value.acceptanceTaskId !== null || value.criterionIds.length !== 0) {
+  } else if (value.acceptanceTaskId !== null || value.acceptanceTaskAttempt !== null || value.criterionIds.length !== 0) {
     context.addIssue({ code: "custom", message: "Check success alone cannot attest acceptance criteria" });
   }
   if (new Set(value.criterionIds).size !== value.criterionIds.length) {

@@ -102,6 +102,23 @@ test("wrong acceptance task and invented criterion references are blocked", () =
   blocked(input, "UNKNOWN_CRITERION");
 });
 
+test("evidence from a superseded attempt of the same task cannot satisfy a later attempt", () => {
+  // AgentTask rows are retried in place: the id stays the same, `attempt` increments, and the
+  // Emma output (and therefore the acceptance criteria text) is overwritten. Since criterion ids
+  // are positional ("US-001:1"), a retried task can keep the exact same id strings while the
+  // requirement behind them has changed. Evidence captured against the earlier attempt must not
+  // be able to attest the later one just because the task id and criterion id strings still line
+  // up -- only the attempt-matching evidence can.
+  const input = fixture();
+  input.acceptance!.taskAttempt = 1;
+  const acceptanceEvidence = input.evidence.filter((item) => item.kind === "ACCEPTANCE");
+  assert.ok(acceptanceEvidence.length > 0);
+  assert.ok(acceptanceEvidence.every((item) => item.acceptanceTaskAttempt === 0));
+  blocked(input, "ACCEPTANCE_TASK_MISMATCH");
+  acceptanceEvidence.forEach((item) => { item.acceptanceTaskAttempt = 1; });
+  assert.equal(evaluateRelease(input).status, "READY");
+});
+
 test("duplicate evidence IDs block even identical success claims", () => {
   const input = fixture();
   input.evidence.push(structuredClone(input.evidence[0]!));

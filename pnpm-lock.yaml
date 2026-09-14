@@ -464,6 +464,25 @@ importers:
         specifier: 'catalog:'
         version: 7.0.2
 
+  packages/quality:
+    dependencies:
+      zod:
+        specifier: 'catalog:'
+        version: 4.4.3
+    devDependencies:
+      '@atoms/agents':
+        specifier: workspace:*
+        version: link:../agents
+      '@atoms/sandbox-provider':
+        specifier: workspace:*
+        version: link:../sandbox-provider
+      '@types/node':
+        specifier: 'catalog:'
+        version: 24.13.3
+      typescript:
+        specifier: 'catalog:'
+        version: 7.0.2
+
   packages/sandbox-provider:
     dependencies:
       '@e2b/code-interpreter':

@@ -1,0 +1,100 @@
+import assert from "node:assert/strict";
+import test from "node:test";
+
+import type { AgentProjectFile, EmmaOutput } from "@atoms/agents";
+import type { ValidationStepReport } from "@atoms/sandbox-provider";
+
+import {
+  createAcceptanceSnapshot, evidenceFromValidationStep, fingerprintProjectSnapshot, QualityInputError,
+} from "./index.js";
+import { scope, uuid } from "./test-fixtures.js";
+
+const emma: EmmaOutput = {
+  productName: "Workspace", problemStatement: "Members need their own workspace.",
+  targetUsers: ["Members"], nonGoals: [], assumptions: [],
+  userStories: [{
+    id: "US-001", role: "member", goal: "view a workspace", benefit: "access my files",
+    acceptanceCriteria: ["Own workspace is accessible.", "Foreign workspace is inaccessible."],
+  }],
+};
+
+function step(): ValidationStepReport {
+  return {
+    ordinal: 5, name: "test", command: "pnpm test",
+    startedAt: "2026-09-13T23:59:50.000Z", completedAt: "2026-09-14T00:00:00.000Z",
+    result: { exitCode: 0, durationMs: 10_000, stdout: "private-log-canary", stderr: "private-error-canary" },
+  };
+}
+
+test("current EmmaOutput shape maps to stable story and one-based criterion references", () => {
+  const snapshot = createAcceptanceSnapshot({ scope, taskId: uuid(4), output: emma });
+  assert.deepEqual(snapshot.criteria, [
+    { id: "US-001:1", text: "Own workspace is accessible." },
+    { id: "US-001:2", text: "Foreign workspace is inaccessible." },
+  ]);
+  assert.equal(snapshot.taskId, uuid(4));
+});
+
+test("ambiguous duplicate story IDs fail before creating acceptance references", () => {
+  assert.throws(() => createAcceptanceSnapshot({ scope, taskId: uuid(4), output: {
+    ...emma, userStories: [...emma.userStories, emma.userStories[0]],
+  } }), QualityInputError);
+});
+
+for (const name of ["lint", "typecheck", "test", "build"] as const) {
+  test(`current ${name} ValidationStepReport converts without copying logs or asserting acceptance`, () => {
+    const report = evidenceFromValidationStep({ scope, commandId: uuid(10), step: { ...step(), name } });
+    assert.equal(report?.kind, name.toUpperCase());
+    assert.equal(report?.status, "PASSED");
+    assert.deepEqual(report?.criterionIds, []);
+    assert.equal(report?.acceptanceTaskId, null);
+    assert.equal(report?.sourceArtifactId, uuid(10));
+    assert.ok(!JSON.stringify(report).includes("private-"));
+  });
+}
+
+test("command error overrides exit code zero; nonzero is failed", () => {
+  const command: ValidationStepReport = {
+    ...step(), result: { ...step().result, error: "private-error-canary" },
+  };
+  const report = evidenceFromValidationStep({ scope, commandId: uuid(10), step: command });
+  assert.equal(report?.status, "ERROR");
+  assert.ok(!JSON.stringify(report).includes("private-error-canary"));
+  assert.equal(evidenceFromValidationStep({ scope, commandId: uuid(10), step: {
+    ...step(), result: { ...step().result, exitCode: 1 },
+  } })?.status, "FAILED");
+});
+
+test("install and preview checks are not mislabeled as quality or acceptance evidence", () => {
+  for (const name of ["install", "prisma-validate", "preview-start", "preview-health"] as const) {
+    assert.equal(evidenceFromValidationStep({ scope, commandId: uuid(10), step: { ...step(), name } }), null);
+  }
+});
+
+test("malformed command interval cannot become passing evidence", () => {
+  assert.throws(() => evidenceFromValidationStep({ scope, commandId: uuid(10), step: {
+    ...step(), startedAt: "2026-09-14T00:05:00.000Z",
+  } }), QualityInputError);
+});
+
+const files: readonly AgentProjectFile[] = [
+  { path: "src/index.ts", version: 2, content: "export const value = 1;" },
+  { path: "package.json", version: 1, content: "{}" },
+];
+
+test("snapshot fingerprint is order-independent and binds path, version and exact bytes", () => {
+  const hash = fingerprintProjectSnapshot(files);
+  assert.match(hash, /^[a-f0-9]{64}$/);
+  assert.equal(fingerprintProjectSnapshot([...files].reverse()), hash);
+  for (const change of [{ path: "src/other.ts" }, { version: 3 }, { content: "export const value = 2;" }]) {
+    assert.notEqual(fingerprintProjectSnapshot([{ ...files[0], ...change }, files[1]]), hash);
+  }
+});
+
+test("snapshot fingerprint rejects duplicate paths, traversal, empty snapshots and missing versions", () => {
+  for (const invalid of [
+    [], [files[0], files[0]], [{ ...files[0], path: "../index.ts" }],
+    [{ ...files[0], path: "src/./index.ts" }], [{ ...files[0], version: 0 }],
+    [{ path: "index.ts", content: "export {};" }],
+  ]) assert.throws(() => fingerprintProjectSnapshot(invalid), QualityInputError);
+});

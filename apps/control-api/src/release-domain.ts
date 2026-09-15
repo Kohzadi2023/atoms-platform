@@ -7,6 +7,7 @@ export interface ReleaseAssessmentRecord {
   readonly runId: string;
   readonly controlVersion: number;
   readonly attempt: number;
+  readonly source: "WORKER" | "MANUAL";
   readonly snapshotSha256: string;
   readonly status: "READY" | "BLOCKED";
   readonly acceptanceTaskId: string | null;
@@ -28,6 +29,7 @@ export function toReleaseAssessmentResponse(
     runId: record.runId,
     controlVersion: record.controlVersion,
     attempt: record.attempt,
+    source: record.source,
     snapshotSha256: record.snapshotSha256,
     status: record.status,
     mode: "OBSERVE_ONLY",

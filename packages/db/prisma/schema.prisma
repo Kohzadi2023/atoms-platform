@@ -207,6 +207,16 @@ enum ReleaseAssessmentStatus {
   BLOCKED
 }
 
+// Which caller produced an assessment. Kept as part of the natural key
+// (alongside runId/controlVersion/attempt) because a control-api on-demand
+// trigger and the worker's own automatic assessment can otherwise target the
+// exact same attempt (attempt 1, the common case for a run's first try),
+// silently overwriting each other and losing provenance.
+enum ReleaseAssessmentSource {
+  WORKER
+  MANUAL
+}
+
 enum ReleaseEvidenceKind {
   LINT
   TYPECHECK
@@ -726,6 +736,7 @@ model ReleaseAssessment {
   runId             String                  @map("run_id") @db.Uuid
   controlVersion    Int                     @map("control_version")
   attempt           Int
+  source            ReleaseAssessmentSource @default(WORKER)
   snapshotSha256    String                  @map("snapshot_sha256") @db.Char(64)
   status            ReleaseAssessmentStatus
   acceptanceTaskId  String?                 @map("acceptance_task_id") @db.Uuid
@@ -739,7 +750,7 @@ model ReleaseAssessment {
   evidence          ReleaseEvidence[]
   createdAt         DateTime                @default(now()) @map("created_at") @db.Timestamptz(3)
 
-  @@unique([runId, controlVersion, attempt])
+  @@unique([runId, controlVersion, attempt, source])
   @@index([workspaceId, projectId, createdAt])
   @@index([runId, createdAt])
   @@map("release_assessments")

@@ -5,6 +5,9 @@
 CREATE TYPE "ReleaseAssessmentStatus" AS ENUM ('READY', 'BLOCKED');
 
 -- CreateEnum
+CREATE TYPE "ReleaseAssessmentSource" AS ENUM ('WORKER', 'MANUAL');
+
+-- CreateEnum
 CREATE TYPE "ReleaseEvidenceKind" AS ENUM ('LINT', 'TYPECHECK', 'TEST', 'BUILD', 'REGRESSION', 'E2E', 'ACCESSIBILITY', 'PERFORMANCE', 'SECURITY', 'ACCEPTANCE');
 
 -- CreateEnum
@@ -18,6 +21,7 @@ CREATE TABLE "release_assessments" (
     "run_id" UUID NOT NULL,
     "control_version" INTEGER NOT NULL,
     "attempt" INTEGER NOT NULL,
+    "source" "ReleaseAssessmentSource" NOT NULL DEFAULT 'WORKER',
     "snapshot_sha256" CHAR(64) NOT NULL,
     "status" "ReleaseAssessmentStatus" NOT NULL,
     "acceptance_task_id" UUID,
@@ -48,7 +52,7 @@ CREATE TABLE "release_evidence" (
 );
 
 -- CreateIndex
-CREATE UNIQUE INDEX "release_assessments_run_id_control_version_attempt_key" ON "release_assessments"("run_id", "control_version", "attempt");
+CREATE UNIQUE INDEX "release_assessments_run_id_control_version_attempt_source_key" ON "release_assessments"("run_id", "control_version", "attempt", "source");
 
 -- CreateIndex
 CREATE INDEX "release_assessments_workspace_id_project_id_created_at_idx" ON "release_assessments"("workspace_id", "project_id", "created_at");

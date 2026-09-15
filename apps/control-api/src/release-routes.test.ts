@@ -98,6 +98,7 @@ function assessment(overrides: Partial<ReleaseAssessmentRecord> = {}): ReleaseAs
     runId: RUN_A,
     controlVersion: 3,
     attempt: 1,
+    source: "MANUAL",
     snapshotSha256: "a".repeat(64),
     status: "READY",
     acceptanceTaskId: "00000000-0000-4000-8000-000000000400",
@@ -198,6 +199,10 @@ test("a workspace member can trigger an observe-only assessment and never a depl
     const body = response.json();
     assert.equal(body.mode, "OBSERVE_ONLY");
     assert.equal(body.status, "READY");
+    // A manually triggered assessment is tagged distinctly from the worker's
+    // own automatic assessment so the two can never silently overwrite each
+    // other at the same (runId, controlVersion, attempt).
+    assert.equal(body.source, "MANUAL");
     assert.deepEqual(repository.triggerCalls, [
       { userId: USERS.member, projectId: PROJECT_A },
     ]);

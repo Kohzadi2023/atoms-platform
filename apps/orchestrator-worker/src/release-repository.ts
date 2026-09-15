@@ -150,10 +150,11 @@ export class PrismaReleaseAssessmentRepository implements ReleaseAssessmentRepos
     await this.#prisma.$transaction(async (transaction) => {
       await transaction.releaseAssessment.upsert({
         where: {
-          runId_controlVersion_attempt: {
+          runId_controlVersion_attempt_source: {
             runId: scope.runId,
             controlVersion: scope.controlVersion,
             attempt: scope.attempt,
+            source: "WORKER",
           },
         },
         update: {
@@ -176,6 +177,7 @@ export class PrismaReleaseAssessmentRepository implements ReleaseAssessmentRepos
           runId: scope.runId,
           controlVersion: scope.controlVersion,
           attempt: scope.attempt,
+          source: "WORKER",
           snapshotSha256: assessment.scope.snapshotSha256,
           status: assessment.status,
           acceptanceTaskId: assessment.acceptanceTaskId,
@@ -246,10 +248,11 @@ export class PrismaReleaseAssessmentRepository implements ReleaseAssessmentRepos
     await this.#prisma.$transaction(async (transaction) => {
       await transaction.releaseAssessment.upsert({
         where: {
-          runId_controlVersion_attempt: {
+          runId_controlVersion_attempt_source: {
             runId: scope.runId,
             controlVersion: scope.controlVersion,
             attempt: scope.attempt,
+            source: "WORKER",
           },
         },
         update: {
@@ -272,6 +275,7 @@ export class PrismaReleaseAssessmentRepository implements ReleaseAssessmentRepos
           runId: scope.runId,
           controlVersion: scope.controlVersion,
           attempt: scope.attempt,
+          source: "WORKER",
           snapshotSha256: "0".repeat(64),
           status: "BLOCKED",
           acceptanceTaskId: null,

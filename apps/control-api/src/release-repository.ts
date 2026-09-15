@@ -97,10 +97,10 @@ export class PrismaReleaseControlRepository implements ReleaseControlRepository 
     // Same worker-level "attempt" concept the QA README documents (a run's
     // own retry count); the control API does not track that separately, so
     // an on-demand trigger always assesses against attempt 1 of the current
-    // controlVersion. This mirrors the fact that only one assessment can
-    // exist per (runId, controlVersion, attempt) -- a later worker-driven
-    // assessment for a genuinely different attempt is not overwritten by
-    // this one, and vice versa.
+    // controlVersion. The natural key is (runId, controlVersion, attempt,
+    // source), so this MANUAL assessment can never collide with -- or be
+    // silently overwritten by -- the worker's own automatic assessment for
+    // the same attempt (attempt 1 is the common case for a run's first try).
     const attempt = 1;
 
     const [files, acceptanceTask, sandboxCommands] = await Promise.all([
@@ -232,10 +232,11 @@ export class PrismaReleaseControlRepository implements ReleaseControlRepository 
   ): Promise<ReleaseAssessmentRecord> {
     const record = await this.#prisma.releaseAssessment.upsert({
       where: {
-        runId_controlVersion_attempt: {
+        runId_controlVersion_attempt_source: {
           runId: scope.runId,
           controlVersion: scope.controlVersion,
           attempt: scope.attempt,
+          source: "MANUAL",
         },
       },
       update: {
@@ -258,6 +259,7 @@ export class PrismaReleaseControlRepository implements ReleaseControlRepository 
         runId: scope.runId,
         controlVersion: scope.controlVersion,
         attempt: scope.attempt,
+        source: "MANUAL",
         snapshotSha256: data.snapshotSha256,
         status: data.status,
         acceptanceTaskId: data.acceptanceTaskId,
@@ -279,6 +281,7 @@ function toRecord(record: {
   runId: string;
   controlVersion: number;
   attempt: number;
+  source: "WORKER" | "MANUAL";
   snapshotSha256: string;
   status: "READY" | "BLOCKED";
   acceptanceTaskId: string | null;
@@ -296,6 +299,7 @@ function toRecord(record: {
     runId: record.runId,
     controlVersion: record.controlVersion,
     attempt: record.attempt,
+    source: record.source,
     snapshotSha256: record.snapshotSha256,
     status: record.status,
     acceptanceTaskId: record.acceptanceTaskId,

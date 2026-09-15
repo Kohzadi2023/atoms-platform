@@ -10,6 +10,18 @@ export type ReleaseAssessmentStatus = z.infer<
 >;
 
 /**
+ * Which caller produced an assessment: the worker's automatic post-validation
+ * step, or an on-demand control-api trigger. Kept as part of the natural key
+ * alongside runId/controlVersion/attempt, since a manual trigger and the
+ * worker's own assessment can otherwise target the same attempt (attempt 1,
+ * the common case) and silently overwrite each other.
+ */
+export const ReleaseAssessmentSourceSchema = z.enum(["WORKER", "MANUAL"]);
+export type ReleaseAssessmentSource = z.infer<
+  typeof ReleaseAssessmentSourceSchema
+>;
+
+/**
  * The route never accepts evidence, criteria, or an attempt number in the
  * request body. Triggering an assessment always re-gathers evidence from
  * trusted, durable records server-side (see the orchestrator-worker's
@@ -29,6 +41,7 @@ export const ReleaseAssessmentResponseSchema = z
     runId: z.string().uuid(),
     controlVersion: z.number().int().nonnegative(),
     attempt: z.number().int().positive(),
+    source: ReleaseAssessmentSourceSchema,
     snapshotSha256: z.string().regex(/^[a-f0-9]{64}$/),
     status: ReleaseAssessmentStatusSchema,
     mode: z.literal("OBSERVE_ONLY"),

@@ -125,3 +125,153 @@ export const ContentPackageSchema = z
     });
   });
 export type ContentPackage = z.infer<typeof ContentPackageSchema>;
+
+export const CustomerSuccessPackageVersionSchema = z.literal("v1");
+export type CustomerSuccessPackageVersion = z.infer<
+  typeof CustomerSuccessPackageVersionSchema
+>;
+
+export const OnboardingMilestoneStatusSchema = z.enum([
+  "NOT_STARTED",
+  "IN_PROGRESS",
+  "COMPLETED",
+  "BLOCKED",
+]);
+export type OnboardingMilestoneStatus = z.infer<
+  typeof OnboardingMilestoneStatusSchema
+>;
+
+export const OnboardingMilestoneSchema = z
+  .object({
+    id: z.string().trim().min(1).max(80),
+    name: ShortTextSchema,
+    description: LongTextSchema,
+    owner: z.enum(["CUSTOMER", "CUSTOMER_SUCCESS", "SHARED"]),
+    status: OnboardingMilestoneStatusSchema,
+    targetDate: z.string().date().nullable(),
+  })
+  .strict();
+export type OnboardingMilestone = z.infer<typeof OnboardingMilestoneSchema>;
+
+export const ActivationEvidenceStatusSchema = z.enum([
+  "EVIDENCED",
+  "ASSUMPTION",
+  "RESEARCH_REQUIRED",
+]);
+export type ActivationEvidenceStatus = z.infer<
+  typeof ActivationEvidenceStatusSchema
+>;
+
+export const ActivationMilestoneSchema = z
+  .object({
+    id: z.string().trim().min(1).max(80),
+    milestoneName: ShortTextSchema,
+    definitionOfFirstValue: LongTextSchema,
+    achieved: z.boolean(),
+    achievedAt: z.string().datetime({ offset: true }).nullable(),
+    evidenceStatus: ActivationEvidenceStatusSchema,
+  })
+  .strict();
+export type ActivationMilestone = z.infer<typeof ActivationMilestoneSchema>;
+
+export const HealthSignalSeveritySchema = z.enum([
+  "HEALTHY",
+  "AT_RISK",
+  "CRITICAL",
+]);
+export type HealthSignalSeverity = z.infer<typeof HealthSignalSeveritySchema>;
+
+export const HealthSignalSchema = z
+  .object({
+    id: z.string().trim().min(1).max(80),
+    signal: ShortTextSchema,
+    severity: HealthSignalSeveritySchema,
+    observedEvidence: LongTextSchema,
+    recommendation: ShortTextSchema,
+  })
+  .strict();
+export type HealthSignal = z.infer<typeof HealthSignalSchema>;
+
+export const ChurnRiskLevelSchema = z.enum(["LOW", "MEDIUM", "HIGH"]);
+export type ChurnRiskLevel = z.infer<typeof ChurnRiskLevelSchema>;
+
+export const ChurnRiskAssessmentSchema = z
+  .object({
+    riskLevel: ChurnRiskLevelSchema,
+    primaryDrivers: z.array(ShortTextSchema).max(20),
+    mitigationPlan: z.array(ShortTextSchema).max(20),
+  })
+  .strict();
+export type ChurnRiskAssessment = z.infer<typeof ChurnRiskAssessmentSchema>;
+
+export const RetentionProposalTypeSchema = z.enum([
+  "RENEWAL",
+  "EXPANSION",
+  "WIN_BACK",
+]);
+export type RetentionProposalType = z.infer<
+  typeof RetentionProposalTypeSchema
+>;
+
+export const RetentionApprovalReasonSchema = z.enum([
+  "DISCOUNT",
+  "CONTRACT_CHANGE",
+  "BILLING_CHANGE",
+  "EXTERNAL_COMMUNICATION",
+  "ACCOUNT_CHANGE",
+]);
+export type RetentionApprovalReason = z.infer<
+  typeof RetentionApprovalReasonSchema
+>;
+
+export const RetentionProposalSchema = z
+  .object({
+    id: z.string().trim().min(1).max(80),
+    type: RetentionProposalTypeSchema,
+    rationale: LongTextSchema,
+    proposedAction: ShortTextSchema,
+    // Structurally forbids an unapproved proposal: the agent can never emit
+    // a retention action that claims to skip human approval.
+    requiresApproval: z.literal(true),
+    approvalReason: RetentionApprovalReasonSchema,
+  })
+  .strict();
+export type RetentionProposal = z.infer<typeof RetentionProposalSchema>;
+
+export const CustomerSuccessPackageSchema = z
+  .object({
+    version: CustomerSuccessPackageVersionSchema,
+    onboardingMilestones: z.array(OnboardingMilestoneSchema).min(1).max(100),
+    activationMilestones: z.array(ActivationMilestoneSchema).min(1).max(50),
+    healthSignals: z.array(HealthSignalSchema).max(100),
+    churnRisk: ChurnRiskAssessmentSchema,
+    retentionProposals: z.array(RetentionProposalSchema).max(50),
+  })
+  .strict()
+  .superRefine((value, context) => {
+    const seenMilestoneIds = new Set<string>();
+    value.onboardingMilestones.forEach((item, index) => {
+      if (seenMilestoneIds.has(item.id)) {
+        context.addIssue({
+          code: "custom",
+          path: ["onboardingMilestones", index, "id"],
+          message: "onboarding milestone ids must be unique",
+        });
+      }
+      seenMilestoneIds.add(item.id);
+    });
+    const seenSignalIds = new Set<string>();
+    value.healthSignals.forEach((item, index) => {
+      if (seenSignalIds.has(item.id)) {
+        context.addIssue({
+          code: "custom",
+          path: ["healthSignals", index, "id"],
+          message: "health signal ids must be unique",
+        });
+      }
+      seenSignalIds.add(item.id);
+    });
+  });
+export type CustomerSuccessPackage = z.infer<
+  typeof CustomerSuccessPackageSchema
+>;

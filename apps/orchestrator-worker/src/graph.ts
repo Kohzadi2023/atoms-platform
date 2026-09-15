@@ -79,6 +79,12 @@ const taskDefinitions = {
     ordinal: 8,
     description: "Generate growth copy variants and evidence requirements",
   },
+  // Registered contract only: no node/edge references this agent yet, since
+  // its real trigger (a customer conversion) is not the run graph.
+  CustomerSuccess: {
+    ordinal: 9,
+    description: "Produce onboarding plan, activation milestones, health review, and retention proposals",
+  },
 } as const;
 
 export function buildRunGraph(options: BuildRunGraphOptions) {

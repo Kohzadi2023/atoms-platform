@@ -121,6 +121,18 @@ export const agentManifests: AgentManifestMap = {
     maxOutputTokens: 8_000,
     outputSchema: AgentOutputSchemas.Adrian,
   },
+  CustomerSuccess: {
+    name: "CustomerSuccess",
+    version: "1.0.0",
+    objective:
+      "Own onboarding, first-value milestones, product usage health, churn risk, and renewal/expansion proposals for converted accounts.",
+    instructions: `${sharedRules} Produce an onboarding plan with owned milestones, identify the first-value activation milestone and whether it has been achieved, assess product usage health and churn risk with named evidence, and propose renewal or expansion actions. Never send an external customer communication, apply a discount, change a contract or billing term, or modify an account yourself -- every retention proposal must be marked requiresApproval and must name the approvalReason category. Do not fabricate usage metrics, health scores, or customer commitments that are not supported by the supplied context.`,
+    schemaHint:
+      '{"summary":string,"customerSuccessPackage":{"version":"v1","onboardingMilestones":[{"id":string,"name":string,"description":string,"owner":"CUSTOMER|CUSTOMER_SUCCESS|SHARED","status":"NOT_STARTED|IN_PROGRESS|COMPLETED|BLOCKED","targetDate":string|null}],"activationMilestones":[{"id":string,"milestoneName":string,"definitionOfFirstValue":string,"achieved":boolean,"achievedAt":string|null,"evidenceStatus":"EVIDENCED|ASSUMPTION|RESEARCH_REQUIRED"}],"healthSignals":[{"id":string,"signal":string,"severity":"HEALTHY|AT_RISK|CRITICAL","observedEvidence":string,"recommendation":string}],"churnRisk":{"riskLevel":"LOW|MEDIUM|HIGH","primaryDrivers":string[],"mitigationPlan":string[]},"retentionProposals":[{"id":string,"type":"RENEWAL|EXPANSION|WIN_BACK","rationale":string,"proposedAction":string,"requiresApproval":true,"approvalReason":"DISCOUNT|CONTRACT_CHANGE|BILLING_CHANGE|EXTERNAL_COMMUNICATION|ACCOUNT_CHANGE"}]}}',
+    policy: "balanced",
+    maxOutputTokens: 8_000,
+    outputSchema: AgentOutputSchemas.CustomerSuccess,
+  },
 };
 
 export function getAgentManifest<Name extends ActiveAgentName>(

@@ -532,6 +532,37 @@ function outputs(options: {
         claimsRequiringEvidence: [],
       },
     },
+    // Registered contract only: CustomerSuccess has no graph node yet, so
+    // this fixture is never actually read by the scripted runtime.
+    CustomerSuccess: {
+      summary: "Onboarding and retention plan for the converted account.",
+      customerSuccessPackage: {
+        version: "v1",
+        onboardingMilestones: [
+          {
+            id: "ms-kickoff",
+            name: "Kickoff call",
+            description: "Introduce the account team and confirm success criteria.",
+            owner: "CUSTOMER_SUCCESS",
+            status: "NOT_STARTED",
+            targetDate: null,
+          },
+        ],
+        activationMilestones: [
+          {
+            id: "am-first-value",
+            milestoneName: "First workspace deployed",
+            definitionOfFirstValue: "Customer deploys their first generated project.",
+            achieved: false,
+            achievedAt: null,
+            evidenceStatus: "ASSUMPTION",
+          },
+        ],
+        healthSignals: [],
+        churnRisk: { riskLevel: "LOW", primaryDrivers: [], mitigationPlan: [] },
+        retentionProposals: [],
+      },
+    },
   };
 }
 

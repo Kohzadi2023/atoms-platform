@@ -41,6 +41,7 @@ export const RunAgentNameSchema = z.enum([
   "David",
   "Sarah",
   "Adrian",
+  "CustomerSuccess",
 ]);
 
 export type RunAgentName = z.infer<typeof RunAgentNameSchema>;
@@ -54,6 +55,7 @@ export const ArtifactTypeSchema = z.enum([
   "david-output",
   "sarah-output",
   "adrian-output",
+  "customersuccess-output",
   "seo-package",
   "content-package",
 ]);

@@ -8,6 +8,7 @@ import {
   ArtifactCreatedEventPayloadV1Schema,
   AttachmentScanJobSchema,
   ContentPackageSchema,
+  CustomerSuccessPackageSchema,
   CreateAttachmentUploadIntentInputSchema,
   CreateProjectInputSchema,
   CreateRunHeadersSchema,
@@ -573,6 +574,105 @@ test("CONTENT_PACKAGE rejects duplicate CTA variant IDs", () => {
   );
 });
 
+test("CUSTOMER_SUCCESS_PACKAGE v1 accepts onboarding, activation, health, and retention data", () => {
+  const parsed = CustomerSuccessPackageSchema.parse({
+    version: "v1",
+    onboardingMilestones: [
+      {
+        id: "ms-kickoff",
+        name: "Kickoff call",
+        description: "Introduce the account team and confirm success criteria.",
+        owner: "CUSTOMER_SUCCESS",
+        status: "COMPLETED",
+        targetDate: "2026-09-01",
+      },
+    ],
+    activationMilestones: [
+      {
+        id: "am-first-value",
+        milestoneName: "First workspace deployed",
+        definitionOfFirstValue: "Customer deploys their first generated project.",
+        achieved: true,
+        achievedAt: "2026-09-05T12:00:00.000Z",
+        evidenceStatus: "EVIDENCED",
+      },
+    ],
+    healthSignals: [
+      {
+        id: "hs-usage",
+        signal: "Weekly active usage",
+        severity: "HEALTHY",
+        observedEvidence: "Customer has logged in and run a project every week since onboarding.",
+        recommendation: "Continue standard check-in cadence.",
+      },
+    ],
+    churnRisk: {
+      riskLevel: "LOW",
+      primaryDrivers: [],
+      mitigationPlan: [],
+    },
+    retentionProposals: [
+      {
+        id: "rp-expansion",
+        type: "EXPANSION",
+        rationale: "Usage has grown beyond the current plan's included credits.",
+        proposedAction: "Offer an upgrade to the next plan tier.",
+        requiresApproval: true,
+        approvalReason: "BILLING_CHANGE",
+      },
+    ],
+  });
+
+  assert.equal(parsed.churnRisk.riskLevel, "LOW");
+  assert.equal(parsed.retentionProposals[0]?.requiresApproval, true);
+});
+
+test("CUSTOMER_SUCCESS_PACKAGE rejects duplicate health signal IDs", () => {
+  assert.throws(() =>
+    CustomerSuccessPackageSchema.parse({
+      version: "v1",
+      onboardingMilestones: [
+        {
+          id: "ms-kickoff",
+          name: "Kickoff call",
+          description: "Introduce the account team.",
+          owner: "CUSTOMER_SUCCESS",
+          status: "COMPLETED",
+          targetDate: null,
+        },
+      ],
+      activationMilestones: [
+        {
+          id: "am-first-value",
+          milestoneName: "First workspace deployed",
+          definitionOfFirstValue: "Customer deploys their first project.",
+          achieved: false,
+          achievedAt: null,
+          evidenceStatus: "ASSUMPTION",
+        },
+      ],
+      healthSignals: [
+        {
+          id: "hs-usage",
+          signal: "Weekly active usage",
+          severity: "HEALTHY",
+          observedEvidence: "Regular logins observed.",
+          recommendation: "Maintain cadence.",
+        },
+        {
+          id: "hs-usage",
+          signal: "Support ticket volume",
+          severity: "AT_RISK",
+          observedEvidence: "Ticket volume increased threefold.",
+          recommendation: "Schedule a health review.",
+        },
+      ],
+      churnRisk: { riskLevel: "MEDIUM", primaryDrivers: [], mitigationPlan: [] },
+      retentionProposals: [],
+    }),
+  );
+});
+
 test("artifact.created payload requires typed v1 event fields", () => {
   const payload = ArtifactCreatedEventPayloadV1Schema.parse({
     version: "v1",
@@ -589,6 +689,14 @@ test("artifact.created payload requires typed v1 event fields", () => {
       artifactType: "unknown-artifact",
     }),
   );
+
+  const customerSuccessPayload = ArtifactCreatedEventPayloadV1Schema.parse({
+    version: "v1",
+    taskId: "00000000-0000-4000-8000-000000000125",
+    agent: "CustomerSuccess",
+    artifactType: "customersuccess-output",
+  });
+  assert.equal(customerSuccessPayload.agent, "CustomerSuccess");
 });
 
 test("validateRunEventPayload dispatches by event type", () => {

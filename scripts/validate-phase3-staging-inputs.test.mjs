@@ -15,7 +15,8 @@ function runValidator(overrides = {}) {
     env: {
       PHASE3_RUN_LIVE_PROVIDER: "false",
       PHASE3_STAGING_CHANGE_TICKET: "issue-14",
-      PHASE3_STAGING_MEASURED_COST_CAD: "0.25",
+      PHASE3_STAGING_APPROVED_BUDGET_CAD: "4",
+      GITHUB_RUN_ATTEMPT: "1",
       PHASE3_WORKFLOW_CONFIRMATION: "RUN_PHASE3_STAGING",
       ...overrides,
     },
@@ -62,4 +63,21 @@ test("live validation rejects a near-match solo-operator acknowledgement", () =>
 
   assert.notEqual(result.status, 0);
   assert.match(result.stderr, /exact solo-operator confirmation/u);
+});
+
+test("live budget rejects missing, zero, over-cap and malformed inputs without substituting measured cost", () => {
+  const live = {
+    PHASE3_RUN_LIVE_PROVIDER: "true",
+    PHASE3_SOLO_OPERATOR_CONFIRMATION: SOLO_OPERATOR_CONFIRMATION,
+    PHASE3_STAGING_DESTRUCTIVE_CONFIRMATION: "PROVISION_MIGRATE_AND_DESTROY_SUPABASE_STAGING_DATABASE",
+  };
+  for (const amount of [undefined, "", "0", "-1", "4.000001", "1e0", "NaN", "0.0000001"]) {
+    assert.notEqual(runValidator({ ...live, PHASE3_STAGING_APPROVED_BUDGET_CAD: amount }).status, 0);
+  }
+  assert.equal(runValidator({ ...live, PHASE3_STAGING_APPROVED_BUDGET_CAD: "4.000000" }).status, 0);
+  assert.notEqual(runValidator({ ...live, GITHUB_RUN_ATTEMPT: "2" }).status, 0);
+  assert.notEqual(runValidator({ ...live, GITHUB_RUN_ATTEMPT: undefined }).status, 0);
+  assert.equal(runValidator({ GITHUB_RUN_ATTEMPT: "2" }).status, 0);
+  assert.notEqual(runValidator({ ...live, PHASE3_STAGING_MEASURED_COST_CAD: "4" }).status, 0);
+  assert.equal(runValidator({ PHASE3_STAGING_APPROVED_BUDGET_CAD: undefined }).status, 0);
 });

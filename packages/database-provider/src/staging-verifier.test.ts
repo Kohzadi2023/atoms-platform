@@ -140,19 +140,21 @@ test("provider staging scenario emits complete redacted evidence and restores in
     migrationRunner: new StagingMigrationRunner(),
     fixtureFiles,
     changeTicket: "CHG-3001",
-    measuredVariableCostCadMicros: 900_000,
+    approvedBudgetCadMicros: 900_000,
     scenarioId: SCENARIO_ID,
     projectId: PROJECT_ID,
     now: () => FIXED_NOW,
   });
 
-  assert.equal(evidence.result, "PASSED");
+  assert.equal(evidence.result, "AWAITING_COST");
+  assert.equal(evidence.measuredVariableCostCadMicros, null);
+  assert.equal(evidence.costMeasurement, null);
   assert.equal(evidence.createdResources, 1);
   assert.equal(evidence.deletedResources, 1);
   assert.equal(evidence.managedResourcesBefore, 1);
   assert.equal(evidence.managedResourcesAfter, 1);
   assert.equal(provider.destroyCalls, 1);
-  assert.ok(evidence.gates.every((gate) => gate.status === "PASSED"));
+  assert.ok(evidence.gates.every((gate) => gate.status === (gate.name === "variable_cost" ? "PENDING" : "PASSED")));
   assert.ok(!JSON.stringify(evidence).includes(CONNECTION_URL));
   assert.ok(!JSON.stringify(evidence).includes("sensitive"));
 });
@@ -166,7 +168,7 @@ test("provider staging scenario cleans up after migration failure", async () => 
     migrationRunner: new StagingMigrationRunner("migrate"),
     fixtureFiles,
     changeTicket: "CHG-3002",
-    measuredVariableCostCadMicros: 900_000,
+    approvedBudgetCadMicros: 900_000,
     scenarioId: SCENARIO_ID,
     projectId: PROJECT_ID,
     now: () => FIXED_NOW,
@@ -193,7 +195,7 @@ test("provider staging scenario never deletes a resource that predated the run",
     migrationRunner: new StagingMigrationRunner(),
     fixtureFiles,
     changeTicket: "CHG-3003",
-    measuredVariableCostCadMicros: 900_000,
+    approvedBudgetCadMicros: 900_000,
     scenarioId: SCENARIO_ID,
     projectId: PROJECT_ID,
     now: () => FIXED_NOW,
@@ -215,7 +217,7 @@ test("provider staging scenario rejects an over-budget run before provider acces
     migrationRunner: new StagingMigrationRunner(),
     fixtureFiles,
     changeTicket: "CHG-3004",
-    measuredVariableCostCadMicros: 4_000_001,
+    approvedBudgetCadMicros: 4_000_001,
     scenarioId: SCENARIO_ID,
     projectId: PROJECT_ID,
     now: () => FIXED_NOW,
@@ -236,7 +238,7 @@ test("provider staging scenario records approved custom cleanup and falls back s
     migrationRunner: new StagingMigrationRunner(),
     fixtureFiles,
     changeTicket: "CHG-3005",
-    measuredVariableCostCadMicros: 900_000,
+    approvedBudgetCadMicros: 900_000,
     scenarioId: SCENARIO_ID,
     projectId: PROJECT_ID,
     now: () => FIXED_NOW,
@@ -245,7 +247,7 @@ test("provider staging scenario records approved custom cleanup and falls back s
       return { strategy: "approval_gated_orphan_reconciliation" };
     },
   });
-  assert.equal(approved.result, "PASSED");
+  assert.equal(approved.result, "AWAITING_COST");
   assert.ok(
     JSON.stringify(
       approved.gates.find((gate) => gate.name === "provider_cleanup")?.details,
@@ -260,7 +262,7 @@ test("provider staging scenario records approved custom cleanup and falls back s
     migrationRunner: new StagingMigrationRunner(),
     fixtureFiles,
     changeTicket: "CHG-3006",
-    measuredVariableCostCadMicros: 900_000,
+    approvedBudgetCadMicros: 900_000,
     scenarioId: SCENARIO_ID,
     projectId: PROJECT_ID,
     now: () => FIXED_NOW,

@@ -1,0 +1,84 @@
+name: Phase 3 final cost evidence
+
+on:
+  workflow_dispatch:
+    inputs:
+      source_run_id:
+        description: Completed Phase 3 staging lifecycle run ID
+        required: true
+        type: string
+      source_run_attempt:
+        description: Exact lifecycle attempt (must still be the latest attempt)
+        required: true
+        type: string
+      change_ticket:
+        description: Same approved change ticket as the source lifecycle
+        required: true
+        type: string
+      measured_variable_cost_cad:
+        description: Actual variable cost for this completed run in CAD, not the approved budget
+        required: true
+        type: string
+      measurement_source_sha256:
+        description: SHA-256 of the retained private cost record for this exact run; do not upload billing details
+        required: true
+        type: string
+      cost_confirmation:
+        description: Type I_ATTEST_ACTUAL_PHASE3_COST_AFTER_CLEANUP
+        required: true
+        type: string
+
+permissions:
+  actions: read
+  contents: read
+
+concurrency:
+  group: phase3-cost-${{ inputs.source_run_id }}-${{ inputs.source_run_attempt }}
+  cancel-in-progress: false
+
+jobs:
+  finalize-cost:
+    if: github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    environment:
+      name: phase3-staging
+    env:
+      GITHUB_TOKEN: ${{ github.token }}
+      PHASE3_SOURCE_RUN_ID: ${{ inputs.source_run_id }}
+      PHASE3_SOURCE_RUN_ATTEMPT: ${{ inputs.source_run_attempt }}
+      PHASE3_STAGING_CHANGE_TICKET: ${{ inputs.change_ticket }}
+      PHASE3_STAGING_MEASURED_COST_CAD: ${{ inputs.measured_variable_cost_cad }}
+      PHASE3_MEASUREMENT_SOURCE_SHA256: ${{ inputs.measurement_source_sha256 }}
+      PHASE3_COST_CONFIRMATION: ${{ inputs.cost_confirmation }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 11.7.0
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm --filter @atoms/contracts build
+      - name: Verify exact source lifecycle and attempt
+        run: node scripts/finalize-phase3-cost.mjs --verify-source
+      - uses: actions/download-artifact@v4
+        with:
+          github-token: ${{ github.token }}
+          repository: ${{ github.repository }}
+          run-id: ${{ inputs.source_run_id }}
+          name: phase3-provider-evidence-${{ inputs.source_run_attempt }}
+          path: artifacts/phase3-source
+      - name: Record measured cost and require final evidence
+        run: node scripts/finalize-phase3-cost.mjs
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: phase3-provider-final-evidence-${{ inputs.source_run_id }}-${{ inputs.source_run_attempt }}
+          path: artifacts/phase3-provider-final-evidence.json
+          if-no-files-found: error
+          retention-days: 30

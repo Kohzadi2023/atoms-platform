@@ -62,7 +62,8 @@ an explicit staging change ticket and cost approval.
 2. Type all three exact confirmations: `RUN_PHASE3_STAGING`,
    `PROVISION_MIGRATE_AND_DESTROY_SUPABASE_STAGING_DATABASE`, and
    `I_ACCEPT_SOLO_PHASE3_PROVIDER_EXIT_WITHOUT_REVIEWER`.
-3. After the solo-operator, cost, and destructive checks pass, the test creates
+3. Supply `approved_budget_cad` greater than zero and at most 4. After the
+   solo-operator, budget, and destructive checks pass, the test creates
    one platform-pattern resource in the isolated staging organization and
    migrates the locked fixture through Vault and E2B.
 4. Leave normal worker cleanup disabled; the test runs two report-only sweeps.
@@ -75,6 +76,12 @@ an explicit staging change ticket and cost approval.
    provider resource is absent, and unrelated resources remain present.
 9. Revoke both the ephemeral migration lease and persistent staging connection
    reference. The worker's normal cleanup switch remains `false` throughout.
+10. The lifecycle artifact reports `AWAITING_COST`; the source workflow ends
+    with a deliberate `Await cost finalization` failure. Measure the actual
+    cost after cleanup and use the separate, non-provider
+    [cost finalization workflow](phase-3-cost-evidence.md). Do not repeat the
+    billable lifecycle to record cost. Only its validated final artifact is
+    the provider exit result.
 
 If the approval-gated cleanup path fails, the harness makes one emergency
 teardown attempt for the exact resource it proved was absent from the baseline
@@ -106,7 +113,8 @@ Record exact values rather than a generic pass statement:
 | Cross-organization isolation | pass/fail |
 | Live Supabase/E2B smoke | pass/fail/not run |
 | Provider resources created/deleted | exact count |
-| Maximum successful-build variable cost | measured CAD amount |
+| Approved run budget | positive CAD amount at most 4, before provider access |
+| Actual variable cost | measured CAD amount after cleanup, within the approved budget |
 | Secret scan | pass/fail |
 
 A checkpoint is staging-validated only when every mandatory row has real

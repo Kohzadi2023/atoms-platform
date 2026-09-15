@@ -18,6 +18,11 @@ export const RunEventTypeSchema = z.enum([
   "deployment.status_changed",
   "run.completed",
   "run.failed",
+  // Observe-only QA & Release assessment events (PR #70). Additive: the
+  // evaluator (@atoms/quality) never blocks run completion or deployment.
+  "release.assessment_started",
+  "release.ready",
+  "release.blocked",
   // Compatibility aliases retained for the already-shipped Checkpoint 2 API.
   "task_started",
   "code_generated",
@@ -200,6 +205,45 @@ export type DatabaseStatusChangedEventPayloadV1 = z.infer<
   typeof DatabaseStatusChangedEventPayloadV1Schema
 >;
 
+export const ReleaseAssessmentStartedEventPayloadV1Schema = z
+  .object({
+    version: z.literal("v1"),
+    assessmentId: z.string().uuid(),
+    attempt: z.number().int().positive(),
+  })
+  .strict();
+
+export type ReleaseAssessmentStartedEventPayloadV1 = z.infer<
+  typeof ReleaseAssessmentStartedEventPayloadV1Schema
+>;
+
+export const ReleaseReadyEventPayloadV1Schema = z
+  .object({
+    version: z.literal("v1"),
+    assessmentId: z.string().uuid(),
+    status: z.literal("READY"),
+    checkCount: z.number().int().nonnegative(),
+    criterionCount: z.number().int().nonnegative(),
+  })
+  .strict();
+
+export type ReleaseReadyEventPayloadV1 = z.infer<
+  typeof ReleaseReadyEventPayloadV1Schema
+>;
+
+export const ReleaseBlockedEventPayloadV1Schema = z
+  .object({
+    version: z.literal("v1"),
+    assessmentId: z.string().uuid(),
+    status: z.literal("BLOCKED"),
+    issueCount: z.number().int().positive(),
+  })
+  .strict();
+
+export type ReleaseBlockedEventPayloadV1 = z.infer<
+  typeof ReleaseBlockedEventPayloadV1Schema
+>;
+
 export function validateRunEventPayload(
   eventType: RunEventType,
   payload: unknown,
@@ -224,6 +268,15 @@ export function validateRunEventPayload(
     eventType === "approval_required"
   ) {
     return normalizeApprovalRequiredEventPayload(payload);
+  }
+  if (eventType === "release.assessment_started") {
+    return ReleaseAssessmentStartedEventPayloadV1Schema.parse(payload);
+  }
+  if (eventType === "release.ready") {
+    return ReleaseReadyEventPayloadV1Schema.parse(payload);
+  }
+  if (eventType === "release.blocked") {
+    return ReleaseBlockedEventPayloadV1Schema.parse(payload);
   }
   return JsonValueSchema.parse(payload);
 }

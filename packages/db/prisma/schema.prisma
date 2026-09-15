@@ -199,6 +199,44 @@ enum DeploymentStatus {
   CANCELED
 }
 
+// Additive per the PR #70 QA & Release observe-only wiring: persistence for
+// @atoms/quality's deterministic ReleaseAssessment output. Nothing above this
+// enum is touched; these are new types only.
+enum ReleaseAssessmentStatus {
+  READY
+  BLOCKED
+}
+
+// Which caller produced an assessment. Kept as part of the natural key
+// (alongside runId/controlVersion/attempt) because a control-api on-demand
+// trigger and the worker's own automatic assessment can otherwise target the
+// exact same attempt (attempt 1, the common case for a run's first try),
+// silently overwriting each other and losing provenance.
+enum ReleaseAssessmentSource {
+  WORKER
+  MANUAL
+}
+
+enum ReleaseEvidenceKind {
+  LINT
+  TYPECHECK
+  TEST
+  BUILD
+  REGRESSION
+  E2E
+  ACCESSIBILITY
+  PERFORMANCE
+  SECURITY
+  ACCEPTANCE
+}
+
+enum ReleaseEvidenceStatus {
+  PASSED
+  FAILED
+  SKIPPED
+  ERROR
+}
+
 model Workspace {
   id                     String                  @id @default(uuid()) @db.Uuid
   name                   String                  @db.VarChar(160)
@@ -246,6 +284,7 @@ model Project {
   secretReferences       SecretReference[]
   migrationArtifacts     MigrationArtifact[]
   deployments            Deployment[]
+  releaseAssessments     ReleaseAssessment[]
   createdAt              DateTime                @default(now()) @map("created_at") @db.Timestamptz(3)
   updatedAt              DateTime                @updatedAt @map("updated_at") @db.Timestamptz(3)
   archivedAt             DateTime?               @map("archived_at") @db.Timestamptz(3)
@@ -289,6 +328,7 @@ model AgentRun {
   previewSessions    PreviewSession[]
   migrationArtifacts MigrationArtifact[]
   attachments        AgentRunAttachment[]
+  releaseAssessments ReleaseAssessment[]
   createdAt          DateTime             @default(now()) @map("created_at") @db.Timestamptz(3)
   updatedAt          DateTime             @updatedAt @map("updated_at") @db.Timestamptz(3)
   startedAt          DateTime?            @map("started_at") @db.Timestamptz(3)
@@ -683,4 +723,55 @@ model Deployment {
   @@index([workspaceId, environment, status])
   @@index([projectId, createdAt])
   @@map("deployments")
+}
+
+// Persisted output of @atoms/quality's pure, observe-only evaluateRelease().
+// One row per (run, controlVersion, worker attempt) observation. mode is
+// always OBSERVE_ONLY today: this is a recorded assessment, never a
+// deployment or run-completion gate.
+model ReleaseAssessment {
+  id                String                  @id @default(uuid()) @db.Uuid
+  workspaceId       String                  @map("workspace_id") @db.Uuid
+  projectId         String                  @map("project_id") @db.Uuid
+  runId             String                  @map("run_id") @db.Uuid
+  controlVersion    Int                     @map("control_version")
+  attempt           Int
+  source            ReleaseAssessmentSource @default(WORKER)
+  snapshotSha256    String                  @map("snapshot_sha256") @db.Char(64)
+  status            ReleaseAssessmentStatus
+  acceptanceTaskId  String?                 @map("acceptance_task_id") @db.Uuid
+  policy            Json
+  checks            Json
+  traceToAcceptance Json                    @map("trace_to_acceptance")
+  issues            Json
+  evaluatedAt       DateTime                @map("evaluated_at") @db.Timestamptz(3)
+  project           Project                 @relation(fields: [projectId, workspaceId], references: [id, workspaceId], onDelete: Cascade)
+  run               AgentRun                @relation(fields: [runId], references: [id], onDelete: Cascade)
+  evidence          ReleaseEvidence[]
+  createdAt         DateTime                @default(now()) @map("created_at") @db.Timestamptz(3)
+
+  @@unique([runId, controlVersion, attempt, source])
+  @@index([workspaceId, projectId, createdAt])
+  @@index([runId, createdAt])
+  @@map("release_assessments")
+}
+
+// One row per QualityEvidence record accepted into an assessment. Purely
+// structured references (ids, kind, status, criterion ids) -- never raw
+// command output, logs, or credentials.
+model ReleaseEvidence {
+  id                    String                @id @default(uuid()) @db.Uuid
+  assessmentId          String                @map("assessment_id") @db.Uuid
+  sourceArtifactId      String                @map("source_artifact_id") @db.Uuid
+  kind                  ReleaseEvidenceKind
+  status                ReleaseEvidenceStatus
+  completedAt           DateTime              @map("completed_at") @db.Timestamptz(3)
+  acceptanceTaskId      String?               @map("acceptance_task_id") @db.Uuid
+  acceptanceTaskAttempt Int?                  @map("acceptance_task_attempt")
+  criterionIds          Json                  @map("criterion_ids")
+  assessment            ReleaseAssessment     @relation(fields: [assessmentId], references: [id], onDelete: Cascade)
+  createdAt             DateTime              @default(now()) @map("created_at") @db.Timestamptz(3)
+
+  @@index([assessmentId])
+  @@map("release_evidence")
 }

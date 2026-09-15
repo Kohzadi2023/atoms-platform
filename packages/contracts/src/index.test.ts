@@ -4,6 +4,7 @@ import test from "node:test";
 import {
   ApproveOrphanCleanupInputSchema,
   ApprovalRequiredEventPayloadV1Schema,
+  ReleaseBlockedEventPayloadV1Schema,
   ArtifactCreatedEventPayloadV1Schema,
   AttachmentScanJobSchema,
   ContentPackageSchema,
@@ -600,5 +601,54 @@ test("validateRunEventPayload dispatches by event type", () => {
       scope: "content",
       reason: "Approve content variants before applying copy changes",
     },
+  );
+});
+
+test("release assessment events are additive and dispatch to their own schemas", () => {
+  const started = validateRunEventPayload("release.assessment_started", {
+    version: "v1",
+    assessmentId: "00000000-0000-4000-8000-000000000200",
+    attempt: 1,
+  });
+  assert.deepEqual(started, {
+    version: "v1",
+    assessmentId: "00000000-0000-4000-8000-000000000200",
+    attempt: 1,
+  });
+
+  const ready = validateRunEventPayload("release.ready", {
+    version: "v1",
+    assessmentId: "00000000-0000-4000-8000-000000000201",
+    status: "READY",
+    checkCount: 9,
+    criterionCount: 2,
+  });
+  assert.equal((ready as { status: string }).status, "READY");
+
+  const blocked = validateRunEventPayload("release.blocked", {
+    version: "v1",
+    assessmentId: "00000000-0000-4000-8000-000000000202",
+    status: "BLOCKED",
+    issueCount: 3,
+  });
+  assert.equal((blocked as { status: string }).status, "BLOCKED");
+
+  // A READY payload can never be reported through the blocked schema or
+  // vice versa -- the discriminant is enforced at the type level, not just
+  // by convention.
+  assert.throws(() =>
+    ReleaseBlockedEventPayloadV1Schema.parse({
+      version: "v1",
+      assessmentId: "00000000-0000-4000-8000-000000000203",
+      status: "READY",
+      issueCount: 0,
+    }),
+  );
+
+  // Existing event types (e.g. run.completed) are untouched by this
+  // additive change and still fall through to the generic JSON schema.
+  assert.deepEqual(
+    validateRunEventPayload("run.completed", { completedAt: "2026-09-14T00:00:00.000Z" }),
+    { completedAt: "2026-09-14T00:00:00.000Z" },
   );
 });

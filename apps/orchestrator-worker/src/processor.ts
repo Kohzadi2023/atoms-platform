@@ -11,6 +11,7 @@ import {
 import { buildRunGraph } from "./graph.js";
 import type { RunValidationLease, RunValidator } from "./validation.js";
 import type { RunAttachmentLoader } from "./attachment-loader.js";
+import type { ReleaseAssessor } from "./release-assessor.js";
 
 export interface RunAttempt {
   readonly attempt: number;
@@ -28,6 +29,11 @@ export interface RunProcessorOptions {
   readonly agents: AgentRuntime;
   readonly checkpointer?: BaseCheckpointSaver;
   readonly validator?: RunValidator;
+  /** Optional, observe-only QA & Release step. Runs after the validator and
+   *  before completeRun; never part of the LangGraph state graph and never
+   *  blocking (see ReleaseAssessor). Omitting it is a no-op, matching how
+   *  omitting `validator` already behaves. */
+  readonly assessor?: ReleaseAssessor;
   readonly attachmentLoader?: RunAttachmentLoader;
   readonly now?: () => Date;
 }
@@ -37,12 +43,14 @@ export class RunProcessor {
   readonly #now: () => Date;
   readonly #graph: ReturnType<typeof buildRunGraph>;
   readonly #validator: RunValidator | undefined;
+  readonly #assessor: ReleaseAssessor | undefined;
 
   constructor(options: RunProcessorOptions) {
     this.#repository = options.repository;
     this.#now = options.now ?? (() => new Date());
     this.#graph = buildRunGraph(options);
     this.#validator = options.validator;
+    this.#assessor = options.assessor;
   }
 
   async process(
@@ -93,6 +101,16 @@ export class RunProcessor {
         run: claim.run,
         attempt: attempt.attempt,
       });
+
+      // Observe-only: its result is not consulted here, and a defensive
+      // catch here (on top of ReleaseAssessor's own internal fail-closed
+      // handling) guarantees a QA assessment can never affect run
+      // completion, retries, or failure -- even if a future assessor
+      // implementation does not uphold that contract itself.
+      await this.#assessor?.assess({
+        run: claim.run,
+        attempt: attempt.attempt,
+      }).catch(() => undefined);
 
       const completed = await this.#repository.completeRun(
         claim.run.id,

@@ -1600,6 +1600,7 @@ function agentRole(agent: AgentName): string {
     David: "Creates database migrations and policy report",
     Sarah: "Builds route-aware SEO artifacts",
     Adrian: "Creates evidence-aware growth content",
+    CustomerSuccess: "Owns onboarding, health, and retention plans",
   }[agent];
 }
 

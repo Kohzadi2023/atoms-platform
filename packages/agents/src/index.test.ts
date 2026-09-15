@@ -71,6 +71,7 @@ test("all active agent manifests are versioned and schema-bound", () => {
     "David",
     "Sarah",
     "Adrian",
+    "CustomerSuccess",
   ]);
   for (const manifest of Object.values(agentManifests)) {
     assert.match(manifest.version, /^\d+\.\d+\.\d+$/);

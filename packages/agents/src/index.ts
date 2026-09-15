@@ -13,4 +13,5 @@ export const activeAgents = [
 	"David",
 	"Sarah",
 	"Adrian",
+	"CustomerSuccess",
 ] as const;

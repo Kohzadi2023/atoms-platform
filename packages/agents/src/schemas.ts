@@ -1,5 +1,6 @@
 import {
   ContentPackageSchema,
+  CustomerSuccessPackageSchema,
   ProjectFilePathSchema,
   RunAgentNameSchema,
   SeoPackageSchema,
@@ -412,6 +413,15 @@ export const AdrianOutputSchema = z
 
 export type AdrianOutput = z.infer<typeof AdrianOutputSchema>;
 
+export const CustomerSuccessOutputSchema = z
+  .object({
+    summary: BoundedTextSchema,
+    customerSuccessPackage: CustomerSuccessPackageSchema,
+  })
+  .strict();
+
+export type CustomerSuccessOutput = z.infer<typeof CustomerSuccessOutputSchema>;
+
 export interface AgentOutputByName {
   readonly Sophia: SophiaOutput;
   readonly Mike: MikeOutput;
@@ -421,6 +431,7 @@ export interface AgentOutputByName {
   readonly David: DavidOutput;
   readonly Sarah: SarahOutput;
   readonly Adrian: AdrianOutput;
+  readonly CustomerSuccess: CustomerSuccessOutput;
 }
 
 export const AgentOutputSchemas = {
@@ -432,6 +443,7 @@ export const AgentOutputSchemas = {
   David: DavidOutputSchema,
   Sarah: SarahOutputSchema,
   Adrian: AdrianOutputSchema,
+  CustomerSuccess: CustomerSuccessOutputSchema,
 } as const;
 
 export interface AgentProjectFile {

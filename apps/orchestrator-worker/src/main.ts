@@ -23,6 +23,9 @@ import { PostgresSaver } from "@langchain/langgraph-checkpoint-postgres";
 import { z } from "zod";
 
 import { BullMqOrchestratorWorker } from "./bullmq-worker.js";
+import { CustomerSuccessHandoffReconciler } from "./customer-success-handoff-reconciler.js";
+import { PrismaCustomerSuccessHandoffRepository } from "./customer-success-handoff-repository.js";
+import { BullMqCustomerSuccessHandoffWorker } from "./customer-success-handoff-worker.js";
 import { BullMqDatabaseOperationWorker } from "./database-bullmq-worker.js";
 import { DatabaseOperationProcessor } from "./database-processor.js";
 import { PrismaDatabaseReconciliationRepository } from "./database-reconciliation-repository.js";
@@ -111,6 +114,12 @@ const EnvironmentSchema = z
       .max(8)
       .default(1),
     DATABASE_RECONCILIATION_INTERVAL_MS: z.coerce
+      .number()
+      .int()
+      .min(60_000)
+      .max(24 * 60 * 60_000)
+      .default(300_000),
+    CUSTOMER_SUCCESS_HANDOFF_RECONCILIATION_INTERVAL_MS: z.coerce
       .number()
       .int()
       .min(60_000)
@@ -301,6 +310,31 @@ async function main(): Promise<void> {
     console.error("Attachment scan job failed", { jobId, error }),
   );
 
+  const customerSuccessHandoffRepository = new PrismaCustomerSuccessHandoffRepository(
+    prisma,
+  );
+  const customerSuccessHandoffReconciler = new CustomerSuccessHandoffReconciler({
+    repository: customerSuccessHandoffRepository,
+  });
+  const customerSuccessHandoffWorker = new BullMqCustomerSuccessHandoffWorker({
+    redisUrl: environment.REDIS_URL,
+    reconciler: customerSuccessHandoffReconciler,
+    intervalMs: environment.CUSTOMER_SUCCESS_HANDOFF_RECONCILIATION_INTERVAL_MS,
+    ...(environment.RUN_QUEUE_PREFIX === undefined
+      ? {}
+      : { prefix: environment.RUN_QUEUE_PREFIX }),
+  });
+  await customerSuccessHandoffWorker.start();
+  customerSuccessHandoffWorker.onError((error) =>
+    console.error("Customer success handoff worker error", error),
+  );
+  customerSuccessHandoffWorker.onFailed((jobId, error) =>
+    console.error("Customer success handoff reconciliation job failed", {
+      jobId,
+      error,
+    }),
+  );
+
   const phase3Enabled = environment.SUPABASE_ACCESS_TOKEN !== undefined;
   let databaseWorker: BullMqDatabaseOperationWorker | undefined;
   let databaseReconciliationWorker:
@@ -404,6 +438,7 @@ async function main(): Promise<void> {
     await databaseReconciliationWorker?.close();
     await databaseRecoveryQueue?.close();
     await databaseWorker?.close();
+    await customerSuccessHandoffWorker.close();
     await attachmentWorker.close();
     await worker.close();
     await previewStore.close();

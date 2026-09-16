@@ -4,6 +4,7 @@ export * from "./artifacts.js";
 export * from "./attachments.js";
 export * from "./database.js";
 export * from "./events.js";
+export * from "./gtm.js";
 export * from "./json.js";
 export * from "./release.js";
 export * from "./staging.js";

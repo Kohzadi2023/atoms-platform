@@ -8,6 +8,7 @@ import { BullMqAttachmentScanQueue } from "./attachment-queue.js";
 import { PrismaAttachmentRepository } from "./attachment-repository.js";
 import { BullMqDatabaseOperationQueue } from "./database-operation-queue.js";
 import { PrismaDatabaseControlRepository } from "./database-repository.js";
+import { PrismaGtmControlRepository } from "./gtm-repository.js";
 import { PrismaReleaseControlRepository } from "./release-repository.js";
 import { PrismaControlRepository } from "./repository.js";
 import { BullMqRunQueue } from "./run-queue.js";
@@ -173,6 +174,9 @@ async function main(): Promise<void> {
     },
     releaseOperations: {
       repository: new PrismaReleaseControlRepository(prisma),
+    },
+    gtmOperations: {
+      repository: new PrismaGtmControlRepository(prisma),
     },
   });
 

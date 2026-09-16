@@ -25,6 +25,37 @@ export const GtmScopeResponseSchema = z
   .strict();
 export type GtmScopeResponse = z.infer<typeof GtmScopeResponseSchema>;
 
+export const GtmScopeListResponseSchema = z
+  .object({
+    items: z.array(GtmScopeResponseSchema).max(1_000),
+  })
+  .strict();
+export type GtmScopeListResponse = z.infer<typeof GtmScopeListResponseSchema>;
+
+export const CreateGtmScopeInputSchema = z
+  .object({
+    mode: GtmModeSchema,
+    projectId: z.string().uuid().optional(),
+  })
+  .strict()
+  .superRefine((value, context) => {
+    if (value.mode === "PROJECT_GTM" && value.projectId === undefined) {
+      context.addIssue({
+        code: "custom",
+        path: ["projectId"],
+        message: "PROJECT_GTM requires projectId",
+      });
+    }
+    if (value.mode === "PLATFORM_GTM" && value.projectId !== undefined) {
+      context.addIssue({
+        code: "custom",
+        path: ["projectId"],
+        message: "PLATFORM_GTM must not set projectId",
+      });
+    }
+  });
+export type CreateGtmScopeInput = z.infer<typeof CreateGtmScopeInputSchema>;
+
 export const EvidenceStatusSchema = z.enum([
   "EVIDENCED",
   "ASSUMPTION",
@@ -75,6 +106,31 @@ export const ProspectResponseSchema = z
   })
   .strict();
 export type ProspectResponse = z.infer<typeof ProspectResponseSchema>;
+
+export const ProspectListResponseSchema = z
+  .object({
+    items: z.array(ProspectResponseSchema).max(10_000),
+  })
+  .strict();
+export type ProspectListResponse = z.infer<typeof ProspectListResponseSchema>;
+
+export const CreateProspectInputSchema = z
+  .object({
+    companyName: z.string().trim().min(1).max(160),
+    companyDomain: z.string().trim().min(1).max(255).optional(),
+    contactName: z.string().trim().min(1).max(160),
+    contactEmail: z.string().trim().email().max(320),
+    contactTitle: z.string().trim().min(1).max(160).optional(),
+    industry: z.string().trim().min(1).max(160).optional(),
+    companySizeHeadcount: z.number().int().nonnegative().optional(),
+    useCase: z.string().trim().min(1),
+    fitEvidenceStatus: EvidenceStatusSchema,
+    fitEvidenceNotes: z.string().trim().min(1).optional(),
+    source: ProspectSourceSchema,
+    sourceExternalId: z.string().trim().min(1).max(191).optional(),
+  })
+  .strict();
+export type CreateProspectInput = z.infer<typeof CreateProspectInputSchema>;
 
 export const LeadScoreResponseSchema = z
   .object({
@@ -251,3 +307,31 @@ export const DealResponseSchema = z
   })
   .strict();
 export type DealResponse = z.infer<typeof DealResponseSchema>;
+
+export const DealListResponseSchema = z
+  .object({
+    items: z.array(DealResponseSchema).max(10_000),
+  })
+  .strict();
+export type DealListResponse = z.infer<typeof DealListResponseSchema>;
+
+export const CreateDealInputSchema = z
+  .object({
+    prospectId: z.string().uuid(),
+    name: z.string().trim().min(1).max(160),
+    stage: DealStageSchema.optional(),
+    amountUsdMicros: z
+      .string()
+      .regex(/^\d+$/)
+      .optional(),
+    closeDateExpected: z.string().date().optional(),
+  })
+  .strict();
+export type CreateDealInput = z.infer<typeof CreateDealInputSchema>;
+
+export const UpdateDealStageInputSchema = z
+  .object({
+    stage: DealStageSchema,
+  })
+  .strict();
+export type UpdateDealStageInput = z.infer<typeof UpdateDealStageInputSchema>;

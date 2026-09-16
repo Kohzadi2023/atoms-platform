@@ -2,6 +2,9 @@ import assert from "node:assert/strict";
 import test from "node:test";
 
 import {
+  CreateDealInputSchema,
+  CreateGtmScopeInputSchema,
+  CreateProspectInputSchema,
   CrmSyncRecordResponseSchema,
   DealResponseSchema,
   GtmScopeResponseSchema,
@@ -10,6 +13,7 @@ import {
   OutreachSequenceResponseSchema,
   ProspectResponseSchema,
   SuppressionEntryResponseSchema,
+  UpdateDealStageInputSchema,
 } from "./gtm.js";
 
 const NOW = "2026-09-16T00:00:00.000Z";
@@ -284,5 +288,99 @@ test("DealResponse rejects a non-numeric amountUsdMicros string", () => {
       createdAt: NOW,
       updatedAt: NOW,
     }),
+  );
+});
+
+test("CreateGtmScopeInput accepts a platform scope with no projectId and a project scope with one", () => {
+  const platform = CreateGtmScopeInputSchema.parse({ mode: "PLATFORM_GTM" });
+  assert.equal(platform.projectId, undefined);
+
+  const project = CreateGtmScopeInputSchema.parse({
+    mode: "PROJECT_GTM",
+    projectId: PROJECT_ID,
+  });
+  assert.equal(project.projectId, PROJECT_ID);
+});
+
+test("CreateGtmScopeInput rejects a PLATFORM_GTM scope that sets projectId", () => {
+  assert.throws(() =>
+    CreateGtmScopeInputSchema.parse({ mode: "PLATFORM_GTM", projectId: PROJECT_ID }),
+  );
+});
+
+test("CreateGtmScopeInput rejects a PROJECT_GTM scope with no projectId", () => {
+  assert.throws(() => CreateGtmScopeInputSchema.parse({ mode: "PROJECT_GTM" }));
+});
+
+test("CreateGtmScopeInput rejects an unknown field", () => {
+  assert.throws(() =>
+    CreateGtmScopeInputSchema.parse({ mode: "PLATFORM_GTM", extra: "nope" }),
+  );
+});
+
+test("CreateProspectInput accepts the minimum required fields", () => {
+  const parsed = CreateProspectInputSchema.parse({
+    companyName: "Acme Inc",
+    contactName: "Jordan Rivera",
+    contactEmail: "jordan@acme.test",
+    useCase: "Self-service internal tooling",
+    fitEvidenceStatus: "ASSUMPTION",
+    source: "MANUAL",
+  });
+  assert.equal(parsed.source, "MANUAL");
+});
+
+test("CreateProspectInput rejects an invalid email", () => {
+  assert.throws(() =>
+    CreateProspectInputSchema.parse({
+      companyName: "Acme Inc",
+      contactName: "Jordan Rivera",
+      contactEmail: "not-an-email",
+      useCase: "Self-service internal tooling",
+      fitEvidenceStatus: "ASSUMPTION",
+      source: "MANUAL",
+    }),
+  );
+});
+
+test("CreateProspectInput rejects an unknown field", () => {
+  assert.throws(() =>
+    CreateProspectInputSchema.parse({
+      companyName: "Acme Inc",
+      contactName: "Jordan Rivera",
+      contactEmail: "jordan@acme.test",
+      useCase: "Self-service internal tooling",
+      fitEvidenceStatus: "ASSUMPTION",
+      source: "MANUAL",
+      extra: "nope",
+    }),
+  );
+});
+
+test("CreateDealInput accepts the minimum required fields and an optional amount", () => {
+  const parsed = CreateDealInputSchema.parse({
+    prospectId: PROSPECT_ID,
+    name: "Acme Inc - annual plan",
+    amountUsdMicros: "12000000000",
+  });
+  assert.equal(parsed.stage, undefined);
+  assert.equal(parsed.amountUsdMicros, "12000000000");
+});
+
+test("CreateDealInput rejects a non-numeric amountUsdMicros string", () => {
+  assert.throws(() =>
+    CreateDealInputSchema.parse({
+      prospectId: PROSPECT_ID,
+      name: "Acme Inc - annual plan",
+      amountUsdMicros: "not-a-number",
+    }),
+  );
+});
+
+test("UpdateDealStageInput accepts a valid stage and rejects an unknown field", () => {
+  const parsed = UpdateDealStageInputSchema.parse({ stage: "CLOSED_WON" });
+  assert.equal(parsed.stage, "CLOSED_WON");
+  assert.throws(() =>
+    UpdateDealStageInputSchema.parse({ stage: "CLOSED_WON", extra: "nope" }),
   );
 });

@@ -54,6 +54,7 @@ import {
   registerReleaseRoutes,
   type ReleaseRoutesOptions,
 } from "./release-routes.js";
+import { registerGtmRoutes, type GtmRoutesOptions } from "./gtm-routes.js";
 import {
   type Authenticator,
   InvalidAccessTokenError,
@@ -121,6 +122,7 @@ export interface BuildControlApiOptions {
   readonly databaseOperations?: DatabaseRoutesOptions;
   readonly attachmentOperations?: AttachmentRoutesOptions;
   readonly releaseOperations?: ReleaseRoutesOptions;
+  readonly gtmOperations?: GtmRoutesOptions;
 }
 
 export async function buildControlApi(
@@ -280,6 +282,12 @@ export async function buildControlApi(
   if (options.releaseOperations !== undefined) {
     registerReleaseRoutes(api, {
       ...options.releaseOperations,
+      now,
+    });
+  }
+  if (options.gtmOperations !== undefined) {
+    registerGtmRoutes(api, {
+      ...options.gtmOperations,
       now,
     });
   }

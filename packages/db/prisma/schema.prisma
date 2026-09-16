@@ -23,6 +23,7 @@ enum AgentName {
   David
   Sarah
   Adrian
+  CustomerSuccess
 }
 
 enum AgentRunStatus {

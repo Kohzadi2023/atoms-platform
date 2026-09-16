@@ -809,6 +809,7 @@ model GtmScope {
   suppressions   SuppressionEntry[]
   crmSyncRecords CrmSyncRecord[]
   deals          Deal[]
+  customerSuccessHandoffs CustomerSuccessHandoff[]
   createdAt      DateTime           @default(now()) @map("created_at") @db.Timestamptz(3)
   updatedAt      DateTime           @updatedAt @map("updated_at") @db.Timestamptz(3)
 
@@ -875,6 +876,7 @@ model Prospect {
   leadScores           LeadScore[]
   outreachEvents       OutreachEvent[]
   deals                Deal[]
+  customerSuccessHandoffs CustomerSuccessHandoff[]
   createdAt            DateTime        @default(now()) @map("created_at") @db.Timestamptz(3)
   updatedAt            DateTime        @updatedAt @map("updated_at") @db.Timestamptz(3)
 
@@ -1062,10 +1064,36 @@ model Deal {
   // in the migration (invisible to Prisma's own schema types, same as
   // GtmScope's project_id -- see the comment there).
   crmSyncRecords    CrmSyncRecord[]
+  // At most one row in practice, enforced by a genuine Prisma-native
+  // @unique on CustomerSuccessHandoff.dealId (not a raw-SQL partial index),
+  // so this back-relation is correctly singular.
+  customerSuccessHandoff CustomerSuccessHandoff?
   createdAt         DateTime       @default(now()) @map("created_at") @db.Timestamptz(3)
   updatedAt         DateTime       @updatedAt @map("updated_at") @db.Timestamptz(3)
 
   @@index([gtmScopeId, stage])
   @@index([prospectId])
   @@map("deals")
+}
+
+// Durable, auditable record that a Deal reached CLOSED_WON and is ready for
+// a CustomerSuccess handoff. Detection only: creating this row does not
+// invoke any agent or create any AgentRun -- see apps/orchestrator-worker/
+// src/customer-success-handoff-reconciler.ts. Execution wiring (what
+// actually invokes CustomerSuccess) is a separate, later increment:
+// AgentRun.projectId is required today, and a PLATFORM_GTM deal has no
+// Project to hang a run off of.
+model CustomerSuccessHandoff {
+  id         String   @id @default(uuid()) @db.Uuid
+  gtmScopeId String   @map("gtm_scope_id") @db.Uuid
+  dealId     String   @unique @map("deal_id") @db.Uuid
+  prospectId String   @map("prospect_id") @db.Uuid
+  detectedAt DateTime @map("detected_at") @db.Timestamptz(3)
+  gtmScope   GtmScope @relation(fields: [gtmScopeId], references: [id], onDelete: Cascade)
+  deal       Deal     @relation(fields: [dealId], references: [id], onDelete: Cascade)
+  prospect   Prospect @relation(fields: [prospectId], references: [id], onDelete: Cascade)
+  createdAt  DateTime @default(now()) @map("created_at") @db.Timestamptz(3)
+
+  @@index([gtmScopeId, createdAt])
+  @@map("customer_success_handoffs")
 }

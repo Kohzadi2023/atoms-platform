@@ -125,8 +125,6 @@ enum DatabaseInstanceStatus {
 
 enum IntegrationProvider {
   SUPABASE
-  APOLLO
-  HUBSPOT
 }
 
 enum IntegrationConnectionStatus {
@@ -991,6 +989,14 @@ model SuppressionEntry {
   @@map("suppression_entries")
 }
 
+// A CRM sync target. Deliberately its own enum rather than reusing
+// IntegrationProvider (which tracks project-level provider connections and
+// is unrelated to which providers can receive a CRM sync) -- Apollo is a
+// prospecting/enrichment provider, never a CRM sync target.
+enum CrmSyncProvider {
+  HUBSPOT
+}
+
 enum CrmEntityType {
   CONTACT
   COMPANY
@@ -1007,7 +1013,7 @@ enum CrmSyncStatus {
 model CrmSyncRecord {
   id            String              @id @default(uuid()) @db.Uuid
   gtmScopeId    String              @map("gtm_scope_id") @db.Uuid
-  provider      IntegrationProvider
+  provider      CrmSyncProvider
   entityType    CrmEntityType       @map("entity_type")
   // Set iff entityType IN (CONTACT, COMPANY); raw-SQL CHECK in the migration.
   prospectId    String?             @map("prospect_id") @db.Uuid

@@ -172,7 +172,10 @@ export type SuppressionEntryResponse = z.infer<
   typeof SuppressionEntryResponseSchema
 >;
 
-export const CrmProviderSchema = z.enum(["SUPABASE", "APOLLO", "HUBSPOT"]);
+// Deliberately its own enum, not IntegrationProvider (which tracks
+// project-level provider connections and is unrelated to CRM sync targets)
+// -- Apollo is a prospecting/enrichment provider, never a CRM sync target.
+export const CrmProviderSchema = z.enum(["HUBSPOT"]);
 export type CrmProvider = z.infer<typeof CrmProviderSchema>;
 
 export const CrmEntityTypeSchema = z.enum(["CONTACT", "COMPANY", "DEAL"]);

@@ -1,9 +1,9 @@
 -- Revenue & GTM data foundation for Sophia. Additive only: no existing
--- table, column, or enum value is altered or removed.
-
--- AlterEnum
-ALTER TYPE "IntegrationProvider" ADD VALUE IF NOT EXISTS 'APOLLO';
-ALTER TYPE "IntegrationProvider" ADD VALUE IF NOT EXISTS 'HUBSPOT';
+-- table, column, or enum value is altered or removed. Deliberately does not
+-- touch IntegrationProvider (created in
+-- 20260801190000_phase3_david_database_provisioning) -- CrmSyncRecord gets
+-- its own CrmSyncProvider enum instead, so this migration has no dependency
+-- on that earlier migration's objects.
 
 -- CreateEnum
 CREATE TYPE "GtmMode" AS ENUM ('PLATFORM_GTM', 'PROJECT_GTM');
@@ -34,6 +34,9 @@ CREATE TYPE "SuppressionChannel" AS ENUM ('EMAIL', 'LINKEDIN', 'ALL');
 
 -- CreateEnum
 CREATE TYPE "SuppressionReason" AS ENUM ('UNSUBSCRIBED', 'BOUNCED', 'COMPLAINT', 'MANUAL', 'LEGAL_HOLD');
+
+-- CreateEnum
+CREATE TYPE "CrmSyncProvider" AS ENUM ('HUBSPOT');
 
 -- CreateEnum
 CREATE TYPE "CrmEntityType" AS ENUM ('CONTACT', 'COMPANY', 'DEAL');
@@ -141,7 +144,7 @@ CREATE TABLE "suppression_entries" (
 CREATE TABLE "crm_sync_records" (
     "id" UUID NOT NULL,
     "gtm_scope_id" UUID NOT NULL,
-    "provider" "IntegrationProvider" NOT NULL,
+    "provider" "CrmSyncProvider" NOT NULL,
     "entity_type" "CrmEntityType" NOT NULL,
     "prospect_id" UUID,
     "deal_id" UUID,

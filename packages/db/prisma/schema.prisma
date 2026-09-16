@@ -250,6 +250,7 @@ model Workspace {
   deletedAt              DateTime?               @map("deleted_at") @db.Timestamptz(3)
   integrationConnections IntegrationConnection[]
   secretReferences       SecretReference[]
+  gtmScopes              GtmScope[]
 
   @@map("workspaces")
 }
@@ -286,6 +287,10 @@ model Project {
   migrationArtifacts     MigrationArtifact[]
   deployments            Deployment[]
   releaseAssessments     ReleaseAssessment[]
+  // At most one row in practice (a project-scoped GtmScope is enforced unique
+  // per project by a raw-SQL partial index in the migration, invisible to
+  // Prisma's own schema types, so the relation is still declared as a list).
+  gtmScopes              GtmScope[]
   createdAt              DateTime                @default(now()) @map("created_at") @db.Timestamptz(3)
   updatedAt              DateTime                @updatedAt @map("updated_at") @db.Timestamptz(3)
   archivedAt             DateTime?               @map("archived_at") @db.Timestamptz(3)
@@ -775,4 +780,292 @@ model ReleaseEvidence {
 
   @@index([assessmentId])
   @@map("release_evidence")
+}
+
+// Revenue & GTM data foundation for Sophia (data model + contracts only in
+// this increment -- no control-api routes, no Sophia manifest/schema wiring,
+// no live Apollo/HubSpot calls; see packages/revenue for the adapter
+// interfaces). GtmScope is the single source of truth for the PLATFORM_GTM
+// (sells Atoms itself) vs PROJECT_GTM (sells one customer-generated product)
+// tenant boundary; every other GTM table FKs to gtmScopeId only and never
+// re-derives workspaceId/projectId, the same way ReleaseEvidence FKs to
+// ReleaseAssessment rather than duplicating its scope fields.
+enum GtmMode {
+  PLATFORM_GTM
+  PROJECT_GTM
+}
+
+model GtmScope {
+  id             String             @id @default(uuid()) @db.Uuid
+  workspaceId    String             @map("workspace_id") @db.Uuid
+  // Required iff mode = PROJECT_GTM; enforced by a raw-SQL CHECK constraint
+  // in the migration (Prisma cannot express a conditionally-required field).
+  projectId      String?            @map("project_id") @db.Uuid
+  mode           GtmMode
+  workspace      Workspace          @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+  project        Project?           @relation(fields: [projectId, workspaceId], references: [id, workspaceId], onDelete: Cascade)
+  prospects      Prospect[]
+  sequences      OutreachSequence[]
+  suppressions   SuppressionEntry[]
+  crmSyncRecords CrmSyncRecord[]
+  deals          Deal[]
+  createdAt      DateTime           @default(now()) @map("created_at") @db.Timestamptz(3)
+  updatedAt      DateTime           @updatedAt @map("updated_at") @db.Timestamptz(3)
+
+  @@index([workspaceId])
+  @@index([projectId])
+  // Per-mode uniqueness (at most one PLATFORM_GTM scope per workspace; at
+  // most one scope per project) is enforced by two partial unique indexes
+  // added via raw SQL in the migration, not @@unique -- see migration.sql.
+  @@map("gtm_scopes")
+}
+
+// Reuses Sophia/CustomerSuccess's existing evidence vocabulary.
+enum EvidenceStatus {
+  EVIDENCED
+  ASSUMPTION
+  RESEARCH_REQUIRED
+}
+
+enum ProspectSource {
+  APOLLO
+  MANUAL
+}
+
+enum ProspectStatus {
+  DISCOVERED
+  ENRICHED
+  QUALIFIED
+  OUTREACH_READY
+  IN_SEQUENCE
+  CUSTOMER
+  DISQUALIFIED
+  SUPPRESSED
+}
+
+enum LeadScoreBand {
+  COLD
+  WARM
+  HOT
+}
+
+model Prospect {
+  id                   String          @id @default(uuid()) @db.Uuid
+  gtmScopeId           String          @map("gtm_scope_id") @db.Uuid
+  companyName          String          @map("company_name") @db.VarChar(160)
+  companyDomain        String?         @map("company_domain") @db.VarChar(255)
+  contactName          String          @map("contact_name") @db.VarChar(160)
+  contactEmail         String          @map("contact_email") @db.VarChar(320)
+  // Lowercased/trimmed contactEmail; the suppression-list join key.
+  normalizedEmail      String          @map("normalized_email") @db.VarChar(320)
+  contactTitle         String?         @map("contact_title") @db.VarChar(160)
+  industry             String?         @db.VarChar(160)
+  companySizeHeadcount Int?            @map("company_size_headcount")
+  useCase              String          @map("use_case") @db.Text
+  fitEvidenceStatus    EvidenceStatus  @map("fit_evidence_status")
+  fitEvidenceNotes     String?         @map("fit_evidence_notes") @db.Text
+  source               ProspectSource
+  sourceExternalId     String?         @map("source_external_id") @db.VarChar(191)
+  status               ProspectStatus  @default(DISCOVERED)
+  // Denormalized cache of the latest LeadScore, for cheap listing/sorting;
+  // LeadScore itself remains the source-of-truth history table.
+  currentScore         Int?            @map("current_score")
+  currentScoreBand     LeadScoreBand?  @map("current_score_band")
+  gtmScope             GtmScope        @relation(fields: [gtmScopeId], references: [id], onDelete: Cascade)
+  leadScores           LeadScore[]
+  outreachEvents       OutreachEvent[]
+  deals                Deal[]
+  createdAt            DateTime        @default(now()) @map("created_at") @db.Timestamptz(3)
+  updatedAt            DateTime        @updatedAt @map("updated_at") @db.Timestamptz(3)
+
+  @@unique([gtmScopeId, normalizedEmail])
+  @@unique([gtmScopeId, source, sourceExternalId])
+  @@index([gtmScopeId, status])
+  @@map("prospects")
+}
+
+model LeadScore {
+  id             String        @id @default(uuid()) @db.Uuid
+  prospectId     String        @map("prospect_id") @db.Uuid
+  score          Int
+  band           LeadScoreBand
+  scoringVersion String        @map("scoring_version") @db.VarChar(20)
+  rationale      Json
+  computedAt     DateTime      @map("computed_at") @db.Timestamptz(3)
+  prospect       Prospect      @relation(fields: [prospectId], references: [id], onDelete: Cascade)
+  createdAt      DateTime      @default(now()) @map("created_at") @db.Timestamptz(3)
+
+  @@index([prospectId, computedAt])
+  @@map("lead_scores")
+}
+
+enum OutreachSequenceStatus {
+  DRAFT
+  ACTIVE
+  PAUSED
+  ARCHIVED
+}
+
+enum OutreachChannel {
+  EMAIL
+  LINKEDIN
+  CALL
+}
+
+enum OutreachEventKind {
+  QUEUED
+  SENT
+  OPENED
+  CLICKED
+  REPLIED
+  BOUNCED
+  FAILED
+  SUPPRESSED
+}
+
+model OutreachSequence {
+  id         String                 @id @default(uuid()) @db.Uuid
+  gtmScopeId String                 @map("gtm_scope_id") @db.Uuid
+  name       String                 @db.VarChar(160)
+  status     OutreachSequenceStatus @default(DRAFT)
+  // Ordered [{ordinal, channel, templateRef, waitDays}].
+  steps      Json
+  gtmScope   GtmScope               @relation(fields: [gtmScopeId], references: [id], onDelete: Cascade)
+  events     OutreachEvent[]
+  createdAt  DateTime               @default(now()) @map("created_at") @db.Timestamptz(3)
+  updatedAt  DateTime               @updatedAt @map("updated_at") @db.Timestamptz(3)
+
+  @@unique([gtmScopeId, name])
+  @@index([gtmScopeId, status])
+  @@map("outreach_sequences")
+}
+
+model OutreachEvent {
+  id                String            @id @default(uuid()) @db.Uuid
+  sequenceId        String            @map("sequence_id") @db.Uuid
+  prospectId        String            @map("prospect_id") @db.Uuid
+  stepOrdinal       Int               @map("step_ordinal")
+  channel           OutreachChannel
+  kind              OutreachEventKind
+  providerMessageId String?           @map("provider_message_id") @db.VarChar(191)
+  occurredAt        DateTime          @map("occurred_at") @db.Timestamptz(3)
+  metadata          Json?
+  sequence          OutreachSequence  @relation(fields: [sequenceId], references: [id], onDelete: Cascade)
+  prospect          Prospect          @relation(fields: [prospectId], references: [id], onDelete: Cascade)
+  createdAt         DateTime          @default(now()) @map("created_at") @db.Timestamptz(3)
+
+  // The anti-duplicate-send constraint the roadmap requires: the same
+  // prospect can never be sent the same sequence step twice.
+  @@unique([sequenceId, prospectId, stepOrdinal])
+  @@index([prospectId, kind])
+  @@index([sequenceId, occurredAt])
+  @@map("outreach_events")
+}
+
+enum SuppressionChannel {
+  EMAIL
+  LINKEDIN
+  ALL
+}
+
+enum SuppressionReason {
+  UNSUBSCRIBED
+  BOUNCED
+  COMPLAINT
+  MANUAL
+  LEGAL_HOLD
+}
+
+model SuppressionEntry {
+  id                   String             @id @default(uuid()) @db.Uuid
+  gtmScopeId           String             @map("gtm_scope_id") @db.Uuid
+  channel              SuppressionChannel
+  normalizedIdentifier String             @map("normalized_identifier") @db.VarChar(320)
+  reason               SuppressionReason
+  gtmScope             GtmScope           @relation(fields: [gtmScopeId], references: [id], onDelete: Cascade)
+  createdAt            DateTime           @default(now()) @map("created_at") @db.Timestamptz(3)
+
+  @@unique([gtmScopeId, channel, normalizedIdentifier])
+  @@map("suppression_entries")
+}
+
+// A CRM sync target. Deliberately its own enum rather than reusing
+// IntegrationProvider (which tracks project-level provider connections and
+// is unrelated to which providers can receive a CRM sync) -- Apollo is a
+// prospecting/enrichment provider, never a CRM sync target.
+enum CrmSyncProvider {
+  HUBSPOT
+}
+
+enum CrmEntityType {
+  CONTACT
+  COMPANY
+  DEAL
+}
+
+enum CrmSyncStatus {
+  PENDING
+  SYNCED
+  FAILED
+  CONFLICT
+}
+
+model CrmSyncRecord {
+  id            String              @id @default(uuid()) @db.Uuid
+  gtmScopeId    String              @map("gtm_scope_id") @db.Uuid
+  provider      CrmSyncProvider
+  entityType    CrmEntityType       @map("entity_type")
+  // Set iff entityType IN (CONTACT, COMPANY); raw-SQL CHECK in the migration.
+  prospectId    String?             @map("prospect_id") @db.Uuid
+  // Set iff entityType = DEAL; raw-SQL CHECK in the migration.
+  dealId        String?             @map("deal_id") @db.Uuid
+  externalId    String?             @map("external_id") @db.VarChar(191)
+  status        CrmSyncStatus       @default(PENDING)
+  lastSyncedAt  DateTime?           @map("last_synced_at") @db.Timestamptz(3)
+  lastAttemptAt DateTime?           @map("last_attempt_at") @db.Timestamptz(3)
+  error         Json?
+  gtmScope      GtmScope            @relation(fields: [gtmScopeId], references: [id], onDelete: Cascade)
+  deal          Deal?               @relation(fields: [dealId], references: [id], onDelete: Cascade)
+  createdAt     DateTime            @default(now()) @map("created_at") @db.Timestamptz(3)
+  updatedAt     DateTime            @updatedAt @map("updated_at") @db.Timestamptz(3)
+
+  // Raw-SQL additions in the migration:
+  //   CHECK ((entity_type = 'DEAL' AND deal_id IS NOT NULL AND prospect_id IS NULL)
+  //       OR (entity_type <> 'DEAL' AND prospect_id IS NOT NULL AND deal_id IS NULL))
+  //   Partial unique indexes: (provider, prospect_id) WHERE entity_type <> 'DEAL'
+  //                           (provider, deal_id) WHERE entity_type = 'DEAL'
+  @@index([gtmScopeId, status])
+  @@map("crm_sync_records")
+}
+
+enum DealStage {
+  PROSPECTING
+  QUALIFICATION
+  PROPOSAL
+  NEGOTIATION
+  CLOSED_WON
+  CLOSED_LOST
+}
+
+model Deal {
+  id                String         @id @default(uuid()) @db.Uuid
+  gtmScopeId        String         @map("gtm_scope_id") @db.Uuid
+  prospectId        String         @map("prospect_id") @db.Uuid
+  name              String         @db.VarChar(160)
+  stage             DealStage      @default(PROSPECTING)
+  amountUsdMicros   BigInt?        @map("amount_usd_micros")
+  closeDateExpected DateTime?      @map("close_date_expected") @db.Date
+  closedAt          DateTime?      @map("closed_at") @db.Timestamptz(3)
+  gtmScope          GtmScope       @relation(fields: [gtmScopeId], references: [id], onDelete: Cascade)
+  prospect          Prospect       @relation(fields: [prospectId], references: [id], onDelete: Cascade)
+  // At most one row in practice, enforced by a raw-SQL partial unique index
+  // in the migration (invisible to Prisma's own schema types, same as
+  // GtmScope's project_id -- see the comment there).
+  crmSyncRecords    CrmSyncRecord[]
+  createdAt         DateTime       @default(now()) @map("created_at") @db.Timestamptz(3)
+  updatedAt         DateTime       @updatedAt @map("updated_at") @db.Timestamptz(3)
+
+  @@index([gtmScopeId, stage])
+  @@index([prospectId])
+  @@map("deals")
 }

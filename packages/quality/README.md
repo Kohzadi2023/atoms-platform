@@ -77,13 +77,27 @@ same check. Concretely:
   collector itself -- not this package -- as the security boundary for "did a
   test actually run."
 
-The current worker executes the graph, then validation, then `completeRun` in
-`apps/orchestrator-worker/src/processor.ts`. This package is not wired into that
-sequence. Persistence, authorized API routes, SSE events, retries, human overrides,
-and mandatory deployment gating need separate integration work. The current
-schema uses `AgentName`, UUID IDs, and run status `COMPLETED`; it has no `AgentRole`
-or project-wide revision integer. `qualityEvaluatorManifest` is capability
-metadata, not a registered runtime `AgentManifest`.
+The worker automatically runs this evaluator once per run attempt: `RunProcessor`
+in `apps/orchestrator-worker/src/processor.ts` calls an optional `ReleaseAssessor`
+after validation and before `completeRun`, and
+`apps/orchestrator-worker/src/main.ts` wires in `DeterministicReleaseAssessor`
+(backed by `PrismaReleaseAssessmentRepository`) for every run. The assessment is
+persisted (`ReleaseAssessment.source = WORKER`) and appends
+`release.assessment_started` plus `release.ready`/`release.blocked` events to the
+run's event stream. A second, independently authorized route in
+`apps/control-api` (`POST /v1/projects/:id/release-assessments`,
+`GET /v1/release-assessments/:id`) lets a caller manually re-run the same
+evaluation on demand (`source = MANUAL`); the unique key on
+`(runId, controlVersion, attempt, source)` keeps a manual assessment from ever
+colliding with the worker's own automatic one for the same attempt. In both
+cases the result stays strictly observe-only: `evaluateRelease`'s
+`READY`/`BLOCKED` status never blocks run completion, never blocks the manual
+route from returning normally, and is not wired into any deployment gate.
+Retrying a failed/incomplete assessment and a human override of a `BLOCKED`
+result remain unimplemented. The current schema uses `AgentName`, UUID IDs, and
+run status `COMPLETED`; it has no `AgentRole` or project-wide revision integer.
+`qualityEvaluatorManifest` is capability metadata, not a registered runtime
+`AgentManifest`.
 
 Existing generic command reports do not contain per-criterion acceptance results
 or evidence for every standard policy category. These gaps must remain BLOCKED

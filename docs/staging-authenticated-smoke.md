@@ -20,7 +20,14 @@ registered Web/MSAL sign-in flow using the `access_as_user` delegated scope:
 - the primary identity must be `OWNER` or `ADMIN` in the smoke workspace;
 - the foreign witness must belong to a different workspace and have access to
   one pre-existing project in that workspace;
-- the primary identity must not be a member of the witness workspace.
+- the primary identity must not be a member of the witness workspace;
+- the smoke workspace's plan must already be `PRO` or `MAX`, not the default
+  `FREE`. Sophia, Sarah, and Adrian are entitlement-gated on
+  `Workspace.plan` (see `docs/web-workspace.md`); a `FREE`-plan run skips
+  their nodes entirely, producing no artifact for them, which fails check 6
+  below. This command has no step of its own that changes a workspace's
+  plan -- upgrade it beforehand with the admin-only
+  `PATCH /v1/workspaces/:workspaceId/plan` route.
 
 Store only these values in
 `/etc/atoms/staging/secrets/authenticated-smoke.env`:
@@ -64,7 +71,8 @@ The smoke test fails closed unless every check succeeds:
 5. One live agent run, a deliberately interrupted SSE connection,
    replay with `Last-Event-ID`, and compare-and-swap approvals in `plan` then
    `content` scope.
-6. Durable artifacts from Mike, Emma, Bob, Alex, David, Sarah, and Adrian.
+6. Durable artifacts from Sophia, Mike, Emma, Bob, Alex, David, Sarah, and
+   Adrian.
 7. A ready signed preview on the configured wildcard domain with HSTS,
    `no-store`, `nosniff`, `no-referrer`, and a CSP that permits framing only by
    the exact web origin.

@@ -128,6 +128,7 @@ test("authenticated smoke exercises the complete redacted mock journey", async (
   assert.equal(result.evidence.orchestration.forcedReconnect, true);
   assert.equal(result.evidence.orchestration.resumedWithLastEventId, true);
   assert.deepEqual(result.evidence.orchestration.artifactAgents, [
+    "Sophia",
     "Mike",
     "Emma",
     "Bob",
@@ -399,7 +400,7 @@ function createMockFetch() {
     }
     if (url.pathname === `/v1/runs/${ids.run}/artifacts`) {
       return json({
-        items: ["Mike", "Emma", "Bob", "Alex", "David", "Sarah", "Adrian"].map(
+        items: ["Sophia", "Mike", "Emma", "Bob", "Alex", "David", "Sarah", "Adrian"].map(
           (agent) => ({ payload: { agent } }),
         ),
       });

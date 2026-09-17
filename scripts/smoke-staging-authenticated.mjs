@@ -20,6 +20,7 @@ export const MAX_ALLOWED_COST_CAD = 4;
 
 const repositoryRoot = fileURLToPath(new URL("../", import.meta.url));
 const REQUIRED_AGENTS = [
+  "Sophia",
   "Mike",
   "Emma",
   "Bob",

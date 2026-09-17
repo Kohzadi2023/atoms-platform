@@ -15,8 +15,11 @@ application; it does not introduce a second frontend stack.
    after a bounded server stream closes. A refresh stores only the project/run
    UUIDs, restores current CAS state from the API, and replays events from zero;
    prompts and generated code are never copied into browser storage.
-5. Render all seven agents (Mike through Adrian), scoped plan/content approval,
-   run controls, deterministic validation evidence, and generated-database state.
+5. Render all eight run-graph agents (Sophia through Adrian), scoped
+   plan/content approval, run controls, deterministic validation evidence,
+   and generated-database state. Sophia, Sarah, and Adrian are premium,
+   entitlement-gated capabilities (see below); a skipped agent's task
+   renders with a distinct dash icon rather than staying stuck at queued.
 6. Embed only a URL on the configured signed preview domain in a sandboxed,
    no-referrer iframe.
 7. List the latest immutable project files, open them in Monaco, and save a
@@ -49,6 +52,13 @@ accessible names or live announcements.
   origins. With no configured origin the Fastify API remains browser-closed.
 - Every generated-database event includes its monotonic `operationVersion`, so
   the browser ignores stale reconciliation updates.
+- `Workspace.plan` (`FREE` / `PRO` / `MAX`, default `FREE`) gates the premium
+  agents Sophia, Sarah, and Adrian. A `FREE`-plan run skips each premium
+  agent's node entirely -- no `AgentTask` row, no model call -- and instead
+  records a `SKIPPED` task plus a `task.skipped` event, which the web UI
+  projects as a `skipped` task status. No self-serve UI exists yet to change
+  a workspace's plan; the only path today is the admin-only
+  `PATCH /v1/workspaces/:workspaceId/plan` route.
 
 ## Local start
 

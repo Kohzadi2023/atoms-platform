@@ -99,6 +99,23 @@ test("Phase 4 agents and scoped approvals remain visible after event replay", ()
   assert.equal(state.approvalScope, undefined);
 });
 
+test("a skipped premium agent's task is projected as skipped, not left queued", () => {
+  let state = createWorkspaceProjection();
+  state = reduceRunEvent(
+    state,
+    event(1, "task.skipped", {
+      taskId: "00000000-0000-4000-8000-000000000012",
+      agent: "Sophia",
+      ordinal: 1,
+      description: "Analyze market, ICP, competition, pricing, positioning, and evidence gaps",
+    }),
+  );
+
+  assert.equal(state.tasks.Sophia.status, "skipped");
+  assert.equal(state.tasks.Sophia.ordinal, 1);
+  assert.equal(state.activeAgent, undefined);
+});
+
 test("database projection ignores an older fenced operation event", () => {
   const base = createWorkspaceProjection();
   const newer = reduceRunEvent(

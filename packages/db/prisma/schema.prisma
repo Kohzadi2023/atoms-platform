@@ -51,6 +51,10 @@ enum AgentTaskStatus {
   COMPLETED
   FAILED
   CANCELLED
+  // A premium agent's task, recorded once so the run's task list stays
+  // honest about why an ordinal is missing an execution -- see
+  // apps/orchestrator-worker/src/graph.ts's entitlement gate.
+  SKIPPED
 }
 
 enum SandboxProviderType {

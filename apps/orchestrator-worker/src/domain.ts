@@ -36,7 +36,8 @@ export type WorkerTaskStatus =
   | "WAITING_FOR_APPROVAL"
   | "COMPLETED"
   | "FAILED"
-  | "CANCELLED";
+  | "CANCELLED"
+  | "SKIPPED";
 
 export interface WorkerTaskRecord {
   readonly id: string;
@@ -94,6 +95,7 @@ export interface WorkerRepository {
   claimRun(job: RunJob, now: Date): Promise<RunClaimResult>;
   getWorkspacePlan(workspaceId: string): Promise<WorkspacePlan>;
   prepareTask(input: PrepareTaskInput): Promise<TaskMutationResult>;
+  skipTask(input: PrepareTaskInput): Promise<TaskMutationResult>;
   startTask(
     runId: string,
     expectedControlVersion: number,

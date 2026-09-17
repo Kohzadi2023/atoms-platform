@@ -824,6 +824,7 @@ model GtmScope {
   crmSyncRecords CrmSyncRecord[]
   deals          Deal[]
   customerSuccessHandoffs CustomerSuccessHandoff[]
+  customerAccounts CustomerAccount[]
   createdAt      DateTime           @default(now()) @map("created_at") @db.Timestamptz(3)
   updatedAt      DateTime           @updatedAt @map("updated_at") @db.Timestamptz(3)
 
@@ -891,6 +892,7 @@ model Prospect {
   outreachEvents       OutreachEvent[]
   deals                Deal[]
   customerSuccessHandoffs CustomerSuccessHandoff[]
+  customerAccounts     CustomerAccount[]
   createdAt            DateTime        @default(now()) @map("created_at") @db.Timestamptz(3)
   updatedAt            DateTime        @updatedAt @map("updated_at") @db.Timestamptz(3)
 
@@ -1082,6 +1084,8 @@ model Deal {
   // @unique on CustomerSuccessHandoff.dealId (not a raw-SQL partial index),
   // so this back-relation is correctly singular.
   customerSuccessHandoff CustomerSuccessHandoff?
+  // Same reasoning: CustomerAccount.dealId is a genuine @unique.
+  customerAccount   CustomerAccount?
   createdAt         DateTime       @default(now()) @map("created_at") @db.Timestamptz(3)
   updatedAt         DateTime       @updatedAt @map("updated_at") @db.Timestamptz(3)
 
@@ -1106,8 +1110,202 @@ model CustomerSuccessHandoff {
   gtmScope   GtmScope @relation(fields: [gtmScopeId], references: [id], onDelete: Cascade)
   deal       Deal     @relation(fields: [dealId], references: [id], onDelete: Cascade)
   prospect   Prospect @relation(fields: [prospectId], references: [id], onDelete: Cascade)
+  // At most one row, enforced by CustomerAccount.handoffId's genuine
+  // Prisma-native @unique.
+  customerAccount CustomerAccount?
   createdAt  DateTime @default(now()) @map("created_at") @db.Timestamptz(3)
 
   @@index([gtmScopeId, createdAt])
   @@map("customer_success_handoffs")
+}
+
+// ---------------------------------------------------------------------------
+// Customer Success persistence (data model only -- see
+// apps/orchestrator-worker/src/customer-success-handoff-reconciler.ts for the
+// detection half, and packages/agents/src/manifests.ts's CustomerSuccess
+// manifest for the agent output shape these models mirror). No route or
+// agent-execution wiring exists yet; CustomerSuccess is still not wired into
+// apps/orchestrator-worker/src/graph.ts. These tables exist so a future
+// increment has somewhere durable to persist the agent's
+// CUSTOMER_SUCCESS_PACKAGE output (or a human's manual equivalent) once that
+// wiring lands.
+// ---------------------------------------------------------------------------
+
+enum CustomerAccountStatus {
+  ONBOARDING
+  ACTIVATING
+  ACTIVE
+  AT_RISK
+  RENEWAL_DUE
+  RENEWED
+  CHURNED
+  EXPANDED
+}
+
+// Root of the Customer Success domain, one per converted Deal -- the
+// post-handoff counterpart to GtmScope. dealId/handoffId are both
+// Prisma-native @unique because a Deal converts to a CustomerAccount at
+// most once.
+model CustomerAccount {
+  id         String                @id @default(uuid()) @db.Uuid
+  gtmScopeId String                @map("gtm_scope_id") @db.Uuid
+  dealId     String                @unique @map("deal_id") @db.Uuid
+  prospectId String                @map("prospect_id") @db.Uuid
+  handoffId  String                @unique @map("handoff_id") @db.Uuid
+  status     CustomerAccountStatus @default(ONBOARDING)
+  gtmScope   GtmScope              @relation(fields: [gtmScopeId], references: [id], onDelete: Cascade)
+  deal       Deal                  @relation(fields: [dealId], references: [id], onDelete: Cascade)
+  prospect   Prospect              @relation(fields: [prospectId], references: [id], onDelete: Cascade)
+  handoff    CustomerSuccessHandoff @relation(fields: [handoffId], references: [id], onDelete: Cascade)
+  onboardingMilestones OnboardingMilestone[]
+  activationMilestones ActivationMilestone[]
+  healthSignals        HealthSignal[]
+  churnRiskAssessments ChurnRiskAssessment[]
+  retentionProposals   RetentionProposal[]
+  createdAt  DateTime              @default(now()) @map("created_at") @db.Timestamptz(3)
+  updatedAt  DateTime              @updatedAt @map("updated_at") @db.Timestamptz(3)
+
+  @@index([gtmScopeId, status])
+  @@map("customer_accounts")
+}
+
+enum MilestoneOwner {
+  CUSTOMER
+  CUSTOMER_SUCCESS
+  SHARED
+}
+
+enum OnboardingMilestoneStatus {
+  NOT_STARTED
+  IN_PROGRESS
+  COMPLETED
+  BLOCKED
+}
+
+// Mirrors CustomerSuccessPackageSchema's onboardingMilestones[] shape
+// (packages/contracts/src/events.ts's CUSTOMER_SUCCESS_PACKAGE / the
+// manifest's schemaHint). No separate "OnboardingPlan" wrapper table --
+// the collection of milestones for an account is the plan, matching how
+// Deal has no wrapping "Pipeline" entity.
+model OnboardingMilestone {
+  id                String                    @id @default(uuid()) @db.Uuid
+  customerAccountId String                    @map("customer_account_id") @db.Uuid
+  name              String                    @db.VarChar(160)
+  description       String                    @db.Text
+  owner             MilestoneOwner
+  status            OnboardingMilestoneStatus @default(NOT_STARTED)
+  targetDate        DateTime?                 @map("target_date") @db.Date
+  customerAccount   CustomerAccount           @relation(fields: [customerAccountId], references: [id], onDelete: Cascade)
+  createdAt         DateTime                  @default(now()) @map("created_at") @db.Timestamptz(3)
+  updatedAt         DateTime                  @updatedAt @map("updated_at") @db.Timestamptz(3)
+
+  @@index([customerAccountId, status])
+  @@map("onboarding_milestones")
+}
+
+// Mirrors CustomerSuccessPackageSchema's activationMilestones[] shape.
+// evidenceStatus reuses EvidenceStatus -- see that enum's own comment,
+// which already anticipated this reuse.
+model ActivationMilestone {
+  id                     String         @id @default(uuid()) @db.Uuid
+  customerAccountId      String         @map("customer_account_id") @db.Uuid
+  milestoneName          String         @map("milestone_name") @db.VarChar(160)
+  definitionOfFirstValue String         @map("definition_of_first_value") @db.Text
+  achieved               Boolean        @default(false)
+  achievedAt             DateTime?      @map("achieved_at") @db.Timestamptz(3)
+  evidenceStatus         EvidenceStatus @map("evidence_status")
+  customerAccount        CustomerAccount @relation(fields: [customerAccountId], references: [id], onDelete: Cascade)
+  createdAt              DateTime       @default(now()) @map("created_at") @db.Timestamptz(3)
+  updatedAt              DateTime       @updatedAt @map("updated_at") @db.Timestamptz(3)
+
+  @@index([customerAccountId, achieved])
+  @@map("activation_milestones")
+}
+
+enum HealthSeverity {
+  HEALTHY
+  AT_RISK
+  CRITICAL
+}
+
+// Mirrors CustomerSuccessPackageSchema's healthSignals[] shape. Append-only
+// log (no updatedAt) -- a new signal is a new row, not an edit to a past one.
+model HealthSignal {
+  id                String          @id @default(uuid()) @db.Uuid
+  customerAccountId String          @map("customer_account_id") @db.Uuid
+  signal            String          @db.VarChar(160)
+  severity          HealthSeverity
+  observedEvidence  String          @map("observed_evidence") @db.Text
+  recommendation    String          @db.Text
+  customerAccount   CustomerAccount @relation(fields: [customerAccountId], references: [id], onDelete: Cascade)
+  createdAt         DateTime        @default(now()) @map("created_at") @db.Timestamptz(3)
+
+  @@index([customerAccountId, severity, createdAt])
+  @@map("health_signals")
+}
+
+enum ChurnRiskLevel {
+  LOW
+  MEDIUM
+  HIGH
+}
+
+// Mirrors CustomerSuccessPackageSchema's churnRisk shape. A snapshot per
+// assessment (append-only, like HealthSignal), not a single mutable field
+// on CustomerAccount, so risk trends over time remain auditable.
+model ChurnRiskAssessment {
+  id                String          @id @default(uuid()) @db.Uuid
+  customerAccountId String          @map("customer_account_id") @db.Uuid
+  riskLevel         ChurnRiskLevel  @map("risk_level")
+  primaryDrivers    Json            @map("primary_drivers")
+  mitigationPlan    Json            @map("mitigation_plan")
+  customerAccount   CustomerAccount @relation(fields: [customerAccountId], references: [id], onDelete: Cascade)
+  createdAt         DateTime        @default(now()) @map("created_at") @db.Timestamptz(3)
+
+  @@index([customerAccountId, createdAt])
+  @@map("churn_risk_assessments")
+}
+
+enum RetentionProposalType {
+  RENEWAL
+  EXPANSION
+  WIN_BACK
+}
+
+enum RetentionApprovalReason {
+  DISCOUNT
+  CONTRACT_CHANGE
+  BILLING_CHANGE
+  EXTERNAL_COMMUNICATION
+  ACCOUNT_CHANGE
+}
+
+enum RetentionProposalStatus {
+  PENDING_APPROVAL
+  APPROVED
+  REJECTED
+  WITHDRAWN
+}
+
+// Mirrors CustomerSuccessPackageSchema's retentionProposals[] shape. A
+// single polymorphic table (type: RENEWAL|EXPANSION|WIN_BACK) rather than
+// separate RenewalOpportunity/ExpansionProposal tables, matching the
+// agent output's own single array with a type discriminator. Every
+// proposal requires approval by design (roadmap: "never send an external
+// customer communication, apply a discount... yourself") -- status tracks
+// that disposition, which the ephemeral agent output has no need to.
+model RetentionProposal {
+  id                String                   @id @default(uuid()) @db.Uuid
+  customerAccountId String                   @map("customer_account_id") @db.Uuid
+  type              RetentionProposalType
+  rationale         String                   @db.Text
+  proposedAction    String                   @map("proposed_action") @db.Text
+  approvalReason    RetentionApprovalReason  @map("approval_reason")
+  status            RetentionProposalStatus  @default(PENDING_APPROVAL)
+  customerAccount   CustomerAccount          @relation(fields: [customerAccountId], references: [id], onDelete: Cascade)
+  createdAt         DateTime                 @default(now()) @map("created_at") @db.Timestamptz(3)
+  updatedAt         DateTime                 @updatedAt @map("updated_at") @db.Timestamptz(3)
+
+  @@index([customerAccountId, status])
+  @@map("retention_proposals")
 }

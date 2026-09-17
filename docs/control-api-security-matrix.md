@@ -46,6 +46,16 @@ Legend:
 | Project files | `GET /v1/projects/:id/files`, `GET /v1/projects/:id/files/content`, `PUT /v1/projects/:id/files/content` | AUTH | Foreign workspace returns `404 PROJECT_NOT_FOUND` / `404 PROJECT_FILE_NOT_FOUND` |
 | Attachments | upload intent, complete, list, download under `/v1/projects/:id/attachments` | AUTH | Foreign workspace returns `404 PROJECT_NOT_FOUND` / `404 ATTACHMENT_NOT_FOUND` |
 | Database lifecycle | provision, read status, latest migration artifact, destroy action under `/v1/projects/:id/databases` | ADMIN+ | Foreign workspace returns `404` not found variants |
+| Workspace plan | `PATCH /v1/workspaces/:workspaceId/plan` | ADMIN+ | Non-member workspace returns `404 WORKSPACE_ACCESS_DENIED` |
+| GTM scopes (create) | `POST /v1/workspaces/:workspaceId/gtm-scopes` | ADMIN+ | Non-member workspace returns `404 WORKSPACE_ACCESS_DENIED` |
+| GTM scopes (read) | `GET /v1/workspaces/:workspaceId/gtm-scopes`, `GET /v1/gtm-scopes/:gtmScopeId` | AUTH | Non-member workspace or foreign scope returns `404 WORKSPACE_ACCESS_DENIED` |
+| Prospects | `POST`/`GET /v1/gtm-scopes/:gtmScopeId/prospects`, `GET .../prospects/:prospectId` | AUTH | Foreign scope returns `404 WORKSPACE_ACCESS_DENIED`; unknown prospect returns `404 PROSPECT_NOT_FOUND` |
+| Deals | `POST`/`GET /v1/gtm-scopes/:gtmScopeId/deals`, `GET .../deals/:dealId`, `PATCH .../deals/:dealId/stage` | AUTH | Foreign scope returns `404 WORKSPACE_ACCESS_DENIED`; unknown deal returns `404 DEAL_NOT_FOUND` |
+| Lead scores | `POST`/`GET /v1/gtm-scopes/:gtmScopeId/prospects/:prospectId/lead-scores` | AUTH | Foreign scope returns `404 WORKSPACE_ACCESS_DENIED`; unknown prospect returns `404 PROSPECT_NOT_FOUND` |
+| Outreach sequences/events | `POST`/`GET /v1/gtm-scopes/:gtmScopeId/outreach-sequences`, `GET .../outreach-sequences/:sequenceId`, `POST`/`GET .../outreach-sequences/:sequenceId/events` | AUTH | Foreign scope returns `404 WORKSPACE_ACCESS_DENIED`; unknown sequence returns `404 OUTREACH_SEQUENCE_NOT_FOUND` |
+| Suppression entries | `POST`/`GET /v1/gtm-scopes/:gtmScopeId/suppression-entries` | AUTH | Foreign scope returns `404 WORKSPACE_ACCESS_DENIED` |
+| CRM sync records (read-only) | `GET /v1/gtm-scopes/:gtmScopeId/crm-sync-records`, `GET .../crm-sync-records/:recordId` | AUTH | Foreign scope returns `404 WORKSPACE_ACCESS_DENIED`; unknown record returns `404 CRM_SYNC_RECORD_NOT_FOUND` |
+| Release assessments | `POST /v1/projects/:id/release-assessments`, `GET /v1/release-assessments/:id` | AUTH | Foreign workspace returns `404 WORKSPACE_ACCESS_DENIED`; unknown project returns `404 PROJECT_NOT_FOUND`; unknown assessment returns `404 RELEASE_ASSESSMENT_NOT_FOUND` |
 
 ## Authorization outcomes
 

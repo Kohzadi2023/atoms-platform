@@ -10,6 +10,7 @@ import {
   type JsonValue,
   type ApprovalScope,
   type RunJobCommand,
+  type WorkspacePlan,
 } from "@atoms/contracts";
 import {
   Annotation,
@@ -87,12 +88,31 @@ const taskDefinitions = {
   },
 } as const;
 
+// Premium, entitlement-controlled capabilities (ADR-014/ADR-017). Every
+// other registered agent is core and always runs. No billing/checkout
+// exists yet, so a workspace's plan is set directly -- see
+// packages/db/prisma/schema.prisma's WorkspacePlan.
+const PREMIUM_AGENTS: ReadonlySet<ActiveAgentName> = new Set([
+  "Sophia",
+  "Sarah",
+  "Adrian",
+]);
+
+function isEntitled(plan: WorkspacePlan, agentName: ActiveAgentName): boolean {
+  return !PREMIUM_AGENTS.has(agentName) || plan !== "FREE";
+}
+
 export function buildRunGraph(options: BuildRunGraphOptions) {
   const now = options.now ?? (() => new Date());
 
   const runAgent =
     (agentName: ActiveAgentName) =>
     async (state: RunGraphInput): Promise<{ outputs: Record<string, JsonValue> }> => {
+      const plan = await options.repository.getWorkspacePlan(state.workspaceId);
+      if (!isEntitled(plan, agentName)) {
+        return { outputs: {} };
+      }
+
       const definition = taskDefinitions[agentName];
       const upstreamOutputs = parseUpstreamOutputs(state.outputs);
       const prepared = await options.repository.prepareTask({
@@ -234,6 +254,9 @@ export function buildRunGraph(options: BuildRunGraphOptions) {
   };
 
   const contentApprovalGate = async (state: RunGraphInput): Promise<{}> => {
+    // Adrian is a premium agent and may have been skipped by the
+    // entitlement gate above -- no copy variants means nothing to approve.
+    if (state.outputs.Adrian === undefined) return {};
     const adrian = AgentOutputSchemas.Adrian.parse(state.outputs.Adrian);
     const hasCopyVariants =
       adrian.contentPackage.ctaVariants.length > 0 ||

@@ -7,6 +7,7 @@ import {
   type JsonValue,
   type RunEventType,
   type RunJob,
+  type WorkspacePlan,
   validateRunEventPayload,
 } from "@atoms/contracts";
 import {
@@ -42,6 +43,14 @@ export class PrismaWorkerRepository
 
   constructor(prisma: PrismaClient) {
     this.#prisma = prisma;
+  }
+
+  async getWorkspacePlan(workspaceId: string): Promise<WorkspacePlan> {
+    const workspace = await this.#prisma.workspace.findUniqueOrThrow({
+      where: { id: workspaceId },
+      select: { plan: true },
+    });
+    return workspace.plan;
   }
 
   claimRun(job: RunJob, now: Date): Promise<RunClaimResult> {

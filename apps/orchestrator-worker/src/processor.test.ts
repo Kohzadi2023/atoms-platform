@@ -13,6 +13,7 @@ import type {
   JsonValue,
   RunEventType,
   RunJob,
+  WorkspacePlan,
 } from "@atoms/contracts";
 import { MemorySaver } from "@langchain/langgraph";
 import type { RunAttachmentLoader } from "./attachment-loader.js";
@@ -66,6 +67,13 @@ class MemoryRepository implements WorkerRepository {
   readonly files: Array<AgentProjectFile> = [];
   readonly events: PersistedEvent[] = [];
   completeRunSucceeds = true;
+  // MAX by default so every existing test exercises Sophia/Sarah/Adrian
+  // exactly as before the entitlement gate was introduced.
+  workspacePlan: WorkspacePlan = "MAX";
+
+  async getWorkspacePlan(): Promise<WorkspacePlan> {
+    return this.workspacePlan;
+  }
 
   async claimRun(job: RunJob): Promise<RunClaimResult> {
     if (job.runId !== RUN_ID) return { kind: "missing" };
@@ -673,6 +681,49 @@ test("worker executes the full Sophia-first chain once and commits ordered event
     "Sarah",
     "Adrian",
   ]);
+});
+
+test("a FREE workspace plan skips Sophia, Sarah, and Adrian entirely", async () => {
+  const repository = new MemoryRepository();
+  repository.workspacePlan = "FREE";
+  const agents = new ScriptedAgentRuntime(outputs());
+  const runProcessor = processor(repository, agents);
+
+  assert.deepEqual(
+    await runProcessor.process(startJob(), { attempt: 1, maxAttempts: 3 }),
+    { outcome: "completed" },
+  );
+  assert.deepEqual(agents.calls, ["Mike", "Emma", "Bob", "Alex", "David"]);
+  assert.equal(repository.run.status, "COMPLETED");
+  assert.equal(repository.tasks.size, 5);
+});
+
+test("a PRO workspace plan still runs Sophia, Sarah, and Adrian", async () => {
+  const repository = new MemoryRepository();
+  repository.workspacePlan = "PRO";
+  const agents = new ScriptedAgentRuntime(outputs());
+  const runProcessor = processor(repository, agents);
+
+  await runProcessor.process(startJob(), { attempt: 1, maxAttempts: 3 });
+  const approvedVersion = repository.approve();
+  assert.deepEqual(
+    await runProcessor.process(approveJob(approvedVersion, "content"), {
+      attempt: 1,
+      maxAttempts: 3,
+    }),
+    { outcome: "completed" },
+  );
+  assert.deepEqual(agents.calls, [
+    "Sophia",
+    "Mike",
+    "Emma",
+    "Bob",
+    "Alex",
+    "David",
+    "Sarah",
+    "Adrian",
+  ]);
+  assert.equal(repository.run.status, "COMPLETED");
 });
 
 test("worker loads clean references for Sophia and Emma only", async () => {

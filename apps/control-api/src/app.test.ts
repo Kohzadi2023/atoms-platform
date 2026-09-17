@@ -6,6 +6,7 @@ import type {
   CreateProjectInput,
   FileContentInput,
   JsonValue,
+  WorkspacePlan,
 } from "@atoms/contracts";
 import { normalizeArtifactCreatedEventPayload } from "@atoms/contracts";
 
@@ -52,6 +53,15 @@ class MemoryRepository implements ControlRepository {
   #projectCounter = 0;
   #runCounter = 0;
   #fileCounter = 0;
+  plan: WorkspacePlan = "FREE";
+
+  async updateWorkspacePlan(
+    _workspaceId: string,
+    plan: WorkspacePlan,
+  ): Promise<WorkspacePlan> {
+    this.plan = plan;
+    return this.plan;
+  }
 
   async listWorkspaceMemberships(
     userId: string,
@@ -384,6 +394,32 @@ async function createProjectAndRun(
   if (run === null) throw new Error("Run fixture was not created");
   return run;
 }
+
+test("an OWNER can update the workspace plan; the new plan is echoed back", async () => {
+  const { app, repository } = await fixture();
+  const response = await app.inject({
+    method: "PATCH",
+    url: `/v1/workspaces/${WORKSPACE_ID}/plan`,
+    payload: { plan: "PRO" },
+  });
+  assert.equal(response.statusCode, 200);
+  assert.deepEqual(JSON.parse(response.body), {
+    workspaceId: WORKSPACE_ID,
+    plan: "PRO",
+  });
+  assert.equal(repository.plan, "PRO");
+});
+
+test("updating the plan of an inaccessible workspace is reported not found", async () => {
+  const { app } = await fixture();
+  const response = await app.inject({
+    method: "PATCH",
+    url: `/v1/workspaces/00000000-0000-4000-8000-000000000099/plan`,
+    payload: { plan: "PRO" },
+  });
+  assert.equal(response.statusCode, 404);
+  assert.equal(JSON.parse(response.body).error.code, "WORKSPACE_ACCESS_DENIED");
+});
 
 test("POST /v1/projects validates and creates a normalized project", async () => {
   const { app } = await fixture();

@@ -3,6 +3,7 @@ import type {
   CreateProjectInput,
   FileContentInput,
   JsonValue,
+  WorkspacePlan,
   WorkspaceRole,
 } from "@atoms/contracts";
 import {
@@ -64,6 +65,10 @@ export interface ControlRepository {
     userId: string,
     workspaceId: string,
   ): Promise<WorkspaceMembershipRecord | null>;
+  updateWorkspacePlan(
+    workspaceId: string,
+    plan: WorkspacePlan,
+  ): Promise<WorkspacePlan>;
   createProject(input: CreateProjectInput): Promise<ProjectRecord>;
   getProject(userId: string, projectId: string): Promise<ProjectRecord | null>;
   createRun(
@@ -183,6 +188,18 @@ export class PrismaControlRepository implements ControlRepository {
       },
       role: membership.role,
     };
+  }
+
+  async updateWorkspacePlan(
+    workspaceId: string,
+    plan: WorkspacePlan,
+  ): Promise<WorkspacePlan> {
+    const workspace = await this.#prisma.workspace.update({
+      where: { id: workspaceId },
+      data: { plan },
+      select: { plan: true },
+    });
+    return workspace.plan;
   }
 
   async createProject(input: CreateProjectInput): Promise<ProjectRecord> {

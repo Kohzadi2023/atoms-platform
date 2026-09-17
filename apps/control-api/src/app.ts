@@ -14,7 +14,9 @@ import {
   RunActionInputSchema,
   RunEventEnvelopeSchema,
   RunResponseSchema,
+  UpdateWorkspacePlanInputSchema,
   validateRunEventPayload,
+  WorkspacePlanResponseSchema,
   type AgentRunStatus,
   type JsonValue,
   type RunAction,
@@ -264,6 +266,35 @@ export async function buildControlApi(
         throw workspaceAccessDeniedError(request.params.workspaceId);
       }
       return reply.code(200).send(membership);
+    },
+  );
+
+  api.patch(
+    "/v1/workspaces/:workspaceId/plan",
+    {
+      schema: {
+        operationId: "updateWorkspacePlan",
+        params: WorkspaceIdParamsSchema,
+        body: UpdateWorkspacePlanInputSchema,
+        response: { 200: WorkspacePlanResponseSchema, ...errorResponses },
+      },
+    },
+    async (request, reply) => {
+      const principal = requirePrincipal(request);
+      const membership = await options.repository.getWorkspaceMembership(
+        principal.userId,
+        request.params.workspaceId,
+      );
+      if (membership === null) {
+        throw workspaceAccessDeniedError(request.params.workspaceId);
+      }
+      requireAdministrativeRole(membership.role, "update_workspace_plan");
+
+      const plan = await options.repository.updateWorkspacePlan(
+        request.params.workspaceId,
+        request.body.plan,
+      );
+      return reply.code(200).send({ workspaceId: request.params.workspaceId, plan });
     },
   );
 

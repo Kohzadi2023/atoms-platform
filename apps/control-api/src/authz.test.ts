@@ -7,6 +7,7 @@ import type {
   FileContentInput,
   JsonValue,
   ProvisionDatabaseInput,
+  WorkspacePlan,
   WorkspaceRole,
 } from "@atoms/contracts";
 
@@ -241,6 +242,13 @@ class MemoryControlRepository implements ControlRepository {
         (membership) => membership.workspace.id === workspaceId,
       ) ?? null
     );
+  }
+
+  async updateWorkspacePlan(
+    _workspaceId: string,
+    plan: WorkspacePlan,
+  ): Promise<WorkspacePlan> {
+    return plan;
   }
 
   async createProject(input: CreateProjectInput): Promise<ProjectRecord> {

@@ -2,12 +2,16 @@
 
 Validated Phase 2 checkpoint plus the current Phase 3 vertical slices for
 the multi-agent coding platform. The Control API, provider-neutral OpenAI/E2B
-adapters, durable Mike -> Emma -> Bob -> approval -> Alex -> David worker flow,
-deterministic E2B validation, origin-isolated preview gateway, and confirmed
-Supabase provisioning/migration lifecycle, fenced stale-operation recovery, and
-approval-gated orphan reconciliation are implemented. The browser-to-agent
-attachment slice adds encrypted S3-compatible quarantine, ClamAV inspection,
-immutable run snapshots, and provider-neutral OpenAI file/image inputs.
+adapters, durable Sophia -> Mike -> Emma -> Bob -> approval -> Alex -> David ->
+Sarah -> Adrian -> content-approval worker flow, deterministic E2B validation,
+origin-isolated preview gateway, and confirmed Supabase provisioning/migration
+lifecycle, fenced stale-operation recovery, and approval-gated orphan
+reconciliation are implemented. Sophia, Sarah, and Adrian are premium,
+entitlement-gated capabilities: a `FREE`-plan workspace (every workspace's
+default) skips each of their nodes entirely rather than running them for
+free -- see `docs/web-workspace.md`. The browser-to-agent attachment slice
+adds encrypted S3-compatible quarantine, ClamAV inspection, immutable run
+snapshots, and provider-neutral OpenAI file/image inputs.
 The protected Phase 3 staging workflow applies both migration paths to
 PostgreSQL 17, exercises the real BullMQ scheduler against Redis, and can run
 the explicitly approved Supabase -> Vault -> E2B -> approval-gated orphan
@@ -55,8 +59,10 @@ schema at `packages/db/prisma/schema.prisma`.
   inspection, and ClamAV adapter
 - `packages/database-provider`: Supabase Management API, Vault KV v2, database
   migration runner, and provider-neutral contracts
-- `packages/agents`: versioned Mike, Emma, Bob, Alex, and David manifests, schemas, and
-  model-backed runtime
+- `packages/agents`: versioned Sophia, Mike, Emma, Bob, Alex, David, Sarah,
+  Adrian, and CustomerSuccess manifests, schemas, and model-backed runtime.
+  CustomerSuccess is registered here but has no run-graph node, control-api
+  routes, or UI yet.
 
 ## Orchestration behavior
 
@@ -69,8 +75,9 @@ schema at `packages/db/prisma/schema.prisma`.
 - Browser attachments upload to tenant-scoped quarantine keys with signed URLs.
   A fenced BullMQ worker validates exact size, detected MIME, SHA-256, and
   ClamAV status before exposing an immutable clean snapshot to a run.
-- Only Emma receives clean file/image inputs. Bob, Alex, and David consume the
-  structured PRD, avoiding repeated file-token cost across the graph.
+- Only Sophia and Emma receive clean file/image inputs. Every other agent
+  consumes Sophia's market intelligence and Emma's structured PRD, avoiding
+  repeated file-token cost across the graph.
 - If Mike requires plan approval, the worker pauses after Bob. Approvals are
   explicit and scoped: `approve` must include `approvalScope` (`plan` or
   `content`) so one approval cannot silently bypass another gate.

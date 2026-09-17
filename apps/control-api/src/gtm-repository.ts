@@ -1,13 +1,34 @@
-import type {
-  CreateDealInput,
-  CreateGtmScopeInput,
-  CreateProspectInput,
-  DealStage,
-  WorkspaceRole,
+import {
+  JsonValueSchema,
+  type CreateDealInput,
+  type CreateGtmScopeInput,
+  type CreateLeadScoreInput,
+  type CreateOutreachSequenceInput,
+  type CreateProspectInput,
+  type CreateSuppressionEntryInput,
+  type DealStage,
+  type RecordOutreachEventInput,
+  type WorkspaceRole,
 } from "@atoms/contracts";
-import type { PrismaClient } from "@atoms/db";
+import {
+  Prisma,
+  type PrismaClient,
+  type CrmSyncRecord as PrismaCrmSyncRecord,
+  type LeadScore as PrismaLeadScore,
+  type OutreachEvent as PrismaOutreachEvent,
+  type OutreachSequence as PrismaOutreachSequence,
+} from "@atoms/db";
 
-import type { DealRecord, GtmScopeRecord, ProspectRecord } from "./gtm-domain.js";
+import type {
+  CrmSyncRecordRecord,
+  DealRecord,
+  GtmScopeRecord,
+  LeadScoreRecord,
+  OutreachEventRecord,
+  OutreachSequenceRecord,
+  ProspectRecord,
+  SuppressionEntryRecord,
+} from "./gtm-domain.js";
 import { RepositoryConflictError } from "./errors.js";
 
 const CLOSED_STAGES: ReadonlySet<DealStage> = new Set([
@@ -32,6 +53,14 @@ export type UpdateDealStageResult =
   | { readonly kind: "ok"; readonly deal: DealRecord }
   | { readonly kind: "not_found" }
   | { readonly kind: "terminal_stage"; readonly deal: DealRecord };
+
+export type CreateOutreachSequenceResult =
+  | { readonly kind: "ok"; readonly sequence: OutreachSequenceRecord }
+  | { readonly kind: "conflict" };
+
+export type RecordOutreachEventResult =
+  | { readonly kind: "ok"; readonly event: OutreachEventRecord }
+  | { readonly kind: "prospect_not_found" };
 
 export interface GtmControlRepository {
   getWorkspaceMembership(
@@ -69,6 +98,43 @@ export interface GtmControlRepository {
     stage: DealStage,
     now: Date,
   ): Promise<UpdateDealStageResult>;
+  createLeadScore(
+    prospectId: string,
+    input: CreateLeadScoreInput,
+  ): Promise<LeadScoreRecord>;
+  listLeadScores(prospectId: string): Promise<readonly LeadScoreRecord[]>;
+  createOutreachSequence(
+    gtmScopeId: string,
+    input: CreateOutreachSequenceInput,
+  ): Promise<CreateOutreachSequenceResult>;
+  listOutreachSequences(
+    gtmScopeId: string,
+  ): Promise<readonly OutreachSequenceRecord[]>;
+  getOutreachSequence(
+    gtmScopeId: string,
+    sequenceId: string,
+  ): Promise<OutreachSequenceRecord | null>;
+  recordOutreachEvent(
+    sequenceId: string,
+    input: RecordOutreachEventInput,
+  ): Promise<RecordOutreachEventResult>;
+  listOutreachEvents(
+    sequenceId: string,
+  ): Promise<readonly OutreachEventRecord[]>;
+  createSuppressionEntry(
+    gtmScopeId: string,
+    input: CreateSuppressionEntryInput,
+  ): Promise<SuppressionEntryRecord>;
+  listSuppressionEntries(
+    gtmScopeId: string,
+  ): Promise<readonly SuppressionEntryRecord[]>;
+  listCrmSyncRecords(
+    gtmScopeId: string,
+  ): Promise<readonly CrmSyncRecordRecord[]>;
+  getCrmSyncRecord(
+    gtmScopeId: string,
+    recordId: string,
+  ): Promise<CrmSyncRecordRecord | null>;
 }
 
 export class PrismaGtmControlRepository implements GtmControlRepository {
@@ -274,6 +340,241 @@ export class PrismaGtmControlRepository implements GtmControlRepository {
       return { kind: "ok" as const, deal: updated };
     });
   }
+
+  async createLeadScore(
+    prospectId: string,
+    input: CreateLeadScoreInput,
+  ): Promise<LeadScoreRecord> {
+    const score = await this.#prisma.leadScore.create({
+      data: {
+        prospectId,
+        score: input.score,
+        band: input.band,
+        scoringVersion: input.scoringVersion,
+        rationale: input.rationale as Prisma.InputJsonValue,
+        computedAt: new Date(input.computedAt),
+      },
+    });
+    return toLeadScoreRecord(score);
+  }
+
+  async listLeadScores(prospectId: string): Promise<readonly LeadScoreRecord[]> {
+    const scores = await this.#prisma.leadScore.findMany({
+      where: { prospectId },
+      orderBy: { computedAt: "desc" },
+    });
+    return scores.map(toLeadScoreRecord);
+  }
+
+  async createOutreachSequence(
+    gtmScopeId: string,
+    input: CreateOutreachSequenceInput,
+  ): Promise<CreateOutreachSequenceResult> {
+    try {
+      const sequence = await this.#prisma.outreachSequence.create({
+        data: {
+          gtmScopeId,
+          name: input.name,
+          status: input.status ?? "DRAFT",
+          steps: input.steps as unknown as Prisma.InputJsonValue,
+        },
+      });
+      return { kind: "ok", sequence: toOutreachSequenceRecord(sequence) };
+    } catch (error) {
+      if (prismaErrorCode(error) === "P2002") {
+        return { kind: "conflict" };
+      }
+      throw error;
+    }
+  }
+
+  async listOutreachSequences(
+    gtmScopeId: string,
+  ): Promise<readonly OutreachSequenceRecord[]> {
+    const sequences = await this.#prisma.outreachSequence.findMany({
+      where: { gtmScopeId },
+      orderBy: { createdAt: "asc" },
+    });
+    return sequences.map(toOutreachSequenceRecord);
+  }
+
+  async getOutreachSequence(
+    gtmScopeId: string,
+    sequenceId: string,
+  ): Promise<OutreachSequenceRecord | null> {
+    const sequence = await this.#prisma.outreachSequence.findFirst({
+      where: { id: sequenceId, gtmScopeId },
+    });
+    return sequence === null ? null : toOutreachSequenceRecord(sequence);
+  }
+
+  async recordOutreachEvent(
+    sequenceId: string,
+    input: RecordOutreachEventInput,
+  ): Promise<RecordOutreachEventResult> {
+    const sequence = await this.#prisma.outreachSequence.findUnique({
+      where: { id: sequenceId },
+      select: { gtmScopeId: true },
+    });
+    if (sequence === null) {
+      return { kind: "prospect_not_found" };
+    }
+    const prospect = await this.#prisma.prospect.findFirst({
+      where: { id: input.prospectId, gtmScopeId: sequence.gtmScopeId },
+      select: { id: true },
+    });
+    if (prospect === null) {
+      return { kind: "prospect_not_found" };
+    }
+
+    // The schema's unique key is (sequenceId, prospectId, stepOrdinal) --
+    // one row per step per prospect, not one row per lifecycle transition --
+    // so this is an upsert that advances the step's latest known outcome.
+    const event = await this.#prisma.outreachEvent.upsert({
+      where: {
+        sequenceId_prospectId_stepOrdinal: {
+          sequenceId,
+          prospectId: input.prospectId,
+          stepOrdinal: input.stepOrdinal,
+        },
+      },
+      create: {
+        sequenceId,
+        prospectId: input.prospectId,
+        stepOrdinal: input.stepOrdinal,
+        channel: input.channel,
+        kind: input.kind,
+        providerMessageId: input.providerMessageId ?? null,
+        occurredAt: new Date(input.occurredAt),
+        ...(input.metadata === undefined
+          ? {}
+          : { metadata: input.metadata as Prisma.InputJsonValue }),
+      },
+      update: {
+        channel: input.channel,
+        kind: input.kind,
+        providerMessageId: input.providerMessageId ?? null,
+        occurredAt: new Date(input.occurredAt),
+        metadata:
+          input.metadata === undefined
+            ? Prisma.JsonNull
+            : (input.metadata as Prisma.InputJsonValue),
+      },
+    });
+    return { kind: "ok", event: toOutreachEventRecord(event) };
+  }
+
+  async listOutreachEvents(
+    sequenceId: string,
+  ): Promise<readonly OutreachEventRecord[]> {
+    const events = await this.#prisma.outreachEvent.findMany({
+      where: { sequenceId },
+      orderBy: { occurredAt: "asc" },
+    });
+    return events.map(toOutreachEventRecord);
+  }
+
+  async createSuppressionEntry(
+    gtmScopeId: string,
+    input: CreateSuppressionEntryInput,
+  ): Promise<SuppressionEntryRecord> {
+    const normalizedIdentifier = normalizeIdentifier(input.identifier);
+    const existing = await this.#prisma.suppressionEntry.findUnique({
+      where: {
+        gtmScopeId_channel_normalizedIdentifier: {
+          gtmScopeId,
+          channel: input.channel,
+          normalizedIdentifier,
+        },
+      },
+    });
+    if (existing !== null) {
+      return existing;
+    }
+    try {
+      return await this.#prisma.suppressionEntry.create({
+        data: {
+          gtmScopeId,
+          channel: input.channel,
+          normalizedIdentifier,
+          reason: input.reason,
+        },
+      });
+    } catch (error) {
+      // Suppression is set-like (identifier is suppressed or it isn't), so a
+      // concurrent duplicate insert is not a conflict to report -- return
+      // whichever row won the race.
+      if (prismaErrorCode(error) === "P2002") {
+        return this.#prisma.suppressionEntry.findUniqueOrThrow({
+          where: {
+            gtmScopeId_channel_normalizedIdentifier: {
+              gtmScopeId,
+              channel: input.channel,
+              normalizedIdentifier,
+            },
+          },
+        });
+      }
+      throw error;
+    }
+  }
+
+  async listSuppressionEntries(
+    gtmScopeId: string,
+  ): Promise<readonly SuppressionEntryRecord[]> {
+    return this.#prisma.suppressionEntry.findMany({
+      where: { gtmScopeId },
+      orderBy: { createdAt: "asc" },
+    });
+  }
+
+  async listCrmSyncRecords(
+    gtmScopeId: string,
+  ): Promise<readonly CrmSyncRecordRecord[]> {
+    const records = await this.#prisma.crmSyncRecord.findMany({
+      where: { gtmScopeId },
+      orderBy: { createdAt: "asc" },
+    });
+    return records.map(toCrmSyncRecordRecord);
+  }
+
+  async getCrmSyncRecord(
+    gtmScopeId: string,
+    recordId: string,
+  ): Promise<CrmSyncRecordRecord | null> {
+    const record = await this.#prisma.crmSyncRecord.findFirst({
+      where: { id: recordId, gtmScopeId },
+    });
+    return record === null ? null : toCrmSyncRecordRecord(record);
+  }
+}
+
+function toLeadScoreRecord(score: PrismaLeadScore): LeadScoreRecord {
+  return { ...score, rationale: JsonValueSchema.parse(score.rationale) };
+}
+
+function toOutreachSequenceRecord(
+  sequence: PrismaOutreachSequence,
+): OutreachSequenceRecord {
+  return { ...sequence, steps: JsonValueSchema.parse(sequence.steps) };
+}
+
+function toOutreachEventRecord(event: PrismaOutreachEvent): OutreachEventRecord {
+  return {
+    ...event,
+    metadata: event.metadata === null ? null : JsonValueSchema.parse(event.metadata),
+  };
+}
+
+function toCrmSyncRecordRecord(record: PrismaCrmSyncRecord): CrmSyncRecordRecord {
+  return {
+    ...record,
+    error: record.error === null ? null : JsonValueSchema.parse(record.error),
+  };
+}
+
+function normalizeIdentifier(identifier: string): string {
+  return identifier.trim().toLowerCase();
 }
 
 function normalizeEmail(email: string): string {

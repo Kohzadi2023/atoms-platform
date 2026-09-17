@@ -4,7 +4,10 @@ import test from "node:test";
 import {
   CreateDealInputSchema,
   CreateGtmScopeInputSchema,
+  CreateLeadScoreInputSchema,
+  CreateOutreachSequenceInputSchema,
   CreateProspectInputSchema,
+  CreateSuppressionEntryInputSchema,
   CrmSyncRecordResponseSchema,
   DealResponseSchema,
   GtmScopeResponseSchema,
@@ -12,6 +15,7 @@ import {
   OutreachEventResponseSchema,
   OutreachSequenceResponseSchema,
   ProspectResponseSchema,
+  RecordOutreachEventInputSchema,
   SuppressionEntryResponseSchema,
   UpdateDealStageInputSchema,
 } from "./gtm.js";
@@ -382,5 +386,93 @@ test("UpdateDealStageInput accepts a valid stage and rejects an unknown field", 
   assert.equal(parsed.stage, "CLOSED_WON");
   assert.throws(() =>
     UpdateDealStageInputSchema.parse({ stage: "CLOSED_WON", extra: "nope" }),
+  );
+});
+
+test("CreateLeadScoreInput accepts a full manual score record", () => {
+  const parsed = CreateLeadScoreInputSchema.parse({
+    score: 72,
+    band: "WARM",
+    scoringVersion: "manual-v1",
+    rationale: { firmographicFit: 0.8 },
+    computedAt: NOW,
+  });
+  assert.equal(parsed.band, "WARM");
+});
+
+test("CreateLeadScoreInput rejects an unknown field", () => {
+  assert.throws(() =>
+    CreateLeadScoreInputSchema.parse({
+      score: 72,
+      band: "WARM",
+      scoringVersion: "manual-v1",
+      rationale: {},
+      computedAt: NOW,
+      extra: "nope",
+    }),
+  );
+});
+
+test("CreateOutreachSequenceInput accepts ordered steps and defaults status to undefined", () => {
+  const parsed = CreateOutreachSequenceInputSchema.parse({
+    name: "Q4 outbound",
+    steps: [{ ordinal: 1, channel: "EMAIL", templateRef: "intro-v1", waitDays: 0 }],
+  });
+  assert.equal(parsed.status, undefined);
+  assert.equal(parsed.steps.length, 1);
+});
+
+test("CreateOutreachSequenceInput rejects a step with an unknown field", () => {
+  assert.throws(() =>
+    CreateOutreachSequenceInputSchema.parse({
+      name: "Q4 outbound",
+      steps: [
+        {
+          ordinal: 1,
+          channel: "EMAIL",
+          templateRef: "intro-v1",
+          waitDays: 0,
+          extra: "nope",
+        },
+      ],
+    }),
+  );
+});
+
+test("RecordOutreachEventInput accepts a sent event and rejects an unknown field", () => {
+  const parsed = RecordOutreachEventInputSchema.parse({
+    prospectId: PROSPECT_ID,
+    stepOrdinal: 1,
+    channel: "EMAIL",
+    kind: "SENT",
+    occurredAt: NOW,
+  });
+  assert.equal(parsed.kind, "SENT");
+  assert.throws(() =>
+    RecordOutreachEventInputSchema.parse({
+      prospectId: PROSPECT_ID,
+      stepOrdinal: 1,
+      channel: "EMAIL",
+      kind: "SENT",
+      occurredAt: NOW,
+      extra: "nope",
+    }),
+  );
+});
+
+test("CreateSuppressionEntryInput accepts a manual unsubscribe and rejects an unknown field", () => {
+  const parsed = CreateSuppressionEntryInputSchema.parse({
+    channel: "EMAIL",
+    identifier: "Jordan@Acme.test",
+    reason: "MANUAL",
+  });
+  assert.equal(parsed.identifier, "Jordan@Acme.test");
+  assert.throws(() =>
+    CreateSuppressionEntryInputSchema.parse({
+      channel: "EMAIL",
+      identifier: "jordan@acme.test",
+      reason: "MANUAL",
+      extra: "nope",
+    }),
   );
 });

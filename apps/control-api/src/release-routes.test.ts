@@ -48,6 +48,9 @@ class NoopControlRepository implements ControlRepository {
   async getWorkspaceMembership(): Promise<null> {
     return null;
   }
+  async updateWorkspacePlan(): Promise<never> {
+    throw new Error("not used");
+  }
   async createProject(_input: CreateProjectInput): Promise<never> {
     throw new Error("not used");
   }

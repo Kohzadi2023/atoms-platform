@@ -108,9 +108,11 @@ export function buildRunGraph(options: BuildRunGraphOptions) {
   const runAgent =
     (agentName: ActiveAgentName) =>
     async (state: RunGraphInput): Promise<{ outputs: Record<string, JsonValue> }> => {
-      const plan = await options.repository.getWorkspacePlan(state.workspaceId);
-      if (!isEntitled(plan, agentName)) {
-        return { outputs: {} };
+      if (PREMIUM_AGENTS.has(agentName)) {
+        const plan = await options.repository.getWorkspacePlan(state.workspaceId);
+        if (!isEntitled(plan, agentName)) {
+          return { outputs: {} };
+        }
       }
 
       const definition = taskDefinitions[agentName];

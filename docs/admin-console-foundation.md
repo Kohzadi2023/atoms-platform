@@ -12,6 +12,31 @@ Repository-side Microsoft Entra External ID rollout is now prepared on `main`. L
 
 This document defines the Admin Console foundation without introducing a parallel auth system or weakening those gates.
 
+## Implementation status
+
+Slice 1's data and authorization layers already exist on `main`, ahead of
+this document being updated to say so:
+
+- `packages/contracts/src/admin.ts`: `WorkspaceAdminOverviewCountsSchema`
+  and `WorkspaceAdminOverviewResponseSchema`.
+- `apps/control-api/src/admin-overview-repository.ts`:
+  `getWorkspaceAdminOverviewCounts`, a membership-scoped Prisma aggregate
+  (members/owners/admins/projects/active runs) with its own test proving
+  every count is scoped to one workspace.
+- `apps/control-api/src/admin-overview.ts` and `admin-overview-service.ts`:
+  `buildWorkspaceAdminOverview` / `loadWorkspaceAdminOverview`, gated by
+  `requireAdministrativeRole`, with tests proving a MEMBER and a
+  non-member are both rejected before any count is loaded.
+
+**Not yet done:** no Fastify route registers any of this in
+`apps/control-api/src/app.ts` -- there is no
+`GET /v1/workspaces/:workspaceId/admin/overview` a client can call yet --
+and no Web route or component under `apps/web` exists. The remaining Slice
+1 work is exactly those two things: wire the existing service into a route,
+then build the minimal authenticated Web page against it. Do not
+re-implement the contract, repository, or authorization layer described
+below; it already exists at the paths above.
+
 ## Goals
 
 The first Admin Console increment should provide a secure operator surface for workspace administration while reusing the same Entra session and Control API authorization boundary as the main workspace.
@@ -142,12 +167,15 @@ The auth/session layer should be refactored only as much as necessary to allow a
 
 ### Slice 1 — read-only admin overview
 
-- contracts for overview response,
-- Control API repository query scoped by membership,
-- authorization tests proving MEMBER is denied and cross-workspace access is denied,
-- workspace-scoped admin route,
-- loading/error/empty states,
-- no mutation endpoints.
+- [x] contracts for overview response,
+- [x] Control API repository query scoped by membership,
+- [x] authorization tests proving MEMBER is denied and cross-workspace access is denied,
+- [ ] workspace-scoped admin route,
+- [ ] loading/error/empty states,
+- [x] no mutation endpoints.
+
+See "Implementation status" above for the exact files behind each checked
+item.
 
 ### Slice 2 — members
 
@@ -179,4 +207,4 @@ Before any Admin Console mutation ships:
 
 ## First implementation PR after staging auth activation
 
-The recommended first code PR is **read-only workspace admin overview** only. It should add the contract, repository query, authorization tests, Control API route, and a minimal authenticated Web route. Avoid membership mutations until the staging Entra flow is fully proven and the read-only authorization path is stable.
+The recommended first code PR is **read-only workspace admin overview** only. The contract, repository query, and authorization tests already exist (see "Implementation status" above); the remaining scope is the Control API route and a minimal authenticated Web route. Avoid membership mutations until the staging Entra flow is fully proven and the read-only authorization path is stable.

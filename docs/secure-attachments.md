@@ -28,9 +28,10 @@ contract at five files per project and 10 MiB per file.
 7. Run creation accepts only requested IDs that belong to the same project and
    are `CLEAN`. It copies filename, detected MIME, size, SHA-256, and clean
    object key into `agent_run_attachments`, making the run input immutable.
-8. The worker reloads and re-hashes each snapshot. References are sent once to
-   Emma; downstream agents consume Emma's structured PRD instead of rebilling
-   the same file input for every agent.
+8. The worker reloads and re-hashes each snapshot. References are sent once
+   each to Sophia and Emma; every other agent (Mike, Bob, Alex, David, Sarah,
+   Adrian) consumes Sophia's market intelligence and Emma's structured PRD
+   instead of rebilling the same file input for every agent.
 
 The OpenAI adapter maps PDFs and text to Responses API `input_file` items and
 images to `input_image` data URLs while retaining `store: false`. The platform's

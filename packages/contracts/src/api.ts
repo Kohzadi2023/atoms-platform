@@ -43,6 +43,12 @@ export const WorkspaceRoleSchema = z.enum(["OWNER", "ADMIN", "MEMBER"]);
 
 export type WorkspaceRole = z.infer<typeof WorkspaceRoleSchema>;
 
+// Controls entitlement to premium agents (Sophia, Sarah, Adrian) in
+// apps/orchestrator-worker/src/graph.ts. No route exposes this yet.
+export const WorkspacePlanSchema = z.enum(["FREE", "PRO", "MAX"]);
+
+export type WorkspacePlan = z.infer<typeof WorkspacePlanSchema>;
+
 export const WorkspaceSummarySchema = z
   .object({
     id: z.string().uuid(),

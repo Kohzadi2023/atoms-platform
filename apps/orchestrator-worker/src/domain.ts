@@ -9,6 +9,7 @@ import type {
   JsonValue,
   RunEventType,
   RunJob,
+  WorkspacePlan,
 } from "@atoms/contracts";
 
 export interface RunExecutionRecord {
@@ -91,6 +92,7 @@ export interface FailTaskInput {
 
 export interface WorkerRepository {
   claimRun(job: RunJob, now: Date): Promise<RunClaimResult>;
+  getWorkspacePlan(workspaceId: string): Promise<WorkspacePlan>;
   prepareTask(input: PrepareTaskInput): Promise<TaskMutationResult>;
   startTask(
     runId: string,

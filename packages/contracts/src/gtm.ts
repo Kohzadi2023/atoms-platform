@@ -146,6 +146,27 @@ export const LeadScoreResponseSchema = z
   .strict();
 export type LeadScoreResponse = z.infer<typeof LeadScoreResponseSchema>;
 
+export const LeadScoreListResponseSchema = z
+  .object({
+    items: z.array(LeadScoreResponseSchema).max(10_000),
+  })
+  .strict();
+export type LeadScoreListResponse = z.infer<typeof LeadScoreListResponseSchema>;
+
+// No live scoring worker exists yet (see packages/revenue), so a score is
+// recorded exactly as supplied -- there is no server-side computation to
+// trust or distrust here, only a record of one.
+export const CreateLeadScoreInputSchema = z
+  .object({
+    score: z.number().int(),
+    band: LeadScoreBandSchema,
+    scoringVersion: z.string().trim().min(1).max(20),
+    rationale: JsonValueSchema,
+    computedAt: IsoTimestampSchema,
+  })
+  .strict();
+export type CreateLeadScoreInput = z.infer<typeof CreateLeadScoreInputSchema>;
+
 export const OutreachSequenceStatusSchema = z.enum([
   "DRAFT",
   "ACTIVE",
@@ -186,6 +207,35 @@ export type OutreachSequenceResponse = z.infer<
   typeof OutreachSequenceResponseSchema
 >;
 
+export const OutreachSequenceListResponseSchema = z
+  .object({
+    items: z.array(OutreachSequenceResponseSchema).max(1_000),
+  })
+  .strict();
+export type OutreachSequenceListResponse = z.infer<
+  typeof OutreachSequenceListResponseSchema
+>;
+
+const OutreachSequenceStepSchema = z
+  .object({
+    ordinal: z.number().int().nonnegative(),
+    channel: OutreachChannelSchema,
+    templateRef: z.string().trim().min(1),
+    waitDays: z.number().int().nonnegative(),
+  })
+  .strict();
+
+export const CreateOutreachSequenceInputSchema = z
+  .object({
+    name: z.string().trim().min(1).max(160),
+    status: OutreachSequenceStatusSchema.optional(),
+    steps: z.array(OutreachSequenceStepSchema).max(50),
+  })
+  .strict();
+export type CreateOutreachSequenceInput = z.infer<
+  typeof CreateOutreachSequenceInputSchema
+>;
+
 export const OutreachEventResponseSchema = z
   .object({
     id: z.string().uuid(),
@@ -201,6 +251,35 @@ export const OutreachEventResponseSchema = z
   })
   .strict();
 export type OutreachEventResponse = z.infer<typeof OutreachEventResponseSchema>;
+
+export const OutreachEventListResponseSchema = z
+  .object({
+    items: z.array(OutreachEventResponseSchema).max(10_000),
+  })
+  .strict();
+export type OutreachEventListResponse = z.infer<
+  typeof OutreachEventListResponseSchema
+>;
+
+// The schema's own unique constraint is (sequenceId, prospectId, stepOrdinal)
+// -- one row per step per prospect, not one row per lifecycle transition --
+// so recording an event is an upsert keyed on that triple: it advances the
+// step's latest known outcome (SENT, then later OPENED, then CLICKED, ...)
+// rather than appending a new row per transition.
+export const RecordOutreachEventInputSchema = z
+  .object({
+    prospectId: z.string().uuid(),
+    stepOrdinal: z.number().int().nonnegative(),
+    channel: OutreachChannelSchema,
+    kind: OutreachEventKindSchema,
+    providerMessageId: z.string().trim().min(1).max(191).optional(),
+    occurredAt: IsoTimestampSchema,
+    metadata: JsonValueSchema.optional(),
+  })
+  .strict();
+export type RecordOutreachEventInput = z.infer<
+  typeof RecordOutreachEventInputSchema
+>;
 
 export const SuppressionChannelSchema = z.enum(["EMAIL", "LINKEDIN", "ALL"]);
 export type SuppressionChannel = z.infer<typeof SuppressionChannelSchema>;
@@ -226,6 +305,26 @@ export const SuppressionEntryResponseSchema = z
   .strict();
 export type SuppressionEntryResponse = z.infer<
   typeof SuppressionEntryResponseSchema
+>;
+
+export const SuppressionEntryListResponseSchema = z
+  .object({
+    items: z.array(SuppressionEntryResponseSchema).max(10_000),
+  })
+  .strict();
+export type SuppressionEntryListResponse = z.infer<
+  typeof SuppressionEntryListResponseSchema
+>;
+
+export const CreateSuppressionEntryInputSchema = z
+  .object({
+    channel: SuppressionChannelSchema,
+    identifier: z.string().trim().min(1).max(320),
+    reason: SuppressionReasonSchema,
+  })
+  .strict();
+export type CreateSuppressionEntryInput = z.infer<
+  typeof CreateSuppressionEntryInputSchema
 >;
 
 // Deliberately its own enum, not IntegrationProvider (which tracks
@@ -281,6 +380,15 @@ export const CrmSyncRecordResponseSchema = z
     }
   });
 export type CrmSyncRecordResponse = z.infer<typeof CrmSyncRecordResponseSchema>;
+
+export const CrmSyncRecordListResponseSchema = z
+  .object({
+    items: z.array(CrmSyncRecordResponseSchema).max(10_000),
+  })
+  .strict();
+export type CrmSyncRecordListResponse = z.infer<
+  typeof CrmSyncRecordListResponseSchema
+>;
 
 export const DealStageSchema = z.enum([
   "PROSPECTING",

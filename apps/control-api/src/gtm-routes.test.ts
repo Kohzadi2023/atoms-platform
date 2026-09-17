@@ -4,25 +4,36 @@ import test from "node:test";
 import type {
   CreateDealInput,
   CreateGtmScopeInput,
+  CreateLeadScoreInput,
+  CreateOutreachSequenceInput,
   CreateProjectInput,
   CreateProspectInput,
+  CreateSuppressionEntryInput,
   DealStage,
   FileContentInput,
   JsonValue,
+  RecordOutreachEventInput,
   WorkspaceRole,
 } from "@atoms/contracts";
 
 import { buildControlApi } from "./app.js";
 import type {
+  CrmSyncRecordRecord,
   DealRecord,
   GtmScopeRecord,
+  LeadScoreRecord,
+  OutreachEventRecord,
+  OutreachSequenceRecord,
   ProspectRecord,
+  SuppressionEntryRecord,
 } from "./gtm-domain.js";
 import type {
   CreateDealResult,
   CreateGtmScopeResult,
+  CreateOutreachSequenceResult,
   GtmControlRepository,
   GtmScopeAccessRecord,
+  RecordOutreachEventResult,
   UpdateDealStageResult,
 } from "./gtm-repository.js";
 import type {
@@ -41,6 +52,12 @@ const OTHER_GTM_SCOPE_ID = "00000000-0000-4000-8000-000000000605";
 const PROSPECT_ID = "00000000-0000-4000-8000-000000000606";
 const OTHER_PROSPECT_ID = "00000000-0000-4000-8000-000000000607";
 const DEAL_ID = "00000000-0000-4000-8000-000000000608";
+const LEAD_SCORE_ID = "00000000-0000-4000-8000-000000000609";
+const SEQUENCE_ID = "00000000-0000-4000-8000-00000000060a";
+const OTHER_SEQUENCE_ID = "00000000-0000-4000-8000-00000000060b";
+const EVENT_ID = "00000000-0000-4000-8000-00000000060c";
+const SUPPRESSION_ID = "00000000-0000-4000-8000-00000000060d";
+const CRM_SYNC_RECORD_ID = "00000000-0000-4000-8000-00000000060e";
 const FIXED_NOW = new Date("2026-09-16T18:00:00.000Z");
 
 class NoopControlRepository implements ControlRepository {
@@ -108,6 +125,11 @@ class MemoryGtmRepository implements GtmControlRepository {
   readonly scopes = new Map<string, GtmScopeRecord>();
   readonly prospects = new Map<string, ProspectRecord>();
   readonly deals = new Map<string, DealRecord>();
+  readonly leadScores = new Map<string, LeadScoreRecord>();
+  readonly sequences = new Map<string, OutreachSequenceRecord>();
+  readonly events = new Map<string, OutreachEventRecord>();
+  readonly suppressions = new Map<string, SuppressionEntryRecord>();
+  readonly crmSyncRecords = new Map<string, CrmSyncRecordRecord>();
 
   async getWorkspaceMembership(
     _userId: string,
@@ -252,6 +274,151 @@ class MemoryGtmRepository implements GtmControlRepository {
     };
     this.deals.set(dealId, updated);
     return { kind: "ok", deal: updated };
+  }
+
+  async createLeadScore(
+    prospectId: string,
+    input: CreateLeadScoreInput,
+  ): Promise<LeadScoreRecord> {
+    const score: LeadScoreRecord = {
+      id: LEAD_SCORE_ID,
+      prospectId,
+      score: input.score,
+      band: input.band,
+      scoringVersion: input.scoringVersion,
+      rationale: input.rationale,
+      computedAt: new Date(input.computedAt),
+      createdAt: FIXED_NOW,
+    };
+    this.leadScores.set(score.id, score);
+    return score;
+  }
+
+  async listLeadScores(prospectId: string): Promise<readonly LeadScoreRecord[]> {
+    return [...this.leadScores.values()].filter((s) => s.prospectId === prospectId);
+  }
+
+  async createOutreachSequence(
+    gtmScopeId: string,
+    input: CreateOutreachSequenceInput,
+  ): Promise<CreateOutreachSequenceResult> {
+    const nameTaken = [...this.sequences.values()].some(
+      (s) => s.gtmScopeId === gtmScopeId && s.name === input.name,
+    );
+    if (nameTaken) {
+      return { kind: "conflict" };
+    }
+    const sequence: OutreachSequenceRecord = {
+      id: SEQUENCE_ID,
+      gtmScopeId,
+      name: input.name,
+      status: input.status ?? "DRAFT",
+      steps: input.steps,
+      createdAt: FIXED_NOW,
+      updatedAt: FIXED_NOW,
+    };
+    this.sequences.set(sequence.id, sequence);
+    return { kind: "ok", sequence };
+  }
+
+  async listOutreachSequences(
+    gtmScopeId: string,
+  ): Promise<readonly OutreachSequenceRecord[]> {
+    return [...this.sequences.values()].filter((s) => s.gtmScopeId === gtmScopeId);
+  }
+
+  async getOutreachSequence(
+    gtmScopeId: string,
+    sequenceId: string,
+  ): Promise<OutreachSequenceRecord | null> {
+    const sequence = this.sequences.get(sequenceId);
+    if (sequence === undefined || sequence.gtmScopeId !== gtmScopeId) return null;
+    return sequence;
+  }
+
+  async recordOutreachEvent(
+    sequenceId: string,
+    input: RecordOutreachEventInput,
+  ): Promise<RecordOutreachEventResult> {
+    const sequence = this.sequences.get(sequenceId);
+    if (sequence === undefined) {
+      return { kind: "prospect_not_found" };
+    }
+    const prospect = this.prospects.get(input.prospectId);
+    if (prospect === undefined || prospect.gtmScopeId !== sequence.gtmScopeId) {
+      return { kind: "prospect_not_found" };
+    }
+    const existingKey = [...this.events.entries()].find(
+      ([, event]) =>
+        event.sequenceId === sequenceId &&
+        event.prospectId === input.prospectId &&
+        event.stepOrdinal === input.stepOrdinal,
+    );
+    const event: OutreachEventRecord = {
+      id: existingKey?.[0] ?? EVENT_ID,
+      sequenceId,
+      prospectId: input.prospectId,
+      stepOrdinal: input.stepOrdinal,
+      channel: input.channel,
+      kind: input.kind,
+      providerMessageId: input.providerMessageId ?? null,
+      occurredAt: new Date(input.occurredAt),
+      metadata: input.metadata ?? null,
+      createdAt: existingKey?.[1].createdAt ?? FIXED_NOW,
+    };
+    this.events.set(event.id, event);
+    return { kind: "ok", event };
+  }
+
+  async listOutreachEvents(
+    sequenceId: string,
+  ): Promise<readonly OutreachEventRecord[]> {
+    return [...this.events.values()].filter((e) => e.sequenceId === sequenceId);
+  }
+
+  async createSuppressionEntry(
+    gtmScopeId: string,
+    input: CreateSuppressionEntryInput,
+  ): Promise<SuppressionEntryRecord> {
+    const normalizedIdentifier = input.identifier.trim().toLowerCase();
+    const existing = [...this.suppressions.values()].find(
+      (entry) =>
+        entry.gtmScopeId === gtmScopeId &&
+        entry.channel === input.channel &&
+        entry.normalizedIdentifier === normalizedIdentifier,
+    );
+    if (existing !== undefined) return existing;
+    const entry: SuppressionEntryRecord = {
+      id: SUPPRESSION_ID,
+      gtmScopeId,
+      channel: input.channel,
+      normalizedIdentifier,
+      reason: input.reason,
+      createdAt: FIXED_NOW,
+    };
+    this.suppressions.set(entry.id, entry);
+    return entry;
+  }
+
+  async listSuppressionEntries(
+    gtmScopeId: string,
+  ): Promise<readonly SuppressionEntryRecord[]> {
+    return [...this.suppressions.values()].filter((e) => e.gtmScopeId === gtmScopeId);
+  }
+
+  async listCrmSyncRecords(
+    gtmScopeId: string,
+  ): Promise<readonly CrmSyncRecordRecord[]> {
+    return [...this.crmSyncRecords.values()].filter((r) => r.gtmScopeId === gtmScopeId);
+  }
+
+  async getCrmSyncRecord(
+    gtmScopeId: string,
+    recordId: string,
+  ): Promise<CrmSyncRecordRecord | null> {
+    const record = this.crmSyncRecords.get(recordId);
+    if (record === undefined || record.gtmScopeId !== gtmScopeId) return null;
+    return record;
   }
 }
 
@@ -465,4 +632,193 @@ test("an inaccessible workspace is reported not found for the list route", async
   });
   assert.equal(response.statusCode, 404);
   assert.equal(JSON.parse(response.body).error.code, "WORKSPACE_ACCESS_DENIED");
+});
+
+async function seedProspect(app: Awaited<ReturnType<typeof fixture>>["app"]) {
+  await createScope(app);
+  await app.inject({
+    method: "POST",
+    url: `/v1/gtm-scopes/${GTM_SCOPE_ID}/prospects`,
+    payload: {
+      companyName: "Acme Inc",
+      contactName: "Jordan Rivera",
+      contactEmail: "jordan@acme.test",
+      useCase: "Self-service internal tooling",
+      fitEvidenceStatus: "ASSUMPTION",
+      source: "MANUAL",
+    },
+  });
+}
+
+test("recording a manual lead score requires only workspace membership", async () => {
+  const { app, repository } = await fixture();
+  await seedProspect(app);
+  repository.role = "MEMBER";
+
+  const response = await app.inject({
+    method: "POST",
+    url: `/v1/gtm-scopes/${GTM_SCOPE_ID}/prospects/${PROSPECT_ID}/lead-scores`,
+    payload: {
+      score: 72,
+      band: "WARM",
+      scoringVersion: "manual-v1",
+      rationale: { firmographicFit: 0.8 },
+      computedAt: FIXED_NOW.toISOString(),
+    },
+  });
+  assert.equal(response.statusCode, 201);
+  assert.equal(JSON.parse(response.body).band, "WARM");
+
+  const list = await app.inject({
+    method: "GET",
+    url: `/v1/gtm-scopes/${GTM_SCOPE_ID}/prospects/${PROSPECT_ID}/lead-scores`,
+  });
+  assert.equal(JSON.parse(list.body).items.length, 1);
+});
+
+test("creating an outreach sequence with a duplicate name in the same scope is a conflict", async () => {
+  const { app } = await fixture();
+  await createScope(app);
+  const payload = {
+    name: "Q4 outbound",
+    steps: [{ ordinal: 1, channel: "EMAIL", templateRef: "intro-v1", waitDays: 0 }],
+  };
+  const first = await app.inject({
+    method: "POST",
+    url: `/v1/gtm-scopes/${GTM_SCOPE_ID}/outreach-sequences`,
+    payload,
+  });
+  assert.equal(first.statusCode, 201);
+
+  const second = await app.inject({
+    method: "POST",
+    url: `/v1/gtm-scopes/${GTM_SCOPE_ID}/outreach-sequences`,
+    payload,
+  });
+  assert.equal(second.statusCode, 409);
+  assert.equal(
+    JSON.parse(second.body).error.code,
+    "OUTREACH_SEQUENCE_NAME_CONFLICT",
+  );
+});
+
+async function seedSequence(app: Awaited<ReturnType<typeof fixture>>["app"]) {
+  await app.inject({
+    method: "POST",
+    url: `/v1/gtm-scopes/${GTM_SCOPE_ID}/outreach-sequences`,
+    payload: {
+      name: "Q4 outbound",
+      steps: [{ ordinal: 1, channel: "EMAIL", templateRef: "intro-v1", waitDays: 0 }],
+    },
+  });
+}
+
+test("recording the same outreach step twice advances the row instead of duplicating it", async () => {
+  const { app, repository } = await fixture();
+  await seedProspect(app);
+  await seedSequence(app);
+
+  const sent = await app.inject({
+    method: "POST",
+    url: `/v1/gtm-scopes/${GTM_SCOPE_ID}/outreach-sequences/${SEQUENCE_ID}/events`,
+    payload: {
+      prospectId: PROSPECT_ID,
+      stepOrdinal: 1,
+      channel: "EMAIL",
+      kind: "SENT",
+      occurredAt: FIXED_NOW.toISOString(),
+    },
+  });
+  assert.equal(sent.statusCode, 201);
+  const sentId = JSON.parse(sent.body).id;
+
+  const opened = await app.inject({
+    method: "POST",
+    url: `/v1/gtm-scopes/${GTM_SCOPE_ID}/outreach-sequences/${SEQUENCE_ID}/events`,
+    payload: {
+      prospectId: PROSPECT_ID,
+      stepOrdinal: 1,
+      channel: "EMAIL",
+      kind: "OPENED",
+      occurredAt: FIXED_NOW.toISOString(),
+    },
+  });
+  assert.equal(opened.statusCode, 201);
+  assert.equal(JSON.parse(opened.body).id, sentId);
+  assert.equal(JSON.parse(opened.body).kind, "OPENED");
+  assert.equal(repository.events.size, 1);
+});
+
+test("recording an outreach event for a prospect outside the scope is reported not found", async () => {
+  const { app } = await fixture();
+  await createScope(app);
+  await seedSequence(app);
+
+  const response = await app.inject({
+    method: "POST",
+    url: `/v1/gtm-scopes/${GTM_SCOPE_ID}/outreach-sequences/${SEQUENCE_ID}/events`,
+    payload: {
+      prospectId: OTHER_PROSPECT_ID,
+      stepOrdinal: 1,
+      channel: "EMAIL",
+      kind: "SENT",
+      occurredAt: FIXED_NOW.toISOString(),
+    },
+  });
+  assert.equal(response.statusCode, 404);
+  assert.equal(JSON.parse(response.body).error.code, "PROSPECT_NOT_FOUND");
+});
+
+test("an outreach event route on a nonexistent sequence is reported not found", async () => {
+  const { app } = await fixture();
+  await createScope(app);
+
+  const response = await app.inject({
+    method: "GET",
+    url: `/v1/gtm-scopes/${GTM_SCOPE_ID}/outreach-sequences/${OTHER_SEQUENCE_ID}/events`,
+  });
+  assert.equal(response.statusCode, 404);
+  assert.equal(JSON.parse(response.body).error.code, "OUTREACH_SEQUENCE_NOT_FOUND");
+});
+
+test("suppressing the same identifier twice is idempotent, not a conflict", async () => {
+  const { app, repository } = await fixture();
+  await createScope(app);
+  const payload = { channel: "EMAIL", identifier: "Jordan@Acme.test", reason: "MANUAL" };
+
+  const first = await app.inject({
+    method: "POST",
+    url: `/v1/gtm-scopes/${GTM_SCOPE_ID}/suppression-entries`,
+    payload,
+  });
+  assert.equal(first.statusCode, 201);
+  const firstId = JSON.parse(first.body).id;
+
+  const second = await app.inject({
+    method: "POST",
+    url: `/v1/gtm-scopes/${GTM_SCOPE_ID}/suppression-entries`,
+    payload,
+  });
+  assert.equal(second.statusCode, 201);
+  assert.equal(JSON.parse(second.body).id, firstId);
+  assert.equal(repository.suppressions.size, 1);
+});
+
+test("CRM sync records are read-only and empty until a real sync exists", async () => {
+  const { app } = await fixture();
+  await createScope(app);
+
+  const response = await app.inject({
+    method: "GET",
+    url: `/v1/gtm-scopes/${GTM_SCOPE_ID}/crm-sync-records`,
+  });
+  assert.equal(response.statusCode, 200);
+  assert.deepEqual(JSON.parse(response.body).items, []);
+
+  const notFound = await app.inject({
+    method: "GET",
+    url: `/v1/gtm-scopes/${GTM_SCOPE_ID}/crm-sync-records/${CRM_SYNC_RECORD_ID}`,
+  });
+  assert.equal(notFound.statusCode, 404);
+  assert.equal(JSON.parse(notFound.body).error.code, "CRM_SYNC_RECORD_NOT_FOUND");
 });

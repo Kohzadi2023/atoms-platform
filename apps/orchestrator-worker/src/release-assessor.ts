@@ -36,6 +36,11 @@ export interface ReleaseAssessor {
 }
 
 /**
+ * Display name "Quinn" (human-facing label only, e.g. in docs/roadmap
+ * conversations -- no code surface renders it today, unlike the persona
+ * agents in packages/agents/src/manifests.ts). The internal identifier
+ * stays "QA & Release" / DeterministicReleaseAssessor everywhere in code.
+ *
  * Never part of the LangGraph state graph (no node, no back-edge) and never
  * affects run completion: assess() only throws if the repository's own
  * writes fail after every reasonable evaluator error has already been

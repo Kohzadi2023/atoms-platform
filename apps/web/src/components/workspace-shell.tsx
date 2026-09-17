@@ -36,6 +36,7 @@ import {
   GitBranch,
   LoaderCircle,
   LogOut,
+  MinusCircle,
   MonitorPlay,
   Paperclip,
   Pause,
@@ -1473,7 +1474,7 @@ function AgentRow({ agent, status, description, last }: { readonly agent: AgentN
       <TaskIcon status={status} />
       <div className="min-w-0 flex-1 pt-0.5">
         <div className="flex items-center justify-between gap-2">
-          <span className="text-sm font-medium text-[#d9e0e9]">{agent}</span>
+          <span className="text-sm font-medium text-[#d9e0e9]">{agentDisplayName(agent)}</span>
           <span className="text-[10px] font-semibold uppercase tracking-[0.12em] text-[#6f7d90]">{status}</span>
         </div>
         <p className="mt-0.5 truncate text-xs text-[#758296]">{description ?? agentRole(agent)}</p>
@@ -1488,6 +1489,7 @@ function TaskIcon({ status }: { readonly status: TaskStatus }) {
   if (status === "running") return <span className={`${className} border-[#376a58] bg-[#11291f] text-[#83edc5]`}><LoaderCircle className="animate-spin" size={14} /></span>;
   if (status === "failed") return <span className={`${className} border-[#6a343c] bg-[#2b151a] text-[#ff8f9b]`}><X size={14} /></span>;
   if (status === "waiting") return <span className={`${className} border-[#745f31] bg-[#281f0e] text-[#f4c76b]`}><Pause size={13} /></span>;
+  if (status === "skipped") return <span className={`${className} border-[#2b3543] bg-[#0d131b] text-[#5f6d80]`}><MinusCircle size={14} /></span>;
   return <span className={`${className} border-[#2b3543] bg-[#0d131b] text-[#5f6d80]`}><Circle size={9} /></span>;
 }
 
@@ -1604,6 +1606,28 @@ function agentRole(agent: AgentName): string {
   }[agent];
 }
 
+// Display labels only -- every internal identifier (AgentName, run/artifact
+// event payloads, persisted DB values) stays "CustomerSuccess" unchanged.
+const AGENT_DISPLAY_NAMES: Record<AgentName, string> = {
+  Sophia: "Sophia",
+  Mike: "Mike",
+  Emma: "Emma",
+  Bob: "Bob",
+  Alex: "Alex",
+  David: "David",
+  Sarah: "Sarah",
+  Adrian: "Adrian",
+  CustomerSuccess: "Nora",
+};
+
+function agentDisplayName(agent: AgentName): string {
+  return AGENT_DISPLAY_NAMES[agent];
+}
+
+function isAgentName(value: string): value is AgentName {
+  return Object.hasOwn(AGENT_DISPLAY_NAMES, value);
+}
+
 function actionIcon(action: RunAction) {
   return action === "pause" ? Pause : action === "cancel" ? Square : action === "retry" ? RefreshCcw : Play;
 }
@@ -1615,7 +1639,11 @@ function humanizeEvent(event: RunEventEnvelope): string {
     !Array.isArray(event.payload)
       ? (event.payload as Record<string, unknown>)
       : {};
-  const agent = typeof payload.agent === "string" ? ` · ${payload.agent}` : "";
+  const rawAgent = typeof payload.agent === "string" ? payload.agent : undefined;
+  const agent =
+    rawAgent === undefined
+      ? ""
+      : ` · ${isAgentName(rawAgent) ? agentDisplayName(rawAgent) : rawAgent}`;
   const step = typeof payload.step === "string" ? ` · ${payload.step}` : "";
   return `${event.eventType.replaceAll("_", " ")}${agent}${step}`;
 }

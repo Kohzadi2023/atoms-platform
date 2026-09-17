@@ -815,6 +815,26 @@ test("owner/admin/member role policy is enforced", async () => {
     });
     assert.equal(memberDatabase.statusCode, 403);
     assert.equal(memberDatabase.json().error.code, "INSUFFICIENT_WORKSPACE_ROLE");
+
+    const memberPlanUpdate = await app.inject({
+      method: "PATCH",
+      url: `/v1/workspaces/${WORKSPACE_A}/plan`,
+      headers: authHeader(TOKENS.member),
+      payload: { plan: "PRO" },
+    });
+    assert.equal(memberPlanUpdate.statusCode, 403);
+    assert.equal(
+      memberPlanUpdate.json().error.code,
+      "INSUFFICIENT_WORKSPACE_ROLE",
+    );
+
+    const adminPlanUpdate = await app.inject({
+      method: "PATCH",
+      url: `/v1/workspaces/${WORKSPACE_A}/plan`,
+      headers: authHeader(TOKENS.admin),
+      payload: { plan: "PRO" },
+    });
+    assert.equal(adminPlanUpdate.statusCode, 200);
   } finally {
     await app.close();
   }

@@ -19,7 +19,8 @@ export type TaskStatus =
   | "running"
   | "waiting"
   | "completed"
-  | "failed";
+  | "failed"
+  | "skipped";
 
 export interface AgentTaskProjection {
   readonly id?: string;
@@ -160,6 +161,21 @@ export function reduceRunEvent(
         activeAgent: undefined,
         error: readError(payload.error) ?? `${agent} failed`,
       };
+    }
+  }
+
+  if (event.eventType === "task.skipped") {
+    const agent = readAgent(payload.agent);
+    if (agent !== undefined) {
+      const id = readString(payload.taskId);
+      const ordinal = readNumber(payload.ordinal);
+      const description = readString(payload.description);
+      next = updateTask(next, agent, {
+        status: "skipped",
+        ...(id === undefined ? {} : { id }),
+        ...(ordinal === undefined ? {} : { ordinal }),
+        ...(description === undefined ? {} : { description }),
+      });
     }
   }
 

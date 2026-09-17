@@ -152,6 +152,44 @@ export class PrismaWorkerRepository
     );
   }
 
+  skipTask(input: PrepareTaskInput): Promise<TaskMutationResult> {
+    return this.#prisma.$transaction(
+      async (transaction): Promise<TaskMutationResult> => {
+        if (!(await touchActiveRun(transaction, input.runId, input.expectedControlVersion, input.now))) {
+          return { kind: "stopped" };
+        }
+
+        const existing = await transaction.agentTask.findUnique({
+          where: {
+            runId_ordinal: { runId: input.runId, ordinal: input.ordinal },
+          },
+        });
+        if (existing !== null) {
+          return { kind: "ok", task: toWorkerTaskRecord(existing) };
+        }
+
+        const task = await transaction.agentTask.create({
+          data: {
+            runId: input.runId,
+            agentName: input.agentName,
+            description: input.description,
+            ordinal: input.ordinal,
+            input: toPrismaJson(input.input),
+            status: "SKIPPED",
+          },
+        });
+        await appendEvent(transaction, input.runId, "task.skipped", {
+          taskId: task.id,
+          agent: task.agentName,
+          ordinal: task.ordinal,
+          description: task.description,
+        });
+        return { kind: "ok", task: toWorkerTaskRecord(task) };
+      },
+      { isolationLevel: "Serializable" },
+    );
+  }
+
   startTask(
     runId: string,
     expectedControlVersion: number,

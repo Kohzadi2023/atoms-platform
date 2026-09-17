@@ -36,6 +36,7 @@ import {
   GitBranch,
   LoaderCircle,
   LogOut,
+  MinusCircle,
   MonitorPlay,
   Paperclip,
   Pause,
@@ -1488,6 +1489,7 @@ function TaskIcon({ status }: { readonly status: TaskStatus }) {
   if (status === "running") return <span className={`${className} border-[#376a58] bg-[#11291f] text-[#83edc5]`}><LoaderCircle className="animate-spin" size={14} /></span>;
   if (status === "failed") return <span className={`${className} border-[#6a343c] bg-[#2b151a] text-[#ff8f9b]`}><X size={14} /></span>;
   if (status === "waiting") return <span className={`${className} border-[#745f31] bg-[#281f0e] text-[#f4c76b]`}><Pause size={13} /></span>;
+  if (status === "skipped") return <span className={`${className} border-[#2b3543] bg-[#0d131b] text-[#5f6d80]`}><MinusCircle size={14} /></span>;
   return <span className={`${className} border-[#2b3543] bg-[#0d131b] text-[#5f6d80]`}><Circle size={9} /></span>;
 }
 

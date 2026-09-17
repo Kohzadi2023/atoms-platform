@@ -10,6 +10,10 @@ export const RunEventTypeSchema = z.enum([
   "task.progress",
   "task.completed",
   "task.failed",
+  // A premium agent's ordinal that the entitlement gate bypassed --
+  // apps/orchestrator-worker/src/graph.ts. Generic JsonValue payload, same
+  // as its task.* siblings.
+  "task.skipped",
   "artifact.created",
   "approval.required",
   "sandbox.ready",

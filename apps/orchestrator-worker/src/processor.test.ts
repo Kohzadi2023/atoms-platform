@@ -126,6 +126,29 @@ class MemoryRepository implements WorkerRepository {
     return { kind: "ok", task };
   }
 
+  async skipTask(input: PrepareTaskInput): Promise<TaskMutationResult> {
+    if (!this.active(input.expectedControlVersion)) return { kind: "stopped" };
+    const existing = this.tasks.get(input.ordinal);
+    if (existing !== undefined) return { kind: "ok", task: existing };
+    const task: MutableTask = {
+      id: `00000000-0000-4000-8000-${String(input.ordinal).padStart(12, "0")}`,
+      runId: input.runId,
+      agentName: input.agentName,
+      description: input.description,
+      ordinal: input.ordinal,
+      status: "SKIPPED",
+      attempt: 0,
+      output: null,
+    };
+    this.tasks.set(task.ordinal, task);
+    this.append("task.skipped", {
+      taskId: task.id,
+      agent: task.agentName,
+      ordinal: task.ordinal,
+    });
+    return { kind: "ok", task };
+  }
+
   async startTask(
     _runId: string,
     expectedControlVersion: number,
@@ -695,7 +718,18 @@ test("a FREE workspace plan skips Sophia, Sarah, and Adrian entirely", async () 
   );
   assert.deepEqual(agents.calls, ["Mike", "Emma", "Bob", "Alex", "David"]);
   assert.equal(repository.run.status, "COMPLETED");
-  assert.equal(repository.tasks.size, 5);
+  assert.equal(repository.tasks.size, 8);
+  assert.equal(repository.tasks.get(1)?.status, "SKIPPED");
+  assert.equal(repository.tasks.get(1)?.agentName, "Sophia");
+  assert.equal(repository.tasks.get(7)?.status, "SKIPPED");
+  assert.equal(repository.tasks.get(7)?.agentName, "Sarah");
+  assert.equal(repository.tasks.get(8)?.status, "SKIPPED");
+  assert.equal(repository.tasks.get(8)?.agentName, "Adrian");
+  assert.equal(repository.tasks.get(2)?.status, "COMPLETED");
+  const skippedEvents = repository.events.filter(
+    (event) => event.eventType === "task.skipped",
+  );
+  assert.equal(skippedEvents.length, 3);
 });
 
 test("a PRO workspace plan still runs Sophia, Sarah, and Adrian", async () => {

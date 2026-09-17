@@ -108,15 +108,34 @@ export function buildRunGraph(options: BuildRunGraphOptions) {
   const runAgent =
     (agentName: ActiveAgentName) =>
     async (state: RunGraphInput): Promise<{ outputs: Record<string, JsonValue> }> => {
+      const definition = taskDefinitions[agentName];
+      const upstreamOutputs = parseUpstreamOutputs(state.outputs);
+
       if (PREMIUM_AGENTS.has(agentName)) {
         const plan = await options.repository.getWorkspacePlan(state.workspaceId);
         if (!isEntitled(plan, agentName)) {
+          const skipped = await options.repository.skipTask({
+            runId: state.runId,
+            expectedControlVersion: state.controlVersion,
+            agentName,
+            description: definition.description,
+            ordinal: definition.ordinal,
+            input: JsonValueSchema.parse({
+              prompt: state.prompt,
+              upstreamOutputs,
+            }),
+            now: now(),
+          });
+          if (skipped.kind === "stopped") {
+            throw new RunStoppedError(
+              "Run stopped before the skipped task could be recorded",
+              "stopped",
+            );
+          }
           return { outputs: {} };
         }
       }
 
-      const definition = taskDefinitions[agentName];
-      const upstreamOutputs = parseUpstreamOutputs(state.outputs);
       const prepared = await options.repository.prepareTask({
         runId: state.runId,
         expectedControlVersion: state.controlVersion,

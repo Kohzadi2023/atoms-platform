@@ -12,6 +12,7 @@ import {
   RunArtifactListResponseSchema,
   RunActionInputSchema,
   RunResponseSchema,
+  WorkspaceAdminOverviewResponseSchema,
   type CreateProjectInput,
   type AttachmentListResponse,
   type AttachmentUploadIntentResponse,
@@ -26,6 +27,7 @@ import {
   type RunEventEnvelope,
   type RunResponse,
   type ListWorkspacesResponse,
+  type WorkspaceAdminOverviewResponse,
 } from "@atoms/contracts";
 import type { ZodType } from "zod";
 
@@ -68,6 +70,15 @@ export class ControlApiClient {
 
   listWorkspaces(): Promise<ListWorkspacesResponse> {
     return this.#request("/v1/workspaces", ListWorkspacesResponseSchema);
+  }
+
+  getWorkspaceAdminOverview(
+    workspaceId: string,
+  ): Promise<WorkspaceAdminOverviewResponse> {
+    return this.#request(
+      `/v1/workspaces/${encodeURIComponent(workspaceId)}/admin/overview`,
+      WorkspaceAdminOverviewResponseSchema,
+    );
   }
 
   createProject(input: CreateProjectInput): Promise<ProjectResponse> {

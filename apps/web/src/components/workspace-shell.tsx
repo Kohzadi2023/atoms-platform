@@ -7,6 +7,7 @@ import type {
   ProjectFileSummary,
   ProjectResponse,
   ProjectAttachment,
+  WorkspaceAdminOverviewResponse,
   WorkspaceSummary,
   RunActionInput,
   RunAction,
@@ -47,6 +48,7 @@ import {
   Search,
   ShieldCheck,
   Square,
+  Users,
   X,
   XCircle,
 } from "lucide-react";
@@ -139,6 +141,12 @@ export function WorkspaceShell({
   const [activeTab, setActiveTab] = useState<WorkspaceTab>("preview");
   const [workspaces, setWorkspaces] = useState<readonly WorkspaceSummary[]>([]);
   const [workspaceId, setWorkspaceId] = useState("");
+  const [adminOverview, setAdminOverview] = useState<
+    WorkspaceAdminOverviewResponse | undefined
+  >();
+  const [adminOverviewStatus, setAdminOverviewStatus] = useState<
+    "idle" | "loading" | "loaded" | "unavailable" | "error"
+  >("idle");
   const [projectName, setProjectName] = useState("Customer operations portal");
   const [projectSlug, setProjectSlug] = useState("customer-operations-portal");
   const [prompt, setPrompt] = useState(
@@ -195,6 +203,39 @@ export function WorkspaceShell({
       active = false;
     };
   }, [api]);
+
+  useEffect(() => {
+    if (workspaceId === "") {
+      setAdminOverview(undefined);
+      setAdminOverviewStatus("idle");
+      return;
+    }
+    let active = true;
+    setAdminOverviewStatus("loading");
+    void api
+      .getWorkspaceAdminOverview(workspaceId)
+      .then((response) => {
+        if (!active) return;
+        setAdminOverview(response);
+        setAdminOverviewStatus("loaded");
+      })
+      .catch((caught: unknown) => {
+        if (!active) return;
+        setAdminOverview(undefined);
+        // A MEMBER (403) or an already-known-inaccessible workspace (404) is
+        // an expected outcome, not an app error -- most workspace members
+        // are not admins. Only a genuine failure gets the "error" state.
+        setAdminOverviewStatus(
+          caught instanceof ControlApiError &&
+            (caught.status === 403 || caught.status === 404)
+            ? "unavailable"
+            : "error",
+        );
+      });
+    return () => {
+      active = false;
+    };
+  }, [api, workspaceId]);
 
   const effectiveStatus = projection.inferredRunStatus ?? run?.status;
   const terminal =
@@ -744,6 +785,7 @@ export function WorkspaceShell({
                   )}
                 </select>
               </Field>
+              <AdminOverviewCard status={adminOverviewStatus} overview={adminOverview} />
               <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-1 xl:grid-cols-2">
                 <Field label="Project name">
                   <input
@@ -1508,6 +1550,47 @@ function Field({ label, hint, children }: { readonly label: string; readonly hin
 
 function MetricCard({ icon: Icon, label, value, children }: { readonly icon: typeof Gauge; readonly label: string; readonly value: string; readonly children?: React.ReactNode }) {
   return <div className="rounded-xl border border-[#242d3a] bg-[#0d131b] p-3"><div className="flex items-center gap-1.5 text-[11px] font-semibold uppercase tracking-[0.1em] text-[#718095]"><Icon size={13} />{label}</div><p className="mt-1.5 text-lg font-semibold tabular-nums">{value}</p>{children}</div>;
+}
+
+function AdminOverviewCard({
+  status,
+  overview,
+}: {
+  readonly status: "idle" | "loading" | "loaded" | "unavailable" | "error";
+  readonly overview: WorkspaceAdminOverviewResponse | undefined;
+}) {
+  if (status === "idle" || status === "unavailable") return null;
+
+  if (status === "loading") {
+    return (
+      <div className="mt-3 flex items-center gap-2 rounded-xl border border-[#242d3a] bg-[#0d131b] p-3 text-xs text-[#8996a8]">
+        <LoaderCircle className="animate-spin" size={14} aria-hidden="true" />
+        Loading workspace admin overview…
+      </div>
+    );
+  }
+
+  if (status === "error" || overview === undefined) {
+    return (
+      <p className="mt-3 rounded-xl border border-[#242d3a] bg-[#0d131b] p-3 text-xs text-[#8996a8]">
+        Workspace admin overview is temporarily unavailable.
+      </p>
+    );
+  }
+
+  return (
+    <div className="mt-3 rounded-xl border border-[#242d3a] bg-[#0d131b] p-3">
+      <p className="text-[11px] font-semibold uppercase tracking-[0.1em] text-[#718095]">
+        Workspace admin overview
+      </p>
+      <div className="mt-2 grid grid-cols-2 gap-2 sm:grid-cols-4">
+        <MetricCard icon={Users} label="Members" value={String(overview.counts.members)} />
+        <MetricCard icon={ShieldCheck} label="Owners + admins" value={String(overview.counts.owners + overview.counts.admins)} />
+        <MetricCard icon={FolderTree} label="Projects" value={String(overview.counts.projects)} />
+        <MetricCard icon={Activity} label="Active runs" value={String(overview.counts.activeRuns)} />
+      </div>
+    </div>
+  );
 }
 
 function DataItem({ label, value, mono = false }: { readonly label: string; readonly value: string; readonly mono?: boolean }) {

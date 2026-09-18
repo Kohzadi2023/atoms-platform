@@ -27,15 +27,18 @@ this document being updated to say so:
   `buildWorkspaceAdminOverview` / `loadWorkspaceAdminOverview`, gated by
   `requireAdministrativeRole`, with tests proving a MEMBER and a
   non-member are both rejected before any count is loaded.
+- `apps/control-api/src/admin-routes.ts`: `registerAdminRoutes` wires the
+  above into `GET /v1/workspaces/:workspaceId/admin/overview`, registered
+  in `apps/control-api/src/app.ts` via the optional `adminOperations`
+  bundle and wired to real Prisma counts in `main.ts`. Covered by
+  `admin-routes.test.ts` (OWNER/ADMIN succeed, MEMBER gets 403 before
+  counts load, a non-member workspace gets 404).
 
-**Not yet done:** no Fastify route registers any of this in
-`apps/control-api/src/app.ts` -- there is no
-`GET /v1/workspaces/:workspaceId/admin/overview` a client can call yet --
-and no Web route or component under `apps/web` exists. The remaining Slice
-1 work is exactly those two things: wire the existing service into a route,
-then build the minimal authenticated Web page against it. Do not
-re-implement the contract, repository, or authorization layer described
-below; it already exists at the paths above.
+**Not yet done:** no Web route or component under `apps/web` exists yet.
+The remaining Slice 1 work is the minimal authenticated Web page against
+the now-live route above. Do not re-implement the contract, repository,
+route, or authorization layer described above; it already exists at the
+paths above.
 
 ## Goals
 
@@ -170,7 +173,7 @@ The auth/session layer should be refactored only as much as necessary to allow a
 - [x] contracts for overview response,
 - [x] Control API repository query scoped by membership,
 - [x] authorization tests proving MEMBER is denied and cross-workspace access is denied,
-- [ ] workspace-scoped admin route,
+- [x] workspace-scoped admin route,
 - [ ] loading/error/empty states,
 - [x] no mutation endpoints.
 
@@ -207,4 +210,4 @@ Before any Admin Console mutation ships:
 
 ## First implementation PR after staging auth activation
 
-The recommended first code PR is **read-only workspace admin overview** only. The contract, repository query, and authorization tests already exist (see "Implementation status" above); the remaining scope is the Control API route and a minimal authenticated Web route. Avoid membership mutations until the staging Entra flow is fully proven and the read-only authorization path is stable.
+The recommended first code PR is **read-only workspace admin overview** only. The contract, repository query, authorization tests, and the Control API route now all exist (see "Implementation status" above); the remaining scope is the minimal authenticated Web page. That piece was deliberately left for a change that can be verified in a real browser session (`apps/web`'s Entra sign-in flow cannot be exercised headlessly here) rather than shipped unverified. Avoid membership mutations until the staging Entra flow is fully proven and the read-only authorization path is stable.

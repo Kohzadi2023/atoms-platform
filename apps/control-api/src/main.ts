@@ -3,6 +3,7 @@ import { S3ObjectStorageProvider } from "@atoms/storage-provider";
 import { z } from "zod";
 
 import { buildControlApi } from "./app.js";
+import { getWorkspaceAdminOverviewCounts } from "./admin-overview-repository.js";
 import { resolveAuthRuntimeOptions } from "./auth-runtime.js";
 import { BullMqAttachmentScanQueue } from "./attachment-queue.js";
 import { PrismaAttachmentRepository } from "./attachment-repository.js";
@@ -177,6 +178,10 @@ async function main(): Promise<void> {
     },
     gtmOperations: {
       repository: new PrismaGtmControlRepository(prisma),
+    },
+    adminOperations: {
+      repository,
+      loadCounts: (workspaceId) => getWorkspaceAdminOverviewCounts(prisma, workspaceId),
     },
   });
 

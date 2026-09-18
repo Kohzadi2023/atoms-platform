@@ -33,12 +33,18 @@ this document being updated to say so:
   bundle and wired to real Prisma counts in `main.ts`. Covered by
   `admin-routes.test.ts` (OWNER/ADMIN succeed, MEMBER gets 403 before
   counts load, a non-member workspace gets 404).
+- `apps/web`: `ControlApiClient.getWorkspaceAdminOverview` (in
+  `src/lib/control-api.ts`) calls the route above; `WorkspaceShell` (in
+  `src/components/workspace-shell.tsx`) fetches it whenever the selected
+  workspace changes and renders an `AdminOverviewCard` with loading,
+  loaded, and unavailable/error states. Note this took a different shape
+  than the "Web foundation" section below originally proposed -- see the
+  note there.
 
-**Not yet done:** no Web route or component under `apps/web` exists yet.
-The remaining Slice 1 work is the minimal authenticated Web page against
-the now-live route above. Do not re-implement the contract, repository,
-route, or authorization layer described above; it already exists at the
-paths above.
+Slice 1 is now fully implemented and verified end to end, including a
+manual browser check of all three UI states (loaded counts, a 403 that
+renders nothing, and a request failure that renders a small inline
+message) against a local mock of the Control API.
 
 ## Goals
 
@@ -155,14 +161,23 @@ The exact response should be added to `packages/contracts` with Zod schemas befo
 
 The Web Admin Console should reuse the existing Entra session boundary and access-token provider. Do not instantiate a second MSAL client for admin routes.
 
-Recommended component split:
-
-```text
-apps/web/app/workspaces/[workspaceId]/admin/page.tsx
-apps/web/src/components/admin/admin-shell.tsx
-apps/web/src/components/admin/admin-overview.tsx
-apps/web/src/lib/admin-api.ts
-```
+This section originally recommended a dedicated route/component split
+(`apps/web/app/workspaces/[workspaceId]/admin/page.tsx`,
+`components/admin/admin-shell.tsx`, `components/admin/admin-overview.tsx`,
+`lib/admin-api.ts`). That assumed URL-routed workspace pages, but
+`apps/web` is actually a single client-rendered `WorkspaceShell`
+(`src/components/workspace-shell.tsx`) with no per-workspace Next.js
+routes at all -- workspace selection is a form control, not a route
+param, and there is one `ControlApiClient` class
+(`src/lib/control-api.ts`) rather than a per-feature `lib/*-api.ts` file
+per endpoint. Slice 1's overview surface was built consistent with that
+actual structure instead: a `getWorkspaceAdminOverview` method on
+`ControlApiClient`, and an `AdminOverviewCard` rendered inline in
+`WorkspaceShell` next to the workspace selector. A future slice that adds
+enough surface area to justify a real sub-route (e.g. Slice 2's member
+list, Slice 3's operations panel) should revisit whether dedicated
+routing is worth introducing then, rather than retrofitting it now for a
+single read-only card.
 
 The auth/session layer should be refactored only as much as necessary to allow authenticated route content to reuse the current token provider. Keep the current workspace sign-in experience unchanged during the first admin increment.
 
@@ -174,8 +189,10 @@ The auth/session layer should be refactored only as much as necessary to allow a
 - [x] Control API repository query scoped by membership,
 - [x] authorization tests proving MEMBER is denied and cross-workspace access is denied,
 - [x] workspace-scoped admin route,
-- [ ] loading/error/empty states,
+- [x] loading/error/empty states,
 - [x] no mutation endpoints.
+
+Slice 1 is complete.
 
 See "Implementation status" above for the exact files behind each checked
 item.
@@ -210,4 +227,4 @@ Before any Admin Console mutation ships:
 
 ## First implementation PR after staging auth activation
 
-The recommended first code PR is **read-only workspace admin overview** only. The contract, repository query, authorization tests, and the Control API route now all exist (see "Implementation status" above); the remaining scope is the minimal authenticated Web page. That piece was deliberately left for a change that can be verified in a real browser session (`apps/web`'s Entra sign-in flow cannot be exercised headlessly here) rather than shipped unverified. Avoid membership mutations until the staging Entra flow is fully proven and the read-only authorization path is stable.
+**Slice 1 is done.** The contract, repository query, authorization tests, Control API route, and the read-only Web card all exist (see "Implementation status" above). The Web piece was verified in a real browser against a local mock of the Control API using the existing `NODE_ENV=development` auth bypass in `entra-auth.ts` (not a real Entra session -- that still requires the live staging Entra tenant per the "Status" section at the top of this document). Avoid membership mutations until the staging Entra flow is fully proven live and the read-only authorization path is stable in that real environment.

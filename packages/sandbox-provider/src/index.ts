@@ -3,3 +3,4 @@ export * from "./errors.js";
 export * from "./project-validation-runner.js";
 export * from "./types.js";
 export * from "./preview-viability-script.js";
+export * from "./viability-template.js";

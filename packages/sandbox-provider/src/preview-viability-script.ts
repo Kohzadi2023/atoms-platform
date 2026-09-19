@@ -17,6 +17,12 @@ export const PREVIEW_VIABILITY_SCRIPT_PATH =
 export const DEFAULT_PLAYWRIGHT_ENTRY =
   "/opt/atoms-viability/node_modules/playwright/index.mjs";
 
+/**
+ * Chromium is installed beside Playwright, not under root's home, because the
+ * sandbox runs as an unprivileged user that could not see root's cache.
+ */
+export const DEFAULT_PLAYWRIGHT_BROWSERS_PATH = "/opt/atoms-viability/browsers";
+
 export const PREVIEW_VIABILITY_SCRIPT = String.raw`import { pathToFileURL } from "node:url";
 
 const port = process.env.VIABILITY_PORT ?? "3000";

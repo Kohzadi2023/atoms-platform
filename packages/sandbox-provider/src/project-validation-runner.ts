@@ -1,5 +1,11 @@
 import { z } from "zod";
 
+import {
+  DEFAULT_PLAYWRIGHT_ENTRY,
+  PREVIEW_VIABILITY_SCRIPT,
+  PREVIEW_VIABILITY_SCRIPT_PATH,
+} from "./preview-viability-script.js";
+
 import type {
   ExecResult,
   PreviewUrl,
@@ -99,6 +105,12 @@ export interface ProjectValidationRunnerOptions {
   readonly provider: SandboxProvider;
   readonly template?: string;
   readonly allowedHosts?: readonly string[];
+  /**
+   * When set, the preview-health step also loads the preview in a real browser
+   * inside the sandbox (see preview-viability-script.ts). Off by default because
+   * it needs Playwright and Chromium in the sandbox template.
+   */
+  readonly browserViability?: { readonly playwrightEntry?: string };
   readonly sandboxTimeoutMs?: number;
   readonly projectDirectory?: string;
   readonly previewPort?: number;
@@ -148,6 +160,7 @@ export class ProjectValidationRunner {
   readonly #provider: SandboxProvider;
   readonly #template: string | undefined;
   readonly #allowedHosts: readonly string[];
+  readonly #browserPlaywrightEntry: string | undefined;
   readonly #sandboxTimeoutMs: number;
   readonly #projectDirectory: string;
   readonly #previewPort: number;
@@ -160,6 +173,10 @@ export class ProjectValidationRunner {
       "registry.npmjs.org",
       "binaries.prisma.sh",
     ];
+    this.#browserPlaywrightEntry =
+      options.browserViability === undefined
+        ? undefined
+        : (options.browserViability.playwrightEntry ?? DEFAULT_PLAYWRIGHT_ENTRY);
     this.#sandboxTimeoutMs = options.sandboxTimeoutMs ?? 900_000;
     this.#projectDirectory = options.projectDirectory ?? "/home/user/project";
     this.#previewPort = options.previewPort ?? 3_000;
@@ -233,17 +250,31 @@ export class ProjectValidationRunner {
       steps.push(previewStartStep);
       await input.hooks?.onStep?.(sandbox, previewStartStep);
 
-      const healthCommand = previewHealthCommand.replaceAll(
-        "3000",
-        String(this.#previewPort),
-      );
-      const healthStep = await this.#executeStep(
-        sandbox,
-        steps.length + 1,
-        "preview-health",
-        healthCommand,
-        70_000,
-      );
+      let healthStep: ValidationStepReport;
+      if (this.#browserPlaywrightEntry === undefined) {
+        healthStep = await this.#executeStep(
+          sandbox,
+          steps.length + 1,
+          "preview-health",
+          previewHealthCommand.replaceAll("3000", String(this.#previewPort)),
+          70_000,
+        );
+      } else {
+        await this.#provider.writeFiles(sandbox.id, [
+          { path: PREVIEW_VIABILITY_SCRIPT_PATH, content: PREVIEW_VIABILITY_SCRIPT },
+        ]);
+        healthStep = await this.#executeStep(
+          sandbox,
+          steps.length + 1,
+          "preview-health",
+          `node ${PREVIEW_VIABILITY_SCRIPT_PATH}`,
+          150_000,
+          {
+            VIABILITY_PORT: String(this.#previewPort),
+            VIABILITY_PLAYWRIGHT_ENTRY: this.#browserPlaywrightEntry,
+          },
+        );
+      }
       steps.push(healthStep);
       await input.hooks?.onStep?.(sandbox, healthStep);
       this.#assertSuccessful(healthStep);
@@ -275,12 +306,14 @@ export class ProjectValidationRunner {
     name: ValidationStepName,
     command: string,
     timeoutMs: number,
+    envs?: Record<string, string>,
   ): Promise<ValidationStepReport> {
     const startedAt = this.#now();
     const result = await this.#provider.exec(sandbox.id, {
       command,
       cwd: this.#projectDirectory,
       timeoutMs,
+      ...(envs === undefined ? {} : { envs }),
     });
     return {
       ordinal,

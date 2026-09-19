@@ -34,11 +34,9 @@ export class RedisWorkerReadinessSource implements WorkerReadinessSource {
   readonly #timeoutMs: number;
 
   constructor(options: RedisWorkerReadinessSourceOptions) {
-    this.#redis = new Redis(options.redisUrl, {
-      maxRetriesPerRequest: 1,
-      enableOfflineQueue: false,
-      lazyConnect: false,
-    });
+    // The offline queue stays on so a read issued right after startup waits for the
+    // connection instead of failing; the timeout in read() bounds an unreachable Redis.
+    this.#redis = new Redis(options.redisUrl, { maxRetriesPerRequest: 1 });
     // Connection errors surface through read(); without a listener ioredis logs them noisily.
     this.#redis.on("error", () => undefined);
     this.#key = workerReadinessKey(options.prefix);

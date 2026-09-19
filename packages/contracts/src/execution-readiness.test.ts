@@ -20,6 +20,7 @@ function report(overrides: Partial<WorkerReadinessReport> = {}): WorkerReadiness
     providerCredentialsPresent: true,
     egressVerified: true,
     attachmentContractVerified: true,
+    browserViabilityRequired: true,
     ...overrides,
   };
 }
@@ -67,6 +68,7 @@ test("each gate fails on its own and is named", () => {
     [{ workspaceCeilingConfigured: false }, "G1"],
     [{ attachmentContractVerified: false }, "G4"],
     [{ egressVerified: false }, "G5"],
+    [{ browserViabilityRequired: false }, "G7"],
     [{ providerCredentialsPresent: false }, "LOCK_3"],
   ];
   for (const [override, gate] of cases) {
@@ -88,7 +90,7 @@ test("a worker that never reported fails every gate", () => {
   });
 
   assert.equal(result.workerState, "missing");
-  assert.deepEqual(result.failingGates, ["G1", "G4", "G5", "LOCK_3"]);
+  assert.deepEqual(result.failingGates, ["G1", "G4", "G5", "G7", "LOCK_3"]);
   assert.equal(result.inconsistent, true);
 });
 

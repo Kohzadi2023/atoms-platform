@@ -90,6 +90,10 @@ const EnvironmentSchema = z
     // Must be set whenever a per-run budget is set; see the refinement below.
     // Set by an operator after the live egress probe passes (docs/adr/production-execution-gate.md, G5).
     SANDBOX_EGRESS_VERIFIED_AT: z.string().trim().min(1).optional(),
+    // "required" loads every validated preview in a real browser inside the sandbox, which
+    // needs Playwright and Chromium in E2B_TEMPLATE (docs/adr/production-execution-gate.md, G7).
+    PREVIEW_BROWSER_VIABILITY: z.enum(["off", "required"]).default("off"),
+    PREVIEW_BROWSER_PLAYWRIGHT_ENTRY: z.string().trim().min(1).optional(),
     WORKSPACE_PROVIDER_BUDGET_USD_MICROS_PER_DAY: z.coerce
       .number()
       .int()
@@ -269,6 +273,14 @@ async function main(): Promise<void> {
       ? {}
       : { template: environment.E2B_TEMPLATE }),
     allowedHosts: parseEgressAllowedHosts(environment.E2B_ALLOWED_HOSTS),
+    ...(environment.PREVIEW_BROWSER_VIABILITY === "required"
+      ? {
+          browserViability:
+            environment.PREVIEW_BROWSER_PLAYWRIGHT_ENTRY === undefined
+              ? {}
+              : { playwrightEntry: environment.PREVIEW_BROWSER_PLAYWRIGHT_ENTRY },
+        }
+      : {}),
     sandboxTimeoutMs: environment.SANDBOX_IDLE_TIMEOUT_MS,
   });
   const previewStore = new RedisPreviewSessionStore({
@@ -489,6 +501,7 @@ async function main(): Promise<void> {
         environment.OPENAI_API_KEY.length > 0 && environment.E2B_API_KEY.length > 0,
       egressVerifiedAt: environment.SANDBOX_EGRESS_VERIFIED_AT,
       attachmentContractVerified: referenceContractIntact(),
+      browserViabilityRequired: environment.PREVIEW_BROWSER_VIABILITY === "required",
     },
     onError: (error) => console.error("Readiness publish failed", error),
   });

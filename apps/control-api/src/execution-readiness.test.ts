@@ -22,6 +22,7 @@ function report(overrides: Partial<WorkerReadinessReport> = {}): WorkerReadiness
     providerCredentialsPresent: true,
     egressVerified: true,
     attachmentContractVerified: true,
+    browserViabilityRequired: true,
     ...overrides,
   };
 }

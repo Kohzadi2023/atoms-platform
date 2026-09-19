@@ -21,6 +21,7 @@ const report: WorkerReadinessReport = {
   providerCredentialsPresent: true,
   egressVerified: false,
   attachmentContractVerified: true,
+  browserViabilityRequired: true,
 };
 
 test(
@@ -37,6 +38,15 @@ test(
       // Exactly how the worker publishes: JSON with an expiry.
       await writer.set(workerReadinessKey(prefix), JSON.stringify(report), "EX", 180);
       assert.deepEqual(await source.read(), report);
+
+      // A source that has just been created must wait for its connection, not read as
+      // "no report": this is the first /readyz after the Control API starts.
+      const cold = new RedisWorkerReadinessSource({ redisUrl, prefix });
+      try {
+        assert.deepEqual(await cold.read(), report, "first read on a cold connection");
+      } finally {
+        await cold.close();
+      }
 
       await writer.set(workerReadinessKey(prefix), "{not json", "EX", 180);
       assert.equal(await source.read(), null, "garbage reads as no report");

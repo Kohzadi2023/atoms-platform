@@ -32,7 +32,7 @@ A controlled launch for design partners requires G0, G1, G4, G5, G7 and tenant i
 | G3 | Evidence-based acceptance | P1 (blocks release-ready claims only) | Open |
 | G4 | Attachment trust boundary | P0 | Pass (#96): contract, fail-closed routing, approval no longer model-controlled, tests |
 | G5 | Network egress | P0 (verification only) | Offline checks pass (#97); live probe pending, needs E2B credential (#14) |
-| G7 | Live-execution readiness and preview viability | P0 | Readiness decision implemented (#98); browser viability open |
+| G7 | Live-execution readiness and preview viability | P0 | Readiness decision and browser check implemented (#98); browser check needs a Playwright-enabled sandbox template before it can be switched on |
 | G6 | Project-type capability routing | P1 | Open |
 
 ### G0 - Global kill switch (pass)
@@ -152,14 +152,20 @@ The Control API's `/readyz` should report `platformReady` separately from `execu
 
 **Implemented: readiness decision (#98).**
 
-- `evaluateExecutionReadiness` (`packages/contracts/src/execution-readiness.ts`) is the single decision. Inputs: the Control API flag and the worker's published report. Outputs: `preconditionsMet`, `executionReady` (flag on and preconditions met), `inconsistent` (flag on while a precondition fails) and the failing gate IDs (`G1`, `G4`, `G5`, `LOCK_3`). No report, or one older than 90 seconds, fails every worker gate: unknown means not ready.
+- `evaluateExecutionReadiness` (`packages/contracts/src/execution-readiness.ts`) is the single decision. Inputs: the Control API flag and the worker's published report. Outputs: `preconditionsMet`, `executionReady` (flag on and preconditions met), `inconsistent` (flag on while a precondition fails) and the failing gate IDs (`G1`, `G4`, `G5`, `G7`, `LOCK_3`). No report, or one older than 90 seconds, fails every worker gate: unknown means not ready.
 - The worker publishes booleans only (`WorkerReadinessReport`) to Redis under `<RUN_QUEUE_PREFIX or "atoms">:readiness:worker` every 30 seconds; the Control API reads it. A failing channel reads as "no report", so `/readyz` stays `200`.
 - `/readyz` is additive: status code and `status: "ready"` are unchanged; it adds `platformReady`, `executionReady` and an `execution` block. It is unauthenticated like the rest of `/readyz`, so it exposes gate IDs and booleans only.
 - `pnpm readiness:check --origin <api> [--for-enable]` is the read-only pre-flight; see the staging runbook.
 - **`egressVerified` is an attestation.** G5's live probe needs E2B credentials and a sandbox, so the worker cannot run it on every start. An operator sets `SANDBOX_EGRESS_VERIFIED_AT` after a passing probe. The gate is only as honest as that variable.
 - **Not enforced.** The Control API reports the state but does not refuse runs when the flag is on and a gate fails. Enforcement would make a missing worker heartbeat block every run; the check exists so an operator sees the disagreement instead. Revisit if a real incident shows the report is ignored.
 
-**Minimum preview viability (browser).** A `200` from `/` does not show the page is usable. Before a design partner receives a preview: the process starts, the health endpoint succeeds, `/` responds, the page renders in a real browser, and there is no fatal JavaScript exception and no startup `5xx`. No business workflow and no AI-generated end-to-end test at this level.
+**Implemented: browser viability (#98).** The `preview-health` validation step, when `PREVIEW_BROWSER_VIABILITY=required`, runs `preview-viability-script.ts` inside the sandbox against `127.0.0.1` (no egress needed). It checks: the process answers; `/` never returns 5xx across three samples, is HTML with a body (a redirect is fine); `/api/health`, if present, does not 5xx (a 404 is only a note, because generated apps are not required to have one); then Playwright loads `/` in headless Chromium and fails on an uncaught page exception, a 5xx response, a browser 4xx on `/`, or a blank page. Exit code 3 means the browser could not start (a template problem, reported separately from an application defect). The step name stays `preview-health`, so evidence mapping and the database are unchanged.
+
+- **Off by default and gated.** Chromium must exist in `E2B_TEMPLATE` (Playwright at `/opt/atoms-viability/node_modules/playwright`, or set `PREVIEW_BROWSER_PLAYWRIGHT_ENTRY`). Until then the worker keeps the plain HTTP check, and readiness gate `G7` fails, so live execution cannot report ready without it. Turning the setting on with a template that lacks Chromium makes every validation fail closed with exit code 3.
+- **Verified offline** against a local HTTP server and a stub Playwright: every failure mode above, exit codes, and the runner wiring. **Not verified:** real Chromium inside a real E2B sandbox. That needs the template and the E2B credential (#14), and is part of the first controlled run.
+- **`/api/health` is not mandatory.** The ADR wording "health endpoint succeeds" is read as "if the app has one". Requiring it would be a change to the generation contract (Bob and Alex manifests) and is not made here.
+
+**Minimum preview viability (browser), as originally specified.** A `200` from `/` does not show the page is usable. Before a design partner receives a preview: the process starts, the health endpoint succeeds, `/` responds, the page renders in a real browser, and there is no fatal JavaScript exception and no startup `5xx`. No business workflow and no AI-generated end-to-end test at this level.
 
 Full behavioral acceptance stays G3 (P1). A design partner receives a functioning preview, not necessarily a release-qualified application.
 

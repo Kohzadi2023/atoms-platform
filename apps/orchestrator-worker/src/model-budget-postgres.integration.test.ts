@@ -96,6 +96,7 @@ test(
       });
       assert.deepEqual(cannotEnlarge, {
         accepted: false,
+        exhausted: "run",
         remainingUsdMicros: 300_000,
       });
 
@@ -119,6 +120,7 @@ test(
       });
       assert.deepEqual(tightened, {
         accepted: false,
+        exhausted: "run",
         remainingUsdMicros: 100_000,
       });
     } finally {

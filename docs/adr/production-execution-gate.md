@@ -32,7 +32,7 @@ A controlled launch for design partners requires G0, G1, G4, G5, G7 and tenant i
 | G3 | Evidence-based acceptance | P1 (blocks release-ready claims only) | Open |
 | G4 | Attachment trust boundary | P0 | Pass (#96): contract, fail-closed routing, approval no longer model-controlled, tests |
 | G5 | Network egress | P0 (verification only) | Offline checks pass (#97); live probe pending, needs E2B credential (#14) |
-| G7 | Live-execution readiness and preview viability | P0 | Open |
+| G7 | Live-execution readiness and preview viability | P0 | Readiness decision implemented (#98); browser viability open |
 | G6 | Project-type capability routing | P1 | Open |
 
 ### G0 - Global kill switch (pass)
@@ -149,6 +149,15 @@ READY_FOR_LIVE_EXECUTION only if all are true
 ```
 
 The Control API's `/readyz` should report `platformReady` separately from `executionReady`, since the API can be healthy while AI execution is deliberately off. Because the Control API cannot see the worker's environment, the worker (or an out-of-band check) must publish its own state.
+
+**Implemented: readiness decision (#98).**
+
+- `evaluateExecutionReadiness` (`packages/contracts/src/execution-readiness.ts`) is the single decision. Inputs: the Control API flag and the worker's published report. Outputs: `preconditionsMet`, `executionReady` (flag on and preconditions met), `inconsistent` (flag on while a precondition fails) and the failing gate IDs (`G1`, `G4`, `G5`, `LOCK_3`). No report, or one older than 90 seconds, fails every worker gate: unknown means not ready.
+- The worker publishes booleans only (`WorkerReadinessReport`) to Redis under `<RUN_QUEUE_PREFIX or "atoms">:readiness:worker` every 30 seconds; the Control API reads it. A failing channel reads as "no report", so `/readyz` stays `200`.
+- `/readyz` is additive: status code and `status: "ready"` are unchanged; it adds `platformReady`, `executionReady` and an `execution` block. It is unauthenticated like the rest of `/readyz`, so it exposes gate IDs and booleans only.
+- `pnpm readiness:check --origin <api> [--for-enable]` is the read-only pre-flight; see the staging runbook.
+- **`egressVerified` is an attestation.** G5's live probe needs E2B credentials and a sandbox, so the worker cannot run it on every start. An operator sets `SANDBOX_EGRESS_VERIFIED_AT` after a passing probe. The gate is only as honest as that variable.
+- **Not enforced.** The Control API reports the state but does not refuse runs when the flag is on and a gate fails. Enforcement would make a missing worker heartbeat block every run; the check exists so an operator sees the disagreement instead. Revisit if a real incident shows the report is ignored.
 
 **Minimum preview viability (browser).** A `200` from `/` does not show the page is usable. Before a design partner receives a preview: the process starts, the health endpoint succeeds, `/` responds, the page renders in a real browser, and there is no fatal JavaScript exception and no startup `5xx`. No business workflow and no AI-generated end-to-end test at this level.
 

@@ -1,3 +1,7 @@
+import {
+  ExecutionReadinessService,
+  RedisWorkerReadinessSource,
+} from "./execution-readiness.js";
 import { createPrismaClient } from "@atoms/db";
 import { S3ObjectStorageProvider } from "@atoms/storage-provider";
 import { z } from "zod";
@@ -157,6 +161,15 @@ async function main(): Promise<void> {
     repository,
     runQueue,
     runExecutionEnabled: environment.RUN_EXECUTION_ENABLED,
+    executionReadiness: new ExecutionReadinessService({
+      source: new RedisWorkerReadinessSource({
+        redisUrl: environment.REDIS_URL,
+        ...(environment.RUN_QUEUE_PREFIX === undefined
+          ? {}
+          : { prefix: environment.RUN_QUEUE_PREFIX }),
+      }),
+      controlPlaneEnabled: environment.RUN_EXECUTION_ENABLED,
+    }),
     logger: true,
     closeDependencies: true,
     corsOrigins: environment.CONTROL_API_CORS_ORIGINS,

@@ -9,6 +9,7 @@
     "start": "node dist/main.js",
     "test": "pnpm build && node --test dist/*.test.js",
     "test:attachments-durability:built": "node --test dist/attachment.integration.test.js",
+    "test:readiness-redis:built": "node --test dist/execution-readiness.integration.test.js",
     "test:workspace-onboarding:built": "node --test dist/workspace-onboarding.integration.test.js",
     "typecheck": "tsc -p tsconfig.json --noEmit"
   },
@@ -25,6 +26,7 @@
     "bullmq": "catalog:",
     "fastify": "catalog:",
     "fastify-type-provider-zod": "catalog:",
+    "ioredis": "catalog:",
     "jose": "6.1.2",
     "zod": "catalog:"
   },

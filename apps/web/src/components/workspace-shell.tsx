@@ -69,6 +69,12 @@ import {
   type ControlApiAccessTokenProvider,
 } from "../lib/control-api";
 import {
+  canApprove,
+  extractPlanApprovalSummary,
+  requiresRequirementsConfirmation,
+  type PlanApprovalSummary,
+} from "../lib/plan-approval-summary";
+import {
   LIVE_PROVIDER_CONFIRMATION,
   MAX_ALLOWED_COST_CAD,
   validateLiveRunConsent,
@@ -168,6 +174,7 @@ export function WorkspaceShell({
   const [now, setNow] = useState(() => Date.now());
   const [files, setFiles] = useState<readonly ProjectFileSummary[]>([]);
   const [artifacts, setArtifacts] = useState<readonly RunArtifactResponse[]>([]);
+  const [requirementsConfirmed, setRequirementsConfirmed] = useState(false);
   const [fileSearch, setFileSearch] = useState("");
   const [selectedFile, setSelectedFile] = useState<
     FileContentResponse | undefined
@@ -540,6 +547,12 @@ export function WorkspaceShell({
     setAttachments(selected);
   }
 
+  // A confirmation belongs to one approval request: a new run or a new approval
+  // event starts unconfirmed.
+  useEffect(() => {
+    setRequirementsConfirmed(false);
+  }, [run?.id, projection.approvalReason]);
+
   async function applyRunAction(action: RunAction) {
     if (run === undefined) return;
     setActionBusy(action);
@@ -563,6 +576,11 @@ export function WorkspaceShell({
             "The approval scope is unavailable. Wait for the approval event replay before trying again.",
           );
         }
+        if (!canApprove(projection.approvalScope, requirementsConfirmed)) {
+          throw new Error(
+            "Confirm that you have reviewed the requirements before approving the plan.",
+          );
+        }
         input = {
           ...common,
           action,
@@ -574,6 +592,7 @@ export function WorkspaceShell({
       }
       const updated = await api.runAction(run.id, input);
       setRun(updated);
+      if (action === "approve") setRequirementsConfirmed(false);
       setProjection((current) => ({
         ...current,
         inferredRunStatus: updated.status,
@@ -1032,10 +1051,20 @@ export function WorkspaceShell({
                       <p className="mt-1 text-sm leading-5 text-[#d1bd92]">
                         {projection.approvalReason}
                       </p>
+                      {requiresRequirementsConfirmation(projection.approvalScope) ? (
+                        <PlanRequirementsReview
+                          summary={extractPlanApprovalSummary(artifacts)}
+                          confirmed={requirementsConfirmed}
+                          onConfirmedChange={setRequirementsConfirmed}
+                        />
+                      ) : null}
                       <button
                         className="mt-3 inline-flex items-center gap-2 rounded-lg bg-[#f4c76b] px-3 py-2 text-xs font-bold text-[#2c210b] disabled:opacity-60"
                         type="button"
-                        disabled={actionBusy !== undefined}
+                        disabled={
+                          actionBusy !== undefined ||
+                          !canApprove(projection.approvalScope, requirementsConfirmed)
+                        }
                         onClick={() => void applyRunAction("approve")}
                       >
                         {actionBusy === "approve" ? (
@@ -1405,6 +1434,88 @@ function TestsPanel({ validations }: { readonly validations: ReturnType<typeof c
           </div>
         </details>
       ))}
+    </div>
+  );
+}
+
+function PlanRequirementsReview({
+  summary,
+  confirmed,
+  onConfirmedChange,
+}: {
+  readonly summary: PlanApprovalSummary | null;
+  readonly confirmed: boolean;
+  readonly onConfirmedChange: (confirmed: boolean) => void;
+}) {
+  return (
+    <div className="mt-3 rounded-xl border border-[#4a3f24] bg-[#161208] p-3">
+      <p className="text-xs leading-5 text-[#d1bd92]">
+        These requirements were derived by the agents from your prompt and any
+        documents you attached, so they may reflect the contents of those
+        documents. Read them before code is generated.
+      </p>
+      {summary === null ? (
+        <p className="mt-2 text-xs leading-5 text-[#f4c76b]">
+          The requirements list could not be displayed. Open the Artifacts tab
+          and read the emma-output artifact before approving.
+        </p>
+      ) : (
+        <div className="mt-3 max-h-80 space-y-3 overflow-auto text-xs leading-5 text-[#e8dcc0]">
+          <div>
+            <p className="font-semibold text-[#ffe1a4]">{summary.productName}</p>
+            <p className="mt-1">{summary.problemStatement}</p>
+            <p className="mt-1 text-[#b9a978]">
+              For: {summary.targetUsers.join(", ")}
+            </p>
+          </div>
+          <ol className="space-y-2">
+            {summary.userStories.map((story) => (
+              <li key={story.id} className="rounded-lg bg-[#1d1809] p-2">
+                <p>
+                  <span className="font-mono text-[#f4c76b]">{story.id}</span> As a{" "}
+                  {story.role}, I want {story.goal}, so that {story.benefit}.
+                </p>
+                <ul className="mt-1 list-disc pl-5 text-[#cdbf99]">
+                  {story.acceptanceCriteria.map((criterion) => (
+                    <li key={criterion}>{criterion}</li>
+                  ))}
+                </ul>
+              </li>
+            ))}
+          </ol>
+          <RequirementList title="Out of scope" items={summary.nonGoals} />
+          <RequirementList title="Assumptions" items={summary.assumptions} />
+        </div>
+      )}
+      <label className="mt-3 flex cursor-pointer items-start gap-2 text-xs font-medium text-[#ffe1a4]">
+        <input
+          className="mt-0.5"
+          type="checkbox"
+          checked={confirmed}
+          onChange={(event) => onConfirmedChange(event.target.checked)}
+        />
+        <span>I have reviewed these requirements and they match what I want built.</span>
+      </label>
+    </div>
+  );
+}
+
+function RequirementList({
+  title,
+  items,
+}: {
+  readonly title: string;
+  readonly items: readonly string[];
+}) {
+  if (items.length === 0) return null;
+  return (
+    <div>
+      <p className="font-semibold text-[#ffe1a4]">{title}</p>
+      <ul className="mt-1 list-disc pl-5 text-[#cdbf99]">
+        {items.map((item) => (
+          <li key={item}>{item}</li>
+        ))}
+      </ul>
     </div>
   );
 }

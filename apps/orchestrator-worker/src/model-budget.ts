@@ -52,12 +52,34 @@ export class ProviderBudgetError extends Error {
   }
 }
 
+export type BudgetExhaustionScope = "run" | "workspace";
+
+export interface BudgetReservationResult {
+  readonly accepted: boolean;
+  /** Remaining budget in the scope that was checked (or that rejected). */
+  readonly remainingUsdMicros: number;
+  /** Present only when `accepted` is false. */
+  readonly exhausted?: BudgetExhaustionScope;
+}
+
 export interface RunProviderBudgetStore {
   reserve(input: {
     readonly runId: string;
     readonly reservationUsdMicros: number;
     readonly totalBudgetUsdMicros: number;
-  }): Promise<{ readonly accepted: boolean; readonly remainingUsdMicros: number }>;
+    /**
+     * Per-workspace, per-UTC-day ceiling. Omitted only by callers that do
+     * not enforce one (tests); the worker refuses to start with a per-run
+     * budget and no workspace ceiling.
+     */
+    readonly workspaceDailyBudgetUsdMicros?: number;
+  }): Promise<BudgetReservationResult>;
+
+  /** Records what a completed provider call actually cost. Telemetry only. */
+  recordActual(input: {
+    readonly runId: string;
+    readonly actualUsdMicros: number;
+  }): Promise<void>;
 }
 
 export interface RoutedModelGateway extends ModelGateway {
@@ -68,6 +90,7 @@ export interface BudgetedModelGatewayOptions {
   readonly gateway: RoutedModelGateway;
   readonly budgetStore: RunProviderBudgetStore;
   readonly totalBudgetUsdMicros: number;
+  readonly workspaceDailyBudgetUsdMicros?: number;
   readonly pricing: Readonly<Record<string, ModelPricing>>;
   readonly outputTokenLimits: Readonly<Record<string, number>>;
   readonly safetyMultiplier?: number;
@@ -77,6 +100,7 @@ export class BudgetedModelGateway implements ModelGateway {
   readonly #gateway: RoutedModelGateway;
   readonly #budgetStore: RunProviderBudgetStore;
   readonly #totalBudgetUsdMicros: number;
+  readonly #workspaceDailyBudgetUsdMicros: number | undefined;
   readonly #pricing: Readonly<Record<string, ModelPricing>>;
   readonly #outputTokenLimits: Readonly<Record<string, number>>;
   readonly #safetyMultiplier: number;
@@ -87,6 +111,15 @@ export class BudgetedModelGateway implements ModelGateway {
       options.totalBudgetUsdMicros < 0
     ) {
       throw new RangeError("totalBudgetUsdMicros must be a non-negative integer");
+    }
+    if (
+      options.workspaceDailyBudgetUsdMicros !== undefined &&
+      (!Number.isInteger(options.workspaceDailyBudgetUsdMicros) ||
+        options.workspaceDailyBudgetUsdMicros < 1)
+    ) {
+      throw new RangeError(
+        "workspaceDailyBudgetUsdMicros must be a positive integer when provided",
+      );
     }
     const safetyMultiplier = options.safetyMultiplier ?? 1.5;
     if (
@@ -100,24 +133,43 @@ export class BudgetedModelGateway implements ModelGateway {
     this.#gateway = options.gateway;
     this.#budgetStore = options.budgetStore;
     this.#totalBudgetUsdMicros = options.totalBudgetUsdMicros;
+    this.#workspaceDailyBudgetUsdMicros = options.workspaceDailyBudgetUsdMicros;
     this.#pricing = options.pricing;
     this.#outputTokenLimits = options.outputTokenLimits;
     this.#safetyMultiplier = safetyMultiplier;
   }
 
   async generate(request: ModelRequest): Promise<ModelResponse> {
-    await this.#reserve(request);
-    return this.#gateway.generate(request);
+    const runId = await this.#reserve(request);
+    const response = await this.#gateway.generate(request);
+    await this.#recordActual(runId, response);
+    return response;
   }
 
   async *stream(request: ModelRequest): AsyncIterable<ModelStreamEvent> {
-    await this.#reserve(request);
+    const runId = await this.#reserve(request);
     for await (const event of this.#gateway.stream(request)) {
+      if (event.type === "completed") {
+        await this.#recordActual(runId, event.response);
+      }
       yield event;
     }
   }
 
-  async #reserve(request: ModelRequest): Promise<void> {
+  async #recordActual(runId: string, response: ModelResponse): Promise<void> {
+    const actualUsdMicros = response.usage.estimatedCostUsdMicros;
+    if (actualUsdMicros === undefined || actualUsdMicros < 0) return;
+    try {
+      await this.#budgetStore.recordActual({ runId, actualUsdMicros });
+    } catch {
+      // The provider call already happened and was paid for. Failing it here
+      // would discard the response and trigger a retry that pays again. The
+      // reservation that enforces the ceiling is unaffected, so the only
+      // consequence of a lost write is a gap in reported actual cost.
+    }
+  }
+
+  async #reserve(request: ModelRequest): Promise<string> {
     if (this.#totalBudgetUsdMicros === 0) {
       throw new ProviderBudgetError(
         "PROVIDER_BUDGET_DISABLED",
@@ -145,14 +197,24 @@ export class BudgetedModelGateway implements ModelGateway {
       runId,
       reservationUsdMicros,
       totalBudgetUsdMicros: this.#totalBudgetUsdMicros,
+      ...(this.#workspaceDailyBudgetUsdMicros === undefined
+        ? {}
+        : { workspaceDailyBudgetUsdMicros: this.#workspaceDailyBudgetUsdMicros }),
     });
 
     if (!reservation.accepted) {
+      if (reservation.exhausted === "workspace") {
+        throw new ProviderBudgetError(
+          "WORKSPACE_BUDGET_EXCEEDED",
+          `Provider request reservation ${String(reservationUsdMicros)} micro-USD exceeds the remaining daily workspace budget ${String(reservation.remainingUsdMicros)} micro-USD`,
+        );
+      }
       throw new ProviderBudgetError(
         "PROVIDER_BUDGET_EXCEEDED",
         `Provider request reservation ${String(reservationUsdMicros)} micro-USD exceeds remaining run budget ${String(reservation.remainingUsdMicros)} micro-USD`,
       );
     }
+    return runId;
   }
 }
 
@@ -258,6 +320,12 @@ interface ProviderBudgetRow {
   readonly reservedUsdMicros: number;
 }
 
+interface WorkspaceWindowRow {
+  readonly reservedUsdMicros: number;
+  readonly workspaceId: string;
+  readonly windowDate: string;
+}
+
 export class PostgresRunProviderBudgetStore implements RunProviderBudgetStore {
   readonly #prisma: PrismaClient;
 
@@ -269,12 +337,20 @@ export class PostgresRunProviderBudgetStore implements RunProviderBudgetStore {
     readonly runId: string;
     readonly reservationUsdMicros: number;
     readonly totalBudgetUsdMicros: number;
-  }): Promise<{ readonly accepted: boolean; readonly remainingUsdMicros: number }> {
+    readonly workspaceDailyBudgetUsdMicros?: number;
+  }): Promise<BudgetReservationResult> {
     if (!Number.isInteger(input.reservationUsdMicros) || input.reservationUsdMicros <= 0) {
       throw new RangeError("reservationUsdMicros must be a positive integer");
     }
     if (!Number.isInteger(input.totalBudgetUsdMicros) || input.totalBudgetUsdMicros <= 0) {
       throw new RangeError("totalBudgetUsdMicros must be a positive integer");
+    }
+    const workspaceCap = input.workspaceDailyBudgetUsdMicros;
+    if (
+      workspaceCap !== undefined &&
+      (!Number.isInteger(workspaceCap) || workspaceCap <= 0)
+    ) {
+      throw new RangeError("workspaceDailyBudgetUsdMicros must be a positive integer");
     }
     if (input.runId.trim().length === 0) {
       throw new TypeError("runId must not be empty");
@@ -298,6 +374,8 @@ export class PostgresRunProviderBudgetStore implements RunProviderBudgetStore {
         ON CONFLICT (run_id) DO NOTHING
       `;
 
+      // Lock order is always run row first, then workspace-window row, so two
+      // runs of one workspace serialize on the window without deadlocking.
       const rows = await transaction.$queryRaw<ProviderBudgetRow[]>`
         SELECT
           total_usd_micros AS "totalUsdMicros",
@@ -320,7 +398,56 @@ export class PostgresRunProviderBudgetStore implements RunProviderBudgetStore {
         effectiveTotalUsdMicros - current.reservedUsdMicros,
       );
       if (input.reservationUsdMicros > remainingUsdMicros) {
-        return { accepted: false, remainingUsdMicros };
+        return { accepted: false, remainingUsdMicros, exhausted: "run" as const };
+      }
+
+      if (workspaceCap !== undefined) {
+        await transaction.$executeRaw`
+          INSERT INTO atoms_runtime.workspace_provider_budget_windows (
+            workspace_id,
+            window_date,
+            reserved_usd_micros
+          )
+          SELECT
+            run.workspace_id,
+            (CURRENT_TIMESTAMP AT TIME ZONE 'UTC')::date,
+            0
+          FROM public.agent_runs AS run
+          WHERE run.id = ${input.runId}::uuid
+          ON CONFLICT (workspace_id, window_date) DO NOTHING
+        `;
+        const windows = await transaction.$queryRaw<WorkspaceWindowRow[]>`
+          SELECT
+            window_row.reserved_usd_micros AS "reservedUsdMicros",
+            window_row.workspace_id::text AS "workspaceId",
+            window_row.window_date::text AS "windowDate"
+          FROM atoms_runtime.workspace_provider_budget_windows AS window_row
+          JOIN public.agent_runs AS run
+            ON run.workspace_id = window_row.workspace_id
+          WHERE run.id = ${input.runId}::uuid
+            AND window_row.window_date = (CURRENT_TIMESTAMP AT TIME ZONE 'UTC')::date
+          FOR UPDATE OF window_row
+        `;
+        const window = windows[0];
+        if (window === undefined) {
+          throw new Error("Workspace budget window could not be initialized");
+        }
+        const windowRemaining = Math.max(0, workspaceCap - window.reservedUsdMicros);
+        if (input.reservationUsdMicros > windowRemaining) {
+          return {
+            accepted: false,
+            remainingUsdMicros: windowRemaining,
+            exhausted: "workspace" as const,
+          };
+        }
+        await transaction.$executeRaw`
+          UPDATE atoms_runtime.workspace_provider_budget_windows
+          SET
+            reserved_usd_micros = reserved_usd_micros + ${input.reservationUsdMicros},
+            updated_at = CURRENT_TIMESTAMP
+          WHERE workspace_id = ${window.workspaceId}::uuid
+            AND window_date = ${window.windowDate}::date
+        `;
       }
 
       await transaction.$executeRaw`
@@ -336,5 +463,21 @@ export class PostgresRunProviderBudgetStore implements RunProviderBudgetStore {
         remainingUsdMicros: remainingUsdMicros - input.reservationUsdMicros,
       };
     });
+  }
+
+  async recordActual(input: {
+    readonly runId: string;
+    readonly actualUsdMicros: number;
+  }): Promise<void> {
+    if (!Number.isInteger(input.actualUsdMicros) || input.actualUsdMicros < 0) {
+      throw new RangeError("actualUsdMicros must be a non-negative integer");
+    }
+    await this.#prisma.$executeRaw`
+      UPDATE atoms_runtime.run_provider_budgets
+      SET
+        actual_usd_micros = actual_usd_micros + ${input.actualUsdMicros},
+        updated_at = CURRENT_TIMESTAMP
+      WHERE run_id = ${input.runId}::uuid
+    `;
   }
 }

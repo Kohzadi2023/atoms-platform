@@ -24,3 +24,20 @@ test("worker runtime keeps provider budget fail-closed, durable, and pinned", as
   assert.match(source, /const agents = new ModelBackedAgentRuntime\(gateway\)/u);
   assert.doesNotMatch(source, /RUN_PROVIDER_BUDGET_TTL_MS/u);
 });
+
+test("worker runtime refuses a per-run budget without a workspace ceiling and passes the ceiling through", async () => {
+  const source = await readFile(resolve(process.cwd(), "src/main.ts"), "utf8");
+
+  assert.match(
+    source,
+    /WORKSPACE_PROVIDER_BUDGET_USD_MICROS_PER_DAY:[\s\S]*?\.default\(0\)/u,
+  );
+  assert.match(
+    source,
+    /RUN_PROVIDER_BUDGET_USD_MICROS > 0 &&\s*environment\.WORKSPACE_PROVIDER_BUDGET_USD_MICROS_PER_DAY === 0/u,
+  );
+  assert.match(
+    source,
+    /workspaceDailyBudgetUsdMicros:\s*environment\.WORKSPACE_PROVIDER_BUDGET_USD_MICROS_PER_DAY/u,
+  );
+});

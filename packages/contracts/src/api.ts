@@ -49,6 +49,18 @@ export const WorkspacePlanSchema = z.enum(["FREE", "PRO", "MAX"]);
 
 export type WorkspacePlan = z.infer<typeof WorkspacePlanSchema>;
 
+// Why a run ended in FAILED, carried as `reason` inside the run's `error`
+// payload (produced by toWorkerError in apps/orchestrator-worker). A cancelled
+// run is a status of its own, not a failure reason.
+export const RunFailureReasonSchema = z.enum([
+  "FAILED_BUDGET_EXHAUSTED",
+  "FAILED_PROVIDER",
+  "FAILED_VALIDATION",
+  "FAILED_INTERNAL",
+]);
+
+export type RunFailureReason = z.infer<typeof RunFailureReasonSchema>;
+
 export const UpdateWorkspacePlanInputSchema = z
   .object({ plan: WorkspacePlanSchema })
   .strict();

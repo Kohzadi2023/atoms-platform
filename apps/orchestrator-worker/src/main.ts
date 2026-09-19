@@ -82,6 +82,14 @@ const EnvironmentSchema = z
       .min(1)
       .max(10)
       .default(1.5),
+    // Per-workspace, per-UTC-day ceiling on reserved provider spend (micro-USD).
+    // Must be set whenever a per-run budget is set; see the refinement below.
+    WORKSPACE_PROVIDER_BUDGET_USD_MICROS_PER_DAY: z.coerce
+      .number()
+      .int()
+      .min(0)
+      .max(2_000_000_000)
+      .default(0),
     ORCHESTRATOR_CONCURRENCY: z.coerce.number().int().min(1).max(32).default(2),
     ATTACHMENT_SCAN_CONCURRENCY: z.coerce
       .number()
@@ -187,6 +195,16 @@ const EnvironmentSchema = z
       });
     }
     if (
+      environment.RUN_PROVIDER_BUDGET_USD_MICROS > 0 &&
+      environment.WORKSPACE_PROVIDER_BUDGET_USD_MICROS_PER_DAY === 0
+    ) {
+      context.addIssue({
+        code: "custom",
+        message:
+          "RUN_PROVIDER_BUDGET_USD_MICROS > 0 requires WORKSPACE_PROVIDER_BUDGET_USD_MICROS_PER_DAY > 0: live execution needs a per-workspace ceiling, not only a per-run one",
+      });
+    }
+    if (
       (environment.S3_ACCESS_KEY_ID === undefined) !==
       (environment.S3_SECRET_ACCESS_KEY === undefined)
     ) {
@@ -216,6 +234,12 @@ async function main(): Promise<void> {
     gateway: openAiGateway,
     budgetStore,
     totalBudgetUsdMicros: environment.RUN_PROVIDER_BUDGET_USD_MICROS,
+    ...(environment.WORKSPACE_PROVIDER_BUDGET_USD_MICROS_PER_DAY > 0
+      ? {
+          workspaceDailyBudgetUsdMicros:
+            environment.WORKSPACE_PROVIDER_BUDGET_USD_MICROS_PER_DAY,
+        }
+      : {}),
     pricing: PINNED_OPENAI_PRICING,
     outputTokenLimits: PINNED_OPENAI_OUTPUT_LIMITS,
     safetyMultiplier: environment.RUN_PROVIDER_BUDGET_SAFETY_MULTIPLIER,

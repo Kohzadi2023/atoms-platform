@@ -14,6 +14,8 @@ import {
   PINNED_OPENAI_PRICING,
   ProviderBudgetError,
   estimateTextRequestReservationUsdMicros,
+  type BudgetExhaustionScope,
+  type BudgetReservationResult,
   type RoutedModelGateway,
   type RunProviderBudgetStore,
 } from "./model-budget.js";
@@ -65,19 +67,45 @@ class FakeBudgetStore implements RunProviderBudgetStore {
     readonly runId: string;
     readonly reservationUsdMicros: number;
     readonly totalBudgetUsdMicros: number;
+    readonly workspaceDailyBudgetUsdMicros?: number;
   }> = [];
+  actuals: Array<{ readonly runId: string; readonly actualUsdMicros: number }> = [];
   accepted = true;
+  exhausted: BudgetExhaustionScope | undefined;
   remainingUsdMicros = 1_000_000;
+  failRecordActual = false;
 
   async reserve(input: {
     readonly runId: string;
     readonly reservationUsdMicros: number;
     readonly totalBudgetUsdMicros: number;
-  }): Promise<{ readonly accepted: boolean; readonly remainingUsdMicros: number }> {
+    readonly workspaceDailyBudgetUsdMicros?: number;
+  }): Promise<BudgetReservationResult> {
     this.calls.push(input);
     return {
       accepted: this.accepted,
       remainingUsdMicros: this.remainingUsdMicros,
+      ...(this.accepted || this.exhausted === undefined
+        ? {}
+        : { exhausted: this.exhausted }),
+    };
+  }
+
+  async recordActual(input: {
+    readonly runId: string;
+    readonly actualUsdMicros: number;
+  }): Promise<void> {
+    if (this.failRecordActual) throw new Error("ledger unavailable");
+    this.actuals.push(input);
+  }
+}
+
+class PricedFakeGateway extends FakeGateway {
+  override async generate(request: ModelRequest): Promise<ModelResponse> {
+    const response = await super.generate(request);
+    return {
+      ...response,
+      usage: { ...response.usage, estimatedCostUsdMicros: 4_321 },
     };
   }
 }
@@ -287,4 +315,97 @@ test("reserves the stream budget before the first provider stream event", async 
   assert.equal(store.calls.length, 1);
   assert.equal(gateway.streamCalls, 1);
   assert.equal(events.length, 1);
+});
+
+function budgeted(
+  gateway: RoutedModelGateway,
+  store: RunProviderBudgetStore,
+  workspaceDailyBudgetUsdMicros?: number,
+): BudgetedModelGateway {
+  return new BudgetedModelGateway({
+    gateway,
+    budgetStore: store,
+    totalBudgetUsdMicros: 2_000_000,
+    ...(workspaceDailyBudgetUsdMicros === undefined
+      ? {}
+      : { workspaceDailyBudgetUsdMicros }),
+    pricing: PINNED_OPENAI_PRICING,
+    outputTokenLimits: PINNED_OPENAI_OUTPUT_LIMITS,
+  });
+}
+
+test("passes the workspace daily ceiling to the ledger with every reservation", async () => {
+  const store = new FakeBudgetStore();
+  await budgeted(new FakeGateway(), store, 5_000_000).generate(request());
+
+  assert.equal(store.calls[0]?.workspaceDailyBudgetUsdMicros, 5_000_000);
+});
+
+test("a workspace-scoped rejection is reported as WORKSPACE_BUDGET_EXCEEDED before the provider call", async () => {
+  const gateway = new FakeGateway();
+  const store = new FakeBudgetStore();
+  store.accepted = false;
+  store.exhausted = "workspace";
+  store.remainingUsdMicros = 10;
+
+  await assert.rejects(
+    () => budgeted(gateway, store, 5_000_000).generate(request()),
+    (error: unknown) =>
+      error instanceof ProviderBudgetError &&
+      error.code === "WORKSPACE_BUDGET_EXCEEDED" &&
+      error.retryable === false,
+  );
+  assert.equal(gateway.generateCalls, 0);
+});
+
+test("a run-scoped rejection keeps the PROVIDER_BUDGET_EXCEEDED code when a workspace ceiling is set", async () => {
+  const store = new FakeBudgetStore();
+  store.accepted = false;
+  store.exhausted = "run";
+
+  await assert.rejects(
+    () => budgeted(new FakeGateway(), store, 5_000_000).generate(request()),
+    (error: unknown) =>
+      error instanceof ProviderBudgetError &&
+      error.code === "PROVIDER_BUDGET_EXCEEDED",
+  );
+});
+
+test("rejects a non-positive workspace ceiling at construction", () => {
+  assert.throws(
+    () => budgeted(new FakeGateway(), new FakeBudgetStore(), 0),
+    RangeError,
+  );
+});
+
+test("records the actual cost of a completed call", async () => {
+  const store = new FakeBudgetStore();
+  await budgeted(new PricedFakeGateway(), store).generate(request());
+
+  assert.deepEqual(store.actuals, [{ runId: RUN_ID, actualUsdMicros: 4_321 }]);
+});
+
+test("records the actual cost when a stream completes", async () => {
+  const store = new FakeBudgetStore();
+  for await (const _event of budgeted(new PricedFakeGateway(), store).stream(request())) {
+    // drain
+  }
+
+  assert.deepEqual(store.actuals, [{ runId: RUN_ID, actualUsdMicros: 4_321 }]);
+});
+
+test("records nothing when the response carries no cost estimate", async () => {
+  const store = new FakeBudgetStore();
+  await budgeted(new FakeGateway(), store).generate(request());
+
+  assert.deepEqual(store.actuals, []);
+});
+
+test("a failed actual-cost write does not fail or discard a paid provider response", async () => {
+  const store = new FakeBudgetStore();
+  store.failRecordActual = true;
+
+  const response = await budgeted(new PricedFakeGateway(), store).generate(request());
+
+  assert.equal(response.status, "completed");
 });

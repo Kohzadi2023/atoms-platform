@@ -2,6 +2,55 @@
 
 This runbook records the current Azure Container Apps preview topology and the next safe staging gate. It supplements the provider-neutral Phase 2 preview design with the verified Atoms-Staging deployment state.
 
+## Public preview live: 2026-09-19
+
+The "Public preview gate" section below (formerly "remains a later gate") is now satisfied. A
+real, owned base domain (`genesisco.io`) was acquired and connected. This
+supersedes the `preview.invalid` / internal-only state recorded in the
+2026-09-13 section further down, which remains for its historical evidence
+value but no longer describes current state. See
+[issue #59](https://github.com/Kohzadi2023/atoms-platform/issues/59) (closed)
+and the [issue #22 update](https://github.com/Kohzadi2023/atoms-platform/issues/22)
+of the same date for the full verification record.
+
+- `https://www.genesisco.io` and `https://api.genesisco.io` are live with
+  Azure Container Apps managed certificates (`SniEnabled`).
+- `atoms-staging-preview-gateway` ingress is now **external** (changed from
+  `internal`), still on target port `3002`.
+- A real wildcard certificate for `*.preview.genesisco.io` was issued by
+  Let's Encrypt (DNS-01 challenge, since wildcard names have no HTTP-01
+  path) and uploaded to the `atoms-staging-env` environment as
+  `genesisco-preview-wildcard-le`. It is bound to the preview gateway's
+  literal wildcard hostname `*.preview.genesisco.io` with
+  `--validation-method CNAME`. Valid through 2026-12-18 — Let's Encrypt
+  certificates are 90 days, and DNS-01 has no automatic renewal path
+  without either a DNS-provider API integration or repeating the manual
+  TXT-record process before expiry.
+- `PREVIEW_BASE_DOMAIN` changed from `preview.invalid` to
+  `preview.genesisco.io` on both `atoms-staging-preview-gateway` and
+  `atoms-staging-worker`.
+- `CONTROL_API_CORS_ORIGINS` now includes `https://www.genesisco.io`
+  alongside the original `azurecontainerapps.io` origin.
+- The Entra External ID SPA app registration
+  (`3be3b7af-17db-4a00-8448-04ba55fa76f0`) has
+  `https://www.genesisco.io/redirect` added as a redirect URI; real
+  end-to-end sign-in against the "Atoms Staging Customers" tenant through
+  the new domain was verified in a browser.
+- Verified the signed-ticket security model survived going public: a
+  made-up subdomain (`test123.preview.genesisco.io`) completes a real TLS
+  handshake against the wildcard certificate but is rejected at the
+  application layer with `401 {"error":"Invalid preview URL"}` — public
+  ingress alone grants no access to an actual preview session.
+- `AUTH_REQUIRED=true` and `RUN_EXECUTION_ENABLED=false` remain enforced,
+  unchanged.
+- No mutation was made to the legacy `Pay-As-You-Go` subscription or any
+  `LogiCount` resource.
+
+**Not done by this change:** the formal `pnpm staging:smoke:authenticated`
+and recovery-rehearsal evidence runs against the live domain. Those need
+`RUN_EXECUTION_ENABLED=true` and real OpenAI/E2B credentials (issue #14),
+which remain the sole open blocker on #22.
+
 ## Latest operator-verified state: 2026-09-13
 
 The v17/v18 transcripts and the subsequent v19 rejection smoke establish the
@@ -24,6 +73,11 @@ not a fresh Azure observation when reading this document. See the
 - Redis and preview-signing secret references are Key Vault-backed and use the staging runtime managed identity.
 - No environment custom DNS suffix, environment certificate, Container App custom domain, Azure DNS public zone, or environment HTTP route config is currently configured.
 - Public preview is therefore intentionally blocked.
+
+  **Superseded 2026-09-19** — see "Public preview live" above. Ingress is
+  now external with a real wildcard certificate bound; this bullet and the
+  internal-only FQDN below describe the state before that change, not the
+  current one.
 
 The internal-ingress gate was executed successfully on 2026-09-11. It verified `external=false`, HTTPS-only ingress, no custom domain, no public DNS/TLS mutation, and re-checked the Control API auth/run-execution safety boundary after the change.
 
@@ -88,17 +142,20 @@ does not require repeating this health gate.
 
 The complete transcript is copied to the clipboard at the end.
 
-## Public preview remains a later gate
+## Public preview gate — satisfied 2026-09-19
 
-Do not enable public Preview Gateway ingress until all of the following are known and verified:
+This section originally blocked enabling public Preview Gateway ingress
+until the items below were known and verified. All are now satisfied; see
+"Public preview live: 2026-09-19" above for the evidence. Kept here for the
+historical record of what the gate required:
 
-- a user-owned base domain;
-- the authoritative DNS provider and ability to create the required records;
-- a wildcard routing design compatible with the single-label signed preview ticket;
-- a valid TLS certificate path for the exact wildcard preview hostname;
-- a rollback plan for hostname/certificate binding.
+- a user-owned base domain — `genesisco.io`;
+- the authoritative DNS provider and ability to create the required records — Namecheap, operator-controlled;
+- a wildcard routing design compatible with the single-label signed preview ticket — `<signed-ticket>.preview.genesisco.io`, matching the expected shape below;
+- a valid TLS certificate path for the exact wildcard preview hostname — Let's Encrypt DNS-01 wildcard certificate, bound with `--validation-method CNAME`;
+- a rollback plan for hostname/certificate binding — `az containerapp ingress enable --type internal` reverses external exposure; the certificate binding can be removed independently of DNS.
 
-The expected public shape is a single dynamic signed label below a controlled preview base domain, for example `<signed-ticket>.preview.example.com`. The real domain must not be inferred from Azure resources or invented by automation.
+The public shape is a single dynamic signed label below the controlled preview base domain: `<signed-ticket>.preview.genesisco.io`. The real domain was operator-provided, not inferred from Azure resources or invented by automation.
 
 ## References
 

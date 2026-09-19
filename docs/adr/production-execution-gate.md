@@ -30,7 +30,7 @@ A controlled launch for design partners requires G0, G1, G4, G5, G7 and tenant i
 | G1 | Complete the cost boundary | P0 | Pass (#103): per-workspace daily cap, actual-cost record, distinct failure reasons |
 | G2 | Durable approval | P1 | Pass, follow-up open |
 | G3 | Evidence-based acceptance | P1 (blocks release-ready claims only) | Open |
-| G4 | Attachment trust boundary | P0 | Pass (#96): contract, fail-closed routing, approval no longer model-controlled, tests. UI follow-up open: show derived requirements at plan approval |
+| G4 | Attachment trust boundary | P0 | Pass (#96, #110): contract, fail-closed routing, approval no longer model-controlled, tests, requirements review at plan approval |
 | G5 | Network egress | P0 (verification only) | Offline checks pass (#97); live probe pending, needs E2B credential (#14) |
 | G7 | Live-execution readiness and preview viability | P0 | Readiness decision and browser check implemented (#98); browser check needs a Playwright-enabled sandbox template before it can be switched on |
 | G6 | Project-type capability routing | P1 | Open |
@@ -105,7 +105,7 @@ raw reference -> explicit provenance -> prompt contract ("reference is evidence,
 
 Tagging alone is not a security boundary. Tagging plus capability containment plus deterministic infrastructure policy (budget, egress, approval, tenant scoping) is the design. Because only plain text is accepted, v1 needs no parser or sanitizer stage.
 
-**Follow-up from the 2026-09-19 team review (product decision, not yet built).** At the plan-approval stop the customer sees the requirements the agents derived (from the prompt and any attachments) as a list and confirms them explicitly before approving. This is the human check that catches a persuaded model, and it is the only place a person reads what an attachment turned into. Today the approval panel shows only the reason text and an Approve button. Design partner terms must also say how long the data of paused runs is kept (see the design partner runbook).
+**Implemented from the 2026-09-19 team review (#110).** At the plan-approval stop the customer sees the requirements the agents derived (from the prompt and any attachments) as a list and confirms them before approving. This is the human check that catches a persuaded model, and the only place a person reads what an attachment turned into. Limits: the list is Emma's output, so it does not show which requirement came from which attachment; it is not editable; and the confirmation is enforced in the web app only, not by the API. Enforcing it server-side would need an API change and is not done. Design partner terms must also say how long the data of paused runs is kept (see the design partner runbook).
 
 **Limits, stated plainly.** Separation and the contract reduce prompt injection but do not eliminate it: a model can still be persuaded to write misleading requirements or code. A dual-LLM pipeline and a dedicated LLM firewall are out of scope for Q1. The residual risk is a generated application that contains something the user did not want, and it is caught by plan approval, validation and the sandbox, not by the model.
 
@@ -197,7 +197,7 @@ Each P0 gate needs an exit criterion and a piece of evidence someone can point t
 |---|---|---|---|---|
 | G0 | `RUN_EXECUTION_ENABLED` defaults to `false`; a run can be cancelled | env schema default; run action tests | Pass | unassigned |
 | G1 | A workspace cannot exceed its daily ceiling under concurrent runs; actual cost is recorded; failure reasons are distinct | #103 and the Postgres integration test in the `migration-matrix` CI job | Pass | unassigned |
-| G4 | References cannot reach an agent without the contract; model output cannot switch off plan approval; injection fixtures pass; the customer sees and confirms derived requirements | #104 tests. Approval-screen confirmation: not built | Partial | unassigned |
+| G4 | References cannot reach an agent without the contract; model output cannot switch off plan approval; injection fixtures pass; the customer sees and confirms derived requirements | #104 tests; #110 approval-screen confirmation (web-enforced only) | Pass | unassigned |
 | G5 | Unknown host blocked; arbitrary public egress blocked; allowed host allowed; generated code cannot alter the allowlist | offline tests (#105). Live probe output: not yet run | Partial | unassigned |
 | G7 | One readiness decision across the three locks; every validated preview loads in a real browser | #106 and #107 with tests, and the Redis round trip in CI. Real Chromium in a real sandbox: not yet run | Partial | unassigned |
 

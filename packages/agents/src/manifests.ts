@@ -167,3 +167,25 @@ export function getAgentManifest<Name extends ActiveAgentName>(
 ): AgentManifestMap[Name] {
   return agentManifests[name];
 }
+/**
+ * True when exactly Sophia and Emma accept references and every agent that does
+ * carries REFERENCE_CONTRACT. The worker publishes this as a readiness fact.
+ */
+export function referenceContractIntact(
+  manifests: AgentManifestMap = agentManifests,
+): boolean {
+  const accepting = Object.values(manifests)
+    .filter((manifest) => manifest.acceptsReferences)
+    .map((manifest) => manifest.name)
+    .sort();
+  return (
+    accepting.length === 2 &&
+    accepting[0] === "Emma" &&
+    accepting[1] === "Sophia" &&
+    Object.values(manifests).every(
+      (manifest) =>
+        !manifest.acceptsReferences ||
+        manifest.instructions.includes(REFERENCE_CONTRACT),
+    )
+  );
+}

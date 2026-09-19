@@ -218,6 +218,13 @@ jobs:
           RUN_PHASE3_DURABILITY_INTEGRATION_TESTS: "true"
           PHASE3_INTEGRATION_DATABASE_CONFIRMATION: DEDICATED_EPHEMERAL_DATABASE
         run: pnpm staging:phase3:durability
+      - name: Exercise the worker readiness channel against real Redis
+        env:
+          REDIS_URL: redis://localhost:6379
+          RUN_READINESS_REDIS_INTEGRATION_TESTS: "true"
+        run: |
+          pnpm --filter @atoms/control-api... build
+          pnpm --filter @atoms/control-api test:readiness-redis:built
       - name: Exercise attachment quota, clean snapshots, and deterministic scan jobs
         env:
           DATABASE_URL: postgresql://atoms:atoms@localhost:5432/atoms_upgrade

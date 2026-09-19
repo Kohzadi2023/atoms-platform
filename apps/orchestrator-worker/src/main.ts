@@ -1,4 +1,5 @@
-import { ModelBackedAgentRuntime } from "@atoms/agents";
+import { ModelBackedAgentRuntime, referenceContractIntact } from "@atoms/agents";
+import { workerReadinessKey } from "@atoms/contracts";
 import { createPrismaClient } from "@atoms/db";
 import {
   E2BDatabaseMigrationRunner,
@@ -50,6 +51,8 @@ import { AttachmentProcessor } from "./attachment-processor.js";
 import { PrismaAttachmentScanRepository } from "./attachment-repository.js";
 import { PrismaRunAttachmentLoader } from "./attachment-loader.js";
 import { parseEgressAllowedHosts } from "./egress-policy.js";
+import { WorkerReadinessPublisher } from "./readiness-publisher.js";
+import { Redis } from "ioredis";
 
 const EnvironmentSchema = z
   .object({
@@ -85,6 +88,8 @@ const EnvironmentSchema = z
       .default(1.5),
     // Per-workspace, per-UTC-day ceiling on reserved provider spend (micro-USD).
     // Must be set whenever a per-run budget is set; see the refinement below.
+    // Set by an operator after the live egress probe passes (docs/adr/production-execution-gate.md, G5).
+    SANDBOX_EGRESS_VERIFIED_AT: z.string().trim().min(1).optional(),
     WORKSPACE_PROVIDER_BUDGET_USD_MICROS_PER_DAY: z.coerce
       .number()
       .int()
@@ -461,10 +466,40 @@ async function main(): Promise<void> {
     console.error("Orchestrator job failed", { jobId, error }),
   );
 
+  // The Control API cannot see this process's environment, so the worker
+  // publishes which execution preconditions it meets (ADR G7).
+  const readinessRedis = new Redis(environment.REDIS_URL, {
+    maxRetriesPerRequest: 1,
+  });
+  readinessRedis.on("error", (error) =>
+    console.error("Readiness publisher redis error", error),
+  );
+  const readinessPublisher = new WorkerReadinessPublisher({
+    store: {
+      set: async (key, value, ttlSeconds) => {
+        await readinessRedis.set(key, value, "EX", ttlSeconds);
+      },
+    },
+    key: workerReadinessKey(environment.RUN_QUEUE_PREFIX),
+    facts: {
+      runBudgetUsdMicros: environment.RUN_PROVIDER_BUDGET_USD_MICROS,
+      workspaceDailyBudgetUsdMicros:
+        environment.WORKSPACE_PROVIDER_BUDGET_USD_MICROS_PER_DAY,
+      providerCredentialsPresent:
+        environment.OPENAI_API_KEY.length > 0 && environment.E2B_API_KEY.length > 0,
+      egressVerifiedAt: environment.SANDBOX_EGRESS_VERIFIED_AT,
+      attachmentContractVerified: referenceContractIntact(),
+    },
+    onError: (error) => console.error("Readiness publish failed", error),
+  });
+  readinessPublisher.start();
+
   let shuttingDown = false;
   const shutdown = async (): Promise<void> => {
     if (shuttingDown) return;
     shuttingDown = true;
+    readinessPublisher.stop();
+    readinessRedis.disconnect();
     await databaseReconciliationWorker?.close();
     await databaseRecoveryQueue?.close();
     await databaseWorker?.close();

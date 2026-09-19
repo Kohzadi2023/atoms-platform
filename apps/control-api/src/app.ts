@@ -1,4 +1,8 @@
 import {
+  ExecutionReadinessService,
+  type ExecutionReadinessProvider,
+} from "./execution-readiness.js";
+import {
   CreateRunHeadersSchema,
   AuthenticatedUserSchema,
   CreateProjectInputSchema,
@@ -113,6 +117,8 @@ export interface BuildControlApiOptions {
   readonly repository: ControlRepository;
   readonly runQueue: RunQueue;
   readonly runExecutionEnabled?: boolean;
+  /** Reports the execution locks on /readyz. Defaults to a service with no worker report. */
+  readonly executionReadiness?: ExecutionReadinessProvider;
   readonly logger?: boolean;
   readonly closeDependencies?: boolean;
   readonly ssePollIntervalMs?: number;
@@ -168,9 +174,26 @@ export async function buildControlApi(
   app.get("/healthz", async (_request, reply) =>
     reply.code(200).send({ status: "ok" }),
   );
-  app.get("/readyz", async (_request, reply) =>
-    reply.code(200).send({ status: "ready" }),
-  );
+  const executionReadiness =
+    options.executionReadiness ??
+    new ExecutionReadinessService({
+      source: undefined,
+      controlPlaneEnabled: runExecutionEnabled,
+      ...(options.now === undefined ? {} : { now: options.now }),
+    });
+  // Additive: the status code and `status` are unchanged. `platformReady` says the
+  // API is healthy; `execution` says whether AI execution is deliberately on and
+  // whether the worker meets its preconditions (docs/adr/production-execution-gate.md, G7).
+  // Only booleans and gate ids are exposed, never a configured value.
+  app.get("/readyz", async (_request, reply) => {
+    const execution = await executionReadiness.current();
+    return reply.code(200).send({
+      status: "ready",
+      platformReady: true,
+      executionReady: execution.executionReady,
+      execution,
+    });
+  });
 
   app.addHook("onRequest", async (request) => {
     if (
@@ -793,6 +816,7 @@ export async function buildControlApi(
       await options.attachmentOperations?.queue.close();
       await options.attachmentOperations?.repository.close();
       await options.runQueue.close();
+      await options.executionReadiness?.close?.();
       await options.repository.close();
     });
   }

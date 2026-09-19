@@ -24,6 +24,7 @@
     "prisma": "prisma --config ./prisma.config.ts",
     "secrets:scan": "node scripts/scan-secrets.mjs",
     "sql:lint": "node scripts/lint-sql.mjs",
+    "readiness:check": "node scripts/check-execution-readiness.mjs",
     "staging:phase3:preflight": "node scripts/preflight-phase3-staging.mjs",
     "staging:phase3:preflight:live": "node scripts/preflight-phase3-staging.mjs --live",
     "staging:phase3:preflight:json": "node scripts/preflight-phase3-staging.mjs --json --out artifacts/phase3-preflight-durability.json",
@@ -54,7 +55,7 @@
     "test:azure-staging": "node --test scripts/bootstrap-azure-staging-oidc.test.mjs scripts/validate-azure-staging-inputs.test.mjs",
     "test:preview-private": "pnpm --filter @atoms/preview-gateway... build && pnpm --filter @atoms/preview test && pnpm --filter @atoms/preview-gateway test && pnpm --filter @atoms/preview-gateway... typecheck",
     "test:preview-smoke-offline": "pnpm --filter @atoms/preview-gateway... build && node --test scripts/preview-private-live-smoke-contract.test.mjs",
-    "test:staging-deployment": "node --test scripts/check-staging-deployment.test.mjs scripts/bootstrap-staging-persistence.test.mjs scripts/smoke-staging-authenticated.test.mjs scripts/smoke-staging-entra-auth.test.mjs scripts/rehearse-staging-recovery.test.mjs scripts/preview-gateway-internal-ingress-contract.test.mjs scripts/preview-gateway-internal-health-contract.test.mjs scripts/verify-managed-redis-dns-template.test.mjs scripts/preview-private-live-smoke-contract.test.mjs"
+    "test:staging-deployment": "pnpm --filter @atoms/contracts build && node --test scripts/check-staging-deployment.test.mjs scripts/bootstrap-staging-persistence.test.mjs scripts/smoke-staging-authenticated.test.mjs scripts/smoke-staging-entra-auth.test.mjs scripts/rehearse-staging-recovery.test.mjs scripts/preview-gateway-internal-ingress-contract.test.mjs scripts/preview-gateway-internal-health-contract.test.mjs scripts/verify-managed-redis-dns-template.test.mjs scripts/preview-private-live-smoke-contract.test.mjs scripts/check-execution-readiness.test.mjs"
   },
   "devDependencies": {
     "@types/node": "catalog:",

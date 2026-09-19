@@ -157,6 +157,27 @@ historical record of what the gate required:
 
 The public shape is a single dynamic signed label below the controlled preview base domain: `<signed-ticket>.preview.genesisco.io`. The real domain was operator-provided, not inferred from Azure resources or invented by automation.
 
+## Before enabling live execution
+
+`RUN_EXECUTION_ENABLED` is one of three locks (see `docs/adr/production-execution-gate.md`), and the Control API cannot see the worker's environment, so the worker publishes its own state and `/readyz` reports it. Do not change the flag before this check passes:
+
+```bash
+pnpm readiness:check --origin https://api.genesisco.io --for-enable
+```
+
+It only issues `GET /readyz` and exits `0` (safe to enable), `1` (a gate is failing, listed by ID, or the locks disagree) or `2` (the check could not run). Run it without `--for-enable` after the flag is on to catch a flag that is on while a precondition fails.
+
+The gates it reports, and what makes each pass on the worker:
+
+| Gate | Passes when |
+|---|---|
+| `G1` | `RUN_PROVIDER_BUDGET_USD_MICROS > 0` and `WORKSPACE_PROVIDER_BUDGET_USD_MICROS_PER_DAY > 0` |
+| `G4` | the reference-attachment contract is intact (a build-time fact, no setting) |
+| `G5` | `SANDBOX_EGRESS_VERIFIED_AT` holds the date the live egress probe last passed. Run `packages/sandbox-provider` live test first (`RUN_LIVE_E2B_TESTS=true E2B_API_KEY=...`). Setting the variable without the probe is a false attestation. |
+| `LOCK_3` | OpenAI and E2B credentials are present on the worker |
+
+`/readyz` stays `200` and keeps `status: "ready"`. It adds `platformReady`, `executionReady` and an `execution` block with booleans and gate IDs only, never a configured value. A worker that has not reported for 90 seconds counts as not ready.
+
 ## References
 
 - [Azure Container Apps ingress](https://learn.microsoft.com/en-us/azure/container-apps/ingress-overview)

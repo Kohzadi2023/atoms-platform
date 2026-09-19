@@ -14,6 +14,7 @@ import {
   ModelBackedAgentRuntime,
   REFERENCE_CONTRACT,
   SophiaOutputSchema,
+  referenceContractIntact,
   agentManifests,
 } from "./index.js";
 
@@ -280,4 +281,23 @@ test("ModelBackedAgentRuntime rejects prose that does not contain schema-valid J
       error.code === "INVALID_AGENT_OUTPUT" &&
       !error.retryable,
   );
+});
+
+test("referenceContractIntact holds for the shipped manifests and fails if the contract is dropped", () => {
+  assert.equal(referenceContractIntact(), true);
+
+  const withoutContract = {
+    ...agentManifests,
+    Emma: {
+      ...agentManifests.Emma,
+      instructions: agentManifests.Emma.instructions.replace(REFERENCE_CONTRACT, ""),
+    },
+  };
+  assert.equal(referenceContractIntact(withoutContract), false);
+
+  const extraAccepting = {
+    ...agentManifests,
+    Alex: { ...agentManifests.Alex, acceptsReferences: true },
+  };
+  assert.equal(referenceContractIntact(extraAccepting), false);
 });

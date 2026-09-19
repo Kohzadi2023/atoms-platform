@@ -15,7 +15,7 @@ Source of truth for the gates is `docs/adr/production-execution-gate.md`. This r
 
 All of these must be true. Do not enable the flag if any is not.
 
-1. The P0 table in the ADR has no `Partial` row. Today it does: the live egress probe, the real-Chromium check and the approval-screen confirmation are still open.
+1. The P0 table in the ADR has no `Partial` row. Today it does: the live egress probe and the real-Chromium check have not run.
 2. The sandbox template (`E2B_TEMPLATE`) carries Playwright and Chromium (see the staging runbook, "Before enabling live execution").
 3. The worker has these settings, all set deliberately, and `E2B_ALLOWED_HOSTS` is still the two package registries:
    - `RUN_PROVIDER_BUDGET_USD_MICROS` (per-run ceiling)
@@ -44,7 +44,7 @@ All of these must be true. Do not enable the flag if any is not.
 
 1. The partner submits a prompt and optional plain-text attachments.
 2. The run stops at **plan approval** whenever attachments are present, even if the model judged none necessary. The planning agents have already run by then, but no code has been generated.
-3. The partner reviews and approves the plan, then later the content variants (if Adrian ran).
+3. The partner reads the requirements list the agents derived, ticks the confirmation, and approves the plan; later the content variants (if Adrian ran). The confirmation is enforced by the web app, not by the API, so a partner using the API directly is not asked.
 4. The sandbox is created only after all agents finish; it validates (install, lint, typecheck, test, build), starts the preview and loads it in a real browser.
 5. A run that ends `FAILED` carries a reason in its error payload: `FAILED_BUDGET_EXHAUSTED`, `FAILED_PROVIDER`, `FAILED_VALIDATION` or `FAILED_INTERNAL`.
 

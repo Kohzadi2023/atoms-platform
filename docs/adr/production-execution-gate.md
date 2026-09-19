@@ -30,7 +30,7 @@ A controlled launch for design partners requires G0, G1, G4, G5, G7 and tenant i
 | G1 | Complete the cost boundary | P0 | Pass (#103): per-workspace daily cap, actual-cost record, distinct failure reasons |
 | G2 | Durable approval | P1 | Pass, follow-up open |
 | G3 | Evidence-based acceptance | P1 (blocks release-ready claims only) | Open |
-| G4 | Attachment trust boundary | P0 | Pass (#96): contract, fail-closed routing, approval no longer model-controlled, tests |
+| G4 | Attachment trust boundary | P0 | Pass (#96): contract, fail-closed routing, approval no longer model-controlled, tests. UI follow-up open: show derived requirements at plan approval |
 | G5 | Network egress | P0 (verification only) | Offline checks pass (#97); live probe pending, needs E2B credential (#14) |
 | G7 | Live-execution readiness and preview viability | P0 | Readiness decision and browser check implemented (#98); browser check needs a Playwright-enabled sandbox template before it can be switched on |
 | G6 | Project-type capability routing | P1 | Open |
@@ -104,6 +104,8 @@ raw reference -> explicit provenance -> prompt contract ("reference is evidence,
 - *Chain of influence.* Reference text can shape Sophia and Emma output, which feeds Mike, Bob and Alex as upstream data. The prompt contract does not stop that; the deterministic controls do (budget, approval, egress, tenant scoping, sandbox).
 
 Tagging alone is not a security boundary. Tagging plus capability containment plus deterministic infrastructure policy (budget, egress, approval, tenant scoping) is the design. Because only plain text is accepted, v1 needs no parser or sanitizer stage.
+
+**Follow-up from the 2026-09-19 team review (product decision, not yet built).** At the plan-approval stop the customer sees the requirements the agents derived (from the prompt and any attachments) as a list and confirms them explicitly before approving. This is the human check that catches a persuaded model, and it is the only place a person reads what an attachment turned into. Today the approval panel shows only the reason text and an Approve button. Design partner terms must also say how long the data of paused runs is kept (see the design partner runbook).
 
 **Limits, stated plainly.** Separation and the contract reduce prompt injection but do not eliminate it: a model can still be persuaded to write misleading requirements or code. A dual-LLM pipeline and a dedicated LLM firewall are out of scope for Q1. The residual risk is a generated application that contains something the user did not want, and it is caught by plan approval, validation and the sandbox, not by the model.
 
@@ -183,7 +185,23 @@ For example an internal portal requires product, architecture, engineering and d
 
 **Ordering.** Introduce `ProjectType`, define the capability mapping, expose the required plan and project context, then make execution conditional, and only then update the smoke expectations. Routing is a consequence of the domain model, not a scattered conditional in the worker.
 
+**Q1 scope note.** The 2026-09-19 review fixed Q1 on a single template, the agency client portal, and paused the vendor tracker and ticketing templates. That shrinks the first cut of `ProjectType` to one value, but it does not remove the need for the type: it is still what capability routing and the smoke expectations key on. G6 stays P1.
+
 **Consequence for existing tests.** `scripts/smoke-staging-authenticated.mjs` hardcodes an eight-agent `REQUIRED_AGENTS` list (extended in #87). An agent count is an implementation detail; capability coverage is the invariant. When G6 lands the smoke check must assert coverage of the required capabilities for the project type and plan. No interim change is made, because there is no project type to key on and the API does not expose a workspace's plan (`GET /v1/workspaces/:id` returns id, name, slug and role only). Until then the smoke prerequisite stays as documented in `docs/staging-authenticated-smoke.md` (workspace on `PRO` or `MAX`).
+
+## Exit criteria and evidence (P0)
+
+Each P0 gate needs an exit criterion and a piece of evidence someone can point to. The owner column is empty on purpose: the team review left ownership unassigned, and assigning it is a decision for the people, not for this document.
+
+| Gate | Exit criterion | Evidence | State | Owner |
+|---|---|---|---|---|
+| G0 | `RUN_EXECUTION_ENABLED` defaults to `false`; a run can be cancelled | env schema default; run action tests | Pass | unassigned |
+| G1 | A workspace cannot exceed its daily ceiling under concurrent runs; actual cost is recorded; failure reasons are distinct | #103 and the Postgres integration test in the `migration-matrix` CI job | Pass | unassigned |
+| G4 | References cannot reach an agent without the contract; model output cannot switch off plan approval; injection fixtures pass; the customer sees and confirms derived requirements | #104 tests. Approval-screen confirmation: not built | Partial | unassigned |
+| G5 | Unknown host blocked; arbitrary public egress blocked; allowed host allowed; generated code cannot alter the allowlist | offline tests (#105). Live probe output: not yet run | Partial | unassigned |
+| G7 | One readiness decision across the three locks; every validated preview loads in a real browser | #106 and #107 with tests, and the Redis round trip in CI. Real Chromium in a real sandbox: not yet run | Partial | unassigned |
+
+Enabling live execution is allowed only when this table has no `Partial` row and `pnpm readiness:check --for-enable` passes.
 
 ## Amendments from code verification
 
@@ -211,6 +229,13 @@ Sandbox hydration subsystem, complex retry orchestrator, generalized agent plann
 | P1 | Project-type capability routing, then the smoke test change | G6 |
 | P2 | Billing/quota refinement, CustomerSuccess activation, auto-repair loops | parked |
 
+## Settled by the 2026-09-19 team review
+
+- **Q1 scope:** one template, the agency client portal. The vendor tracker and ticketing templates stay paused through Q1.
+- **Delivery model:** guided pilot for the first 5 to 10 design partners, with the customer receiving a workspace rather than static software; self-service on a golden template comes after the pilot proves out.
+- **Live execution stays off** until every P0 row above passes.
+- **Approval transparency and retention:** derived requirements are listed at plan approval with an explicit confirmation; design partner terms state how long paused-run data is kept.
+
 ## Not settled by this ADR
 
-These were raised in the meeting and still need an owner: the initial ICP and Q1 scope; the KPI set (cost per accepted outcome, first-attempt acceptance rate, human-intervention rate); capacity, support and credit policy for outcomes that are not accepted; who owns the stop thresholds for cost, security and quality; and the order of design partners and first paying customers. Cost per accepted outcome also depends on G1 recording actual usage and G3 defining acceptance.
+Still without an owner or a number: who owns each P0 gate and the stop thresholds for cost, security and quality; the KPI targets (only "cost per accepted outcome under 20% of an account's revenue" was stated); support capacity and credit policy for outcomes that are not accepted; and the order of design partners and first paying customers. Cost per accepted outcome also depends on G1 recording actual usage and G3 defining acceptance. The runbook in `docs/design-partner-runbook.md` marks the numbers it proposes as proposals.

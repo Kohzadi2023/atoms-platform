@@ -105,6 +105,9 @@ function isEntitled(plan: WorkspacePlan, agentName: ActiveAgentName): boolean {
 export function buildRunGraph(options: BuildRunGraphOptions) {
   const now = options.now ?? (() => new Date());
 
+  const runHasReferences = async (runId: string): Promise<boolean> =>
+    ((await options.attachmentLoader?.load(runId))?.length ?? 0) > 0;
+
   const runAgent =
     (agentName: ActiveAgentName) =>
     async (state: RunGraphInput): Promise<{ outputs: Record<string, JsonValue> }> => {
@@ -250,7 +253,13 @@ export function buildRunGraph(options: BuildRunGraphOptions) {
   const approvalGate = async (state: RunGraphInput): Promise<{}> => {
     const mike = AgentOutputSchemas.Mike.parse(state.outputs.Mike);
     const planApprovalAlreadyConsumed = state.outputs.Alex !== undefined;
-    if (!mike.requiresApproval || planApprovalAlreadyConsumed) return {};
+    if (planApprovalAlreadyConsumed) return {};
+    // requiresApproval is model output, and Mike sits downstream of Sophia, which
+    // reads user-uploaded references. Text in a reference must never be able to
+    // switch the approval off, so a run that carries references always stops.
+    if (!mike.requiresApproval && !(await runHasReferences(state.runId))) {
+      return {};
+    }
     if (
       state.command === "approve" &&
       state.approvalScope === "plan" &&

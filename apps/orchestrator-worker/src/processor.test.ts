@@ -760,29 +760,39 @@ test("a PRO workspace plan still runs Sophia, Sarah, and Adrian", async () => {
   assert.equal(repository.run.status, "COMPLETED");
 });
 
+const REFERENCE_FIXTURE = {
+  id: "00000000-0000-4000-8000-000000000010",
+  kind: "file",
+  fileName: "brief.txt",
+  mimeType: "text/plain",
+  dataBase64: "YnJpZWY=",
+} as const;
+
+function referenceLoader(): RunAttachmentLoader {
+  return {
+    load: async (runId) => {
+      assert.equal(runId, RUN_ID);
+      return [REFERENCE_FIXTURE];
+    },
+  };
+}
+
+function approveJobFor(controlVersion: number, approvalScope: "plan" | "content") {
+  return {
+    runId: RUN_ID,
+    command: "approve" as const,
+    controlVersion,
+    approvalScope,
+  };
+}
+
 test("worker loads clean references for Sophia and Emma only", async () => {
   const repository = new MemoryRepository();
   const agents = new ScriptedAgentRuntime(outputs());
-  let loads = 0;
-  const attachmentLoader: RunAttachmentLoader = {
-    load: async (runId) => {
-      loads += 1;
-      assert.equal(runId, RUN_ID);
-      return [
-        {
-          id: "00000000-0000-4000-8000-000000000010",
-          kind: "file",
-          fileName: "brief.txt",
-          mimeType: "text/plain",
-          dataBase64: "YnJpZWY=",
-        },
-      ];
-    },
-  };
   const runProcessor = new RunProcessor({
     repository,
     agents,
-    attachmentLoader,
+    attachmentLoader: referenceLoader(),
     checkpointer: new MemorySaver(),
     now: () => FIXED_NOW,
   });
@@ -791,15 +801,20 @@ test("worker loads clean references for Sophia and Emma only", async () => {
     await runProcessor.process(startJob(), { attempt: 1, maxAttempts: 3 }),
     { outcome: "stopped", status: "PAUSED" },
   );
-  const approvedVersion = repository.approve();
   assert.deepEqual(
-    await runProcessor.process(approveJob(approvedVersion, "content"), {
+    await runProcessor.process(approveJobFor(repository.approve(), "plan"), {
+      attempt: 1,
+      maxAttempts: 3,
+    }),
+    { outcome: "stopped", status: "PAUSED" },
+  );
+  assert.deepEqual(
+    await runProcessor.process(approveJobFor(repository.approve(), "content"), {
       attempt: 1,
       maxAttempts: 3,
     }),
     { outcome: "completed" },
   );
-  assert.equal(loads, 2);
   for (const agentName of ["Sophia", "Emma"] as const) {
     assert.equal(
       agents.requests.find((request) => request.agentName === agentName)
@@ -816,6 +831,43 @@ test("worker loads clean references for Sophia and Emma only", async () => {
       .some((request) => request.referenceAttachments !== undefined),
     false,
   );
+});
+
+test("a run with references still stops for plan approval when the model says none is needed", async () => {
+  const repository = new MemoryRepository();
+  // Mike's output is model-controlled; here it claims no approval is required.
+  const agents = new ScriptedAgentRuntime(outputs({ requiresApproval: false }));
+  const runProcessor = new RunProcessor({
+    repository,
+    agents,
+    attachmentLoader: referenceLoader(),
+    checkpointer: new MemorySaver(),
+    now: () => FIXED_NOW,
+  });
+
+  assert.deepEqual(
+    await runProcessor.process(startJob(), { attempt: 1, maxAttempts: 3 }),
+    { outcome: "stopped", status: "PAUSED" },
+  );
+  // Stopped before any code generation.
+  assert.deepEqual(agents.calls, ["Sophia", "Mike", "Emma", "Bob"]);
+  assert.deepEqual(
+    repository.events
+      .filter((event) => event.eventType === "approval.required")
+      .map((event) => (event.payload as { scope?: string }).scope),
+    ["plan"],
+  );
+});
+
+test("a run without references keeps the model's plan-approval decision", async () => {
+  const repository = new MemoryRepository();
+  const agents = new ScriptedAgentRuntime(outputs({ requiresApproval: false }));
+  const runProcessor = processor(repository, agents);
+
+  await runProcessor.process(startJob(), { attempt: 1, maxAttempts: 3 });
+
+  // No plan approval: the run went on to code generation.
+  assert.ok(agents.calls.includes("Alex"));
 });
 
 test("worker runs validation after all agents and before completing the durable run", async () => {

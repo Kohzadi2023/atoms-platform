@@ -20,6 +20,18 @@ export class ModelBackedAgentRuntime implements AgentRuntime {
     request: AgentExecutionRequest<Name>,
   ): Promise<AgentOutputByName[Name]> {
     const manifest = getAgentManifest(request.agentName);
+    // Fail closed: untrusted references only reach agents whose instructions
+    // carry the reference contract.
+    if (
+      !manifest.acceptsReferences &&
+      request.referenceAttachments !== undefined &&
+      request.referenceAttachments.length > 0
+    ) {
+      throw new AgentRuntimeError(
+        `Agent ${request.agentName} does not accept reference attachments`,
+        { code: "REFERENCES_NOT_ACCEPTED", retryable: false },
+      );
+    }
     const response = await this.#gateway.generate({
       policy: manifest.policy,
       instructions: `${manifest.objective}\n\n${manifest.instructions}\n\nRequired JSON shape: ${manifest.schemaHint}`,

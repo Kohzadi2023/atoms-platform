@@ -1,6 +1,7 @@
 export type AgentRuntimeErrorCode =
   | "INVALID_AGENT_OUTPUT"
-  | "MODEL_RESPONSE_INCOMPLETE";
+  | "MODEL_RESPONSE_INCOMPLETE"
+  | "REFERENCES_NOT_ACCEPTED";
 
 export class AgentRuntimeError extends Error {
   override readonly name = "AgentRuntimeError";

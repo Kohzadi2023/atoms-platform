@@ -145,6 +145,42 @@ test("reference inputs map to provider-native file and image content without per
   ]);
 });
 
+test("provider requests never grant tools, so model output cannot reach a tool or connector", async () => {
+  const requests: Record<string, unknown>[] = [];
+  const client = {
+    responses: {
+      create: async (request: Record<string, unknown>) => {
+        requests.push(request);
+        return responseFixture("gpt-4o");
+      },
+    },
+  } as unknown as OpenAIClient;
+  const gateway = new OpenAIModelGateway({ client });
+
+  await gateway.generate({
+    policy: "flagship",
+    instructions: "You are an agent.",
+    input: "Plan the build",
+    references: [
+      {
+        kind: "file",
+        fileName: "brief.txt",
+        mimeType: "text/plain",
+        dataBase64: "YnJpZWY=",
+      },
+    ],
+    metadata: { run_id: "run" },
+  });
+
+  const request = requests[0];
+  assert.ok(request);
+  for (const key of ["tools", "tool_choice", "previous_response_id", "conversation"]) {
+    assert.equal(key in request, false, `${key} must not be sent`);
+  }
+  // Nothing is retained provider-side either.
+  assert.equal(request.store, false);
+});
+
 test("stream normalizes Responses API deltas and completion metadata", async () => {
   const completedResponse = responseFixture("gpt-4o-mini");
   const client = {

@@ -1,6 +1,7 @@
 import { z } from "zod";
 
 import {
+  DEFAULT_PLAYWRIGHT_BROWSERS_PATH,
   DEFAULT_PLAYWRIGHT_ENTRY,
   PREVIEW_VIABILITY_SCRIPT,
   PREVIEW_VIABILITY_SCRIPT_PATH,
@@ -110,7 +111,10 @@ export interface ProjectValidationRunnerOptions {
    * inside the sandbox (see preview-viability-script.ts). Off by default because
    * it needs Playwright and Chromium in the sandbox template.
    */
-  readonly browserViability?: { readonly playwrightEntry?: string };
+  readonly browserViability?: {
+    readonly playwrightEntry?: string;
+    readonly browsersPath?: string;
+  };
   readonly sandboxTimeoutMs?: number;
   readonly projectDirectory?: string;
   readonly previewPort?: number;
@@ -161,6 +165,7 @@ export class ProjectValidationRunner {
   readonly #template: string | undefined;
   readonly #allowedHosts: readonly string[];
   readonly #browserPlaywrightEntry: string | undefined;
+  readonly #browserBrowsersPath: string;
   readonly #sandboxTimeoutMs: number;
   readonly #projectDirectory: string;
   readonly #previewPort: number;
@@ -177,6 +182,8 @@ export class ProjectValidationRunner {
       options.browserViability === undefined
         ? undefined
         : (options.browserViability.playwrightEntry ?? DEFAULT_PLAYWRIGHT_ENTRY);
+    this.#browserBrowsersPath =
+      options.browserViability?.browsersPath ?? DEFAULT_PLAYWRIGHT_BROWSERS_PATH;
     this.#sandboxTimeoutMs = options.sandboxTimeoutMs ?? 900_000;
     this.#projectDirectory = options.projectDirectory ?? "/home/user/project";
     this.#previewPort = options.previewPort ?? 3_000;
@@ -272,6 +279,7 @@ export class ProjectValidationRunner {
           {
             VIABILITY_PORT: String(this.#previewPort),
             VIABILITY_PLAYWRIGHT_ENTRY: this.#browserPlaywrightEntry,
+            PLAYWRIGHT_BROWSERS_PATH: this.#browserBrowsersPath,
           },
         );
       }

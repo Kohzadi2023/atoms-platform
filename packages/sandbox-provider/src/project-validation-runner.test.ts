@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import test from "node:test";
 
 import {
+  DEFAULT_PLAYWRIGHT_BROWSERS_PATH,
   DEFAULT_PLAYWRIGHT_ENTRY,
   PREVIEW_VIABILITY_SCRIPT,
   PREVIEW_VIABILITY_SCRIPT_PATH,
@@ -270,6 +271,7 @@ test("with browserViability the health step runs the viability script with the p
   assert.deepEqual(health?.envs, {
     VIABILITY_PORT: "3100",
     VIABILITY_PLAYWRIGHT_ENTRY: "/opt/pw/index.mjs",
+    PLAYWRIGHT_BROWSERS_PATH: DEFAULT_PLAYWRIGHT_BROWSERS_PATH,
   });
   // Same step name, so evidence mapping and persistence are unchanged.
   assert.equal(steps.at(-1), "preview-health");

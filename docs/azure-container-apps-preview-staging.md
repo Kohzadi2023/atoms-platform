@@ -177,7 +177,14 @@ The gates it reports, and what makes each pass on the worker:
 | `G7` | `PREVIEW_BROWSER_VIABILITY=required`: every validated preview is loaded in a real browser inside the sandbox. Requires an `E2B_TEMPLATE` that carries Playwright and Chromium (see below). |
 | `LOCK_3` | OpenAI and E2B credentials are present on the worker |
 
-The browser check needs Playwright and Chromium inside the sandbox template. The runner looks for Playwright at `/opt/atoms-viability/node_modules/playwright/index.mjs` (override with `PREVIEW_BROWSER_PLAYWRIGHT_ENTRY`). A template build step along these lines is expected, but it has not been run: `mkdir -p /opt/atoms-viability && cd /opt/atoms-viability && npm init -y && npm install playwright && npx playwright install --with-deps chromium`. With `PREVIEW_BROWSER_VIABILITY=required` and a template lacking it, validation fails closed (exit code 3 in the `preview-health` step) rather than skipping the check.
+The browser check needs Playwright and Chromium inside the sandbox template. The template is defined in `packages/sandbox-provider/src/viability-template.ts` and layers Playwright (pinned) and Chromium onto your existing validation template, so its Node, pnpm and packages stay as they are. Preview the plan, then build:
+
+```bash
+pnpm e2b:viability-template --base <existing-template>
+E2B_API_KEY=... pnpm e2b:viability-template --base <existing-template> --build
+```
+
+The first command is a dry run and sends nothing. `--build` is billable and registers `<existing-template>-viability` (use `--name` to change it; it can never overwrite the base). Then set `E2B_TEMPLATE` to the new name and `PREVIEW_BROWSER_VIABILITY=required` on the worker. The runner looks for Playwright at `/opt/atoms-viability/node_modules/playwright/index.mjs` and Chromium under `/opt/atoms-viability/browsers` (override with `PREVIEW_BROWSER_PLAYWRIGHT_ENTRY`). **The build has not been run**: the definition is checked offline only, so the first `--build` is also the first proof that it works. With `PREVIEW_BROWSER_VIABILITY=required` and a template lacking it, validation fails closed (exit code 3 in the `preview-health` step) rather than skipping the check.
 
 `/readyz` stays `200` and keeps `status: "ready"`. It adds `platformReady`, `executionReady` and an `execution` block with booleans and gate IDs only, never a configured value. A worker that has not reported for 90 seconds counts as not ready.
 

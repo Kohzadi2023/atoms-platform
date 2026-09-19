@@ -174,7 +174,10 @@ The gates it reports, and what makes each pass on the worker:
 | `G1` | `RUN_PROVIDER_BUDGET_USD_MICROS > 0` and `WORKSPACE_PROVIDER_BUDGET_USD_MICROS_PER_DAY > 0` |
 | `G4` | the reference-attachment contract is intact (a build-time fact, no setting) |
 | `G5` | `SANDBOX_EGRESS_VERIFIED_AT` holds the date the live egress probe last passed. Run `packages/sandbox-provider` live test first (`RUN_LIVE_E2B_TESTS=true E2B_API_KEY=...`). Setting the variable without the probe is a false attestation. |
+| `G7` | `PREVIEW_BROWSER_VIABILITY=required`: every validated preview is loaded in a real browser inside the sandbox. Requires an `E2B_TEMPLATE` that carries Playwright and Chromium (see below). |
 | `LOCK_3` | OpenAI and E2B credentials are present on the worker |
+
+The browser check needs Playwright and Chromium inside the sandbox template. The runner looks for Playwright at `/opt/atoms-viability/node_modules/playwright/index.mjs` (override with `PREVIEW_BROWSER_PLAYWRIGHT_ENTRY`). A template build step along these lines is expected, but it has not been run: `mkdir -p /opt/atoms-viability && cd /opt/atoms-viability && npm init -y && npm install playwright && npx playwright install --with-deps chromium`. With `PREVIEW_BROWSER_VIABILITY=required` and a template lacking it, validation fails closed (exit code 3 in the `preview-health` step) rather than skipping the check.
 
 `/readyz` stays `200` and keeps `status: "ready"`. It adds `platformReady`, `executionReady` and an `execution` block with booleans and gate IDs only, never a configured value. A worker that has not reported for 90 seconds counts as not ready.
 

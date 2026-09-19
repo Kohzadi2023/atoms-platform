@@ -2,6 +2,9 @@ import assert from "node:assert/strict";
 import test from "node:test";
 
 import {
+  DEFAULT_PLAYWRIGHT_ENTRY,
+  PREVIEW_VIABILITY_SCRIPT,
+  PREVIEW_VIABILITY_SCRIPT_PATH,
   ProjectValidationRunner,
   SandboxValidationError,
   type BackgroundProcess,
@@ -221,4 +224,92 @@ test("the runner has no default that reaches beyond the package registries", asy
     "registry.npmjs.org",
     "binaries.prisma.sh",
   ]);
+});
+
+test("without browserViability the health step is the plain HTTP check and no script is written", async () => {
+  const provider = new FakeSandboxProvider();
+  await new ProjectValidationRunner({ provider }).validate({
+    files,
+    metadata: { runId: "run-1" },
+  });
+
+  assert.equal(
+    provider.written.some((file) => file.path === PREVIEW_VIABILITY_SCRIPT_PATH),
+    false,
+  );
+  assert.equal(provider.calls.some((call) => call.startsWith("node /tmp/atoms-viability")), false);
+});
+
+test("with browserViability the health step runs the viability script with the port and Playwright entry", async () => {
+  const provider = new FakeSandboxProvider();
+  const execs: ExecCommand[] = [];
+  const original = provider.exec.bind(provider);
+  provider.exec = async (id, command) => {
+    execs.push(command);
+    return original(id, command);
+  };
+  const steps: string[] = [];
+
+  await new ProjectValidationRunner({
+    provider,
+    previewPort: 3100,
+    browserViability: { playwrightEntry: "/opt/pw/index.mjs" },
+  }).validate({
+    files,
+    metadata: { runId: "run-1" },
+    hooks: {
+      onStep: async (_sandbox, step) => {
+        steps.push(step.name);
+      },
+    },
+  });
+
+  const script = provider.written.find((file) => file.path === PREVIEW_VIABILITY_SCRIPT_PATH);
+  assert.equal(script?.content, PREVIEW_VIABILITY_SCRIPT);
+  const health = execs.find((command) => command.command === `node ${PREVIEW_VIABILITY_SCRIPT_PATH}`);
+  assert.deepEqual(health?.envs, {
+    VIABILITY_PORT: "3100",
+    VIABILITY_PLAYWRIGHT_ENTRY: "/opt/pw/index.mjs",
+  });
+  // Same step name, so evidence mapping and persistence are unchanged.
+  assert.equal(steps.at(-1), "preview-health");
+});
+
+test("a failing viability script fails the preview-health step and terminates the sandbox", async () => {
+  const provider = new FakeSandboxProvider();
+  provider.failCommand = `node ${PREVIEW_VIABILITY_SCRIPT_PATH}`;
+
+  await assert.rejects(
+    new ProjectValidationRunner({
+      provider,
+      browserViability: {},
+    }).validate({ files, metadata: {} }),
+    (error: unknown) =>
+      error instanceof SandboxValidationError &&
+      error.step === "preview-health" &&
+      !error.retryable,
+  );
+  assert.equal(provider.terminated, true);
+  assert.equal(provider.calls.some((call) => call.startsWith("expose:")), false);
+});
+
+test("browserViability defaults to the template's Playwright location", async () => {
+  const provider = new FakeSandboxProvider();
+  const execs: ExecCommand[] = [];
+  const original = provider.exec.bind(provider);
+  provider.exec = async (id, command) => {
+    execs.push(command);
+    return original(id, command);
+  };
+
+  await new ProjectValidationRunner({ provider, browserViability: {} }).validate({
+    files,
+    metadata: {},
+  });
+
+  assert.equal(
+    execs.find((command) => command.command.startsWith("node /tmp"))?.envs
+      ?.VIABILITY_PLAYWRIGHT_ENTRY,
+    DEFAULT_PLAYWRIGHT_ENTRY,
+  );
 });

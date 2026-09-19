@@ -15,6 +15,7 @@ export const GATE_NAMES = {
   G1: "Cost boundary: per-run budget and per-workspace daily ceiling configured on the worker",
   G4: "Attachment trust boundary: reference contract intact",
   G5: "Network egress: live probe recorded (set SANDBOX_EGRESS_VERIFIED_AT after it passes)",
+  G7: "Preview viability: every validated preview is loaded in a real browser",
   LOCK_3: "Provider credentials present on the worker",
 };
 

@@ -16,6 +16,7 @@ export interface WorkerReadinessFacts {
   /** SANDBOX_EGRESS_VERIFIED_AT: when an operator recorded a passing live probe. */
   readonly egressVerifiedAt: string | undefined;
   readonly attachmentContractVerified: boolean;
+  readonly browserViabilityRequired: boolean;
 }
 
 const HEARTBEAT_MS = 30_000;
@@ -38,6 +39,7 @@ export function buildWorkerReadinessReport(
     // A recorded probe counts only if it is a real date that is not in the future.
     egressVerified: Number.isFinite(verifiedAt) && verifiedAt <= now.getTime(),
     attachmentContractVerified: facts.attachmentContractVerified,
+    browserViabilityRequired: facts.browserViabilityRequired,
   });
 }
 

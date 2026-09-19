@@ -58,7 +58,7 @@ test("everything met: safe to enable, and ready once the flag is on", () => {
 
 test("a worker that is not reporting says so", () => {
   const result = evaluateCheck(
-    execution({ failingGates: ["G1", "G4", "G5", "LOCK_3"], workerState: "stale" }),
+    execution({ failingGates: ["G1", "G4", "G5", "G7", "LOCK_3"], workerState: "stale" }),
     { forEnable: true },
   );
 
@@ -169,7 +169,7 @@ test("gate names in the script match the contract's gate list", async () => {
 
   assert.deepEqual(Object.keys(GATE_NAMES).sort(), [...EXECUTION_GATE_IDS].sort());
   // G5 adds operator guidance in the script; the other names must not drift.
-  for (const id of ["G1", "G4", "LOCK_3"]) {
+  for (const id of ["G1", "G4", "G7", "LOCK_3"]) {
     assert.equal(GATE_NAMES[id], EXECUTION_GATE_NAMES[id]);
   }
 });

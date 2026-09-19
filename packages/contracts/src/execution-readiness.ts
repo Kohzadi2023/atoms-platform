@@ -21,18 +21,21 @@ export const WorkerReadinessReportSchema = z
     egressVerified: z.boolean(),
     /** Only Sophia and Emma accept references, and both carry the contract (G4). */
     attachmentContractVerified: z.boolean(),
+    /** The validation step loads the preview in a real browser (PREVIEW_BROWSER_VIABILITY=required, G7). */
+    browserViabilityRequired: z.boolean(),
   })
   .strict();
 
 export type WorkerReadinessReport = z.infer<typeof WorkerReadinessReportSchema>;
 
-export const EXECUTION_GATE_IDS = ["G1", "G4", "G5", "LOCK_3"] as const;
+export const EXECUTION_GATE_IDS = ["G1", "G4", "G5", "G7", "LOCK_3"] as const;
 export type ExecutionGateId = (typeof EXECUTION_GATE_IDS)[number];
 
 export const EXECUTION_GATE_NAMES: Readonly<Record<ExecutionGateId, string>> = {
   G1: "Cost boundary: per-run budget and per-workspace daily ceiling configured on the worker",
   G4: "Attachment trust boundary: reference contract intact",
   G5: "Network egress: live probe recorded",
+  G7: "Preview viability: every validated preview is loaded in a real browser",
   LOCK_3: "Provider credentials present on the worker",
 };
 
@@ -83,6 +86,7 @@ export function evaluateExecutionReadiness(input: {
     G1: fresh !== null && fresh.runBudgetConfigured && fresh.workspaceCeilingConfigured,
     G4: fresh?.attachmentContractVerified === true,
     G5: fresh?.egressVerified === true,
+    G7: fresh?.browserViabilityRequired === true,
     LOCK_3: fresh?.providerCredentialsPresent === true,
   };
   const failingGates = EXECUTION_GATE_IDS.filter((id) => !passes[id]);

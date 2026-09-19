@@ -21,6 +21,7 @@ const report: WorkerReadinessReport = {
   providerCredentialsPresent: true,
   egressVerified: false,
   attachmentContractVerified: true,
+  browserViabilityRequired: true,
 };
 
 test(

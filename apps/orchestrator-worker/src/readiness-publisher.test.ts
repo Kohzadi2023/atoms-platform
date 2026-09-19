@@ -20,6 +20,7 @@ const READY_FACTS: WorkerReadinessFacts = {
   providerCredentialsPresent: true,
   egressVerifiedAt: "2026-09-18T10:00:00.000Z",
   attachmentContractVerified: true,
+  browserViabilityRequired: true,
 };
 
 test("a fully configured worker reports every fact true", () => {
@@ -33,6 +34,7 @@ test("a fully configured worker reports every fact true", () => {
     providerCredentialsPresent: true,
     egressVerified: true,
     attachmentContractVerified: true,
+    browserViabilityRequired: true,
   });
 });
 
@@ -129,6 +131,7 @@ test("the worker publishes readiness from its real configuration and stops it on
   assert.match(source, /workerReadinessKey\(environment\.RUN_QUEUE_PREFIX\)/u);
   assert.match(source, /referenceContractIntact\(\)/u);
   assert.match(source, /SANDBOX_EGRESS_VERIFIED_AT/u);
+  assert.match(source, /browserViabilityRequired: environment\.PREVIEW_BROWSER_VIABILITY === "required"/u);
   assert.match(source, /readinessPublisher\.stop\(\)/u);
   assert.match(source, /readinessPublisher\.start\(\)/u);
 });

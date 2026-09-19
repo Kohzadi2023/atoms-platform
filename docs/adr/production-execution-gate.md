@@ -31,7 +31,7 @@ A controlled launch for design partners requires G0, G1, G4, G5, G7 and tenant i
 | G2 | Durable approval | P1 | Pass, follow-up open |
 | G3 | Evidence-based acceptance | P1 (blocks release-ready claims only) | Open |
 | G4 | Attachment trust boundary | P0 | Pass (#96): contract, fail-closed routing, approval no longer model-controlled, tests |
-| G5 | Network egress | P0 (verification only) | Policy exists, enforcement unverified |
+| G5 | Network egress | P0 (verification only) | Offline checks pass (#97); live probe pending, needs E2B credential (#14) |
 | G7 | Live-execution readiness and preview viability | P0 | Open |
 | G6 | Project-type capability routing | P1 | Open |
 
@@ -125,6 +125,16 @@ generated code cannot alter allowedHosts
 - Live probe in the first controlled run: a request to a non-allowlisted host fails inside the sandbox (needs the E2B credential from #14).
 
 Preview traffic is inbound (`allowPublicTraffic: false` plus the gateway's signed-ticket access), so the preview case is tested as "reachable only through the gateway", not as an egress allowance.
+
+**Found while verifying (#97).** The adapter handed E2B `network.allowOut: [hosts]` with no `denyOut` and no `allowInternetAccess: false`. The installed SDK (2.36.1) documents `allowOut` as "allow these" and says that when it is absent all traffic is allowed; it does not say that setting it alone denies everything else, and its own deny-all recipe is `denyOut: [ALL_TRAFFIC]` with allow entries taking precedence. So the allowlist may not have been an allowlist at all. This was not confirmed either way offline. The adapter now always sends `denyOut: [ALL_TRAFFIC]` next to `allowOut` (`toE2BNetworkOptions`), which is an allowlist under both readings, and a sandbox created without a policy gets allow-nothing plus deny-all. The change fails closed: if E2B cannot resolve an allowed domain once everything else is denied, the install step fails validation rather than opening egress. The live probe below settles that.
+
+**Implemented offline (#97).**
+
+- `parseEgressAllowedHosts` (`apps/orchestrator-worker/src/egress-policy.ts`) is the only source of both sandbox allowlists (validation runner and migration runner). It refuses wildcards, IP literals, single-label names and anything that is not a bare hostname, and the worker fails at startup on a bad `E2B_ALLOWED_HOSTS`.
+- Tests: the configured list reaches the provider unchanged; generated files and run metadata containing `allowedHosts` or `allowPublicTraffic` do not change the policy (the validation input has no network field at all); `allowPublicTraffic` is always `false`; the runner default is the two package registries.
+- Generated code cannot alter the policy because it is fixed at sandbox creation by the platform, outside the sandbox, from operator configuration.
+
+**Live probe (gated, not run here).** `packages/sandbox-provider/src/e2b.live.test.ts` creates a sandbox allowing only `registry.npmjs.org` and asserts: the allowed host answers 2xx, `example.com` is blocked, `1.1.1.1` is blocked, and blocking survives an in-sandbox attempt to flush firewall rules. Run it once with `RUN_LIVE_E2B_TESTS=true E2B_API_KEY=... pnpm --filter @atoms/sandbox-provider test` and record the output as G5 evidence. `egressVerified` in G7 stays false until then.
 
 ### G7 - Live-execution readiness and minimum preview viability (P0)
 

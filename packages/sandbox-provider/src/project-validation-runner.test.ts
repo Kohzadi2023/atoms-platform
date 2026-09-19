@@ -179,3 +179,46 @@ test("runner rejects snapshots without pnpm-lock.yaml before provisioning", asyn
   );
   assert.deepEqual(provider.calls, []);
 });
+
+test("generated files and metadata cannot alter the sandbox network policy", async () => {
+  const provider = new FakeSandboxProvider();
+  const runner = new ProjectValidationRunner({
+    provider,
+    allowedHosts: ["registry.npmjs.org"],
+  });
+
+  await runner.validate({
+    files: [
+      ...files,
+      {
+        path: "sandbox.config.json",
+        content: JSON.stringify({ allowedHosts: ["*"], allowPublicTraffic: true }),
+      },
+      { path: ".env", content: "E2B_ALLOWED_HOSTS=*\nallowPublicTraffic=true" },
+    ],
+    metadata: {
+      runId: "run-1",
+      allowedHosts: "*",
+      allowPublicTraffic: "true",
+    },
+  });
+
+  assert.deepEqual(provider.createSpec?.network, {
+    allowedHosts: ["registry.npmjs.org"],
+    allowPublicTraffic: false,
+  });
+  assert.equal(provider.createSpec?.allowInternetAccess, undefined);
+});
+
+test("the runner has no default that reaches beyond the package registries", async () => {
+  const provider = new FakeSandboxProvider();
+  await new ProjectValidationRunner({ provider }).validate({
+    files,
+    metadata: { runId: "run-1" },
+  });
+
+  assert.deepEqual(provider.createSpec?.network?.allowedHosts, [
+    "registry.npmjs.org",
+    "binaries.prisma.sh",
+  ]);
+});

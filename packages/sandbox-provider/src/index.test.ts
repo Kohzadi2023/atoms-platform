@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import test from "node:test";
 
 import {
+  ALL_TRAFFIC,
   CommandExitError,
   RateLimitError,
   type CommandResult,
@@ -10,6 +11,7 @@ import {
 import {
   E2BSandboxAdapter,
   SandboxProviderError,
+  toE2BNetworkOptions,
   type E2BSandboxClient,
   type E2BSandboxFactory,
 } from "./index.js";
@@ -171,5 +173,41 @@ test("provider failures are normalized and unsafe file paths are rejected", asyn
     ]),
     (error: unknown) =>
       error instanceof SandboxProviderError && error.code === "INVALID_INPUT",
+  );
+});
+
+test("the E2B network policy is an allowlist: exact hosts allowed, everything else denied, no public traffic", () => {
+  const options = toE2BNetworkOptions({
+    allowedHosts: ["registry.npmjs.org", "binaries.prisma.sh"],
+    allowPublicTraffic: false,
+  });
+
+  assert.deepEqual(options.allowOut, ["registry.npmjs.org", "binaries.prisma.sh"]);
+  // Deny-all is explicit: the SDK does not promise that allowOut alone denies the rest.
+  assert.deepEqual(options.denyOut, [ALL_TRAFFIC]);
+  assert.equal(options.allowPublicTraffic, false);
+  assert.equal(
+    (options.allowOut as string[]).some((host) => host.includes("*")),
+    false,
+  );
+});
+
+test("a sandbox created without a network policy gets deny-all egress", async () => {
+  const seen: unknown[] = [];
+  const factory: E2BSandboxFactory = {
+    create: async (options) => {
+      seen.push(options.network);
+      return sandboxFixture();
+    },
+    connect: async () => sandboxFixture(),
+  };
+  await new E2BSandboxAdapter({ factory }).create({
+    lifecycle: { onTimeout: "kill", autoResume: false },
+  });
+
+  assert.deepEqual(seen, [{ allowedHosts: [], allowPublicTraffic: false }]);
+  assert.deepEqual(
+    toE2BNetworkOptions({ allowedHosts: [], allowPublicTraffic: false }).denyOut,
+    [ALL_TRAFFIC],
   );
 });

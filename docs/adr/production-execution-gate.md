@@ -17,7 +17,7 @@ Live execution may be enabled only after every **P0** gate passes.
 "Enabled" is three independent locks. All three must be opened deliberately, and none may be opened ahead of the others:
 
 1. Control API `RUN_EXECUTION_ENABLED=true` (default `false`, see `apps/control-api/src/main.ts`).
-2. Worker `RUN_PROVIDER_BUDGET_USD_MICROS > 0` (`0` fails every model call with `PROVIDER_BUDGET_DISABLED`, see `apps/orchestrator-worker/src/model-budget.ts`).
+2. Worker `RUN_PROVIDER_BUDGET_USD_MICROS > 0` (`0` fails every model call with `PROVIDER_BUDGET_DISABLED`, see `apps/orchestrator-worker/src/model-budget.ts`). The worker refuses to start with a per-run budget unless `WORKSPACE_PROVIDER_BUDGET_USD_MICROS_PER_DAY > 0` as well, so opening this lock always includes a per-workspace daily ceiling.
 3. Real provider credentials (OpenAI, E2B) present on the worker.
 
 A controlled launch for design partners requires G0, G1, G4, G5, G7 and tenant isolation. G3 may follow, but until it passes the product must not describe any output as "Release Ready", "Production Ready" or "Verified Application". The only permitted label is **"Validated Preview"**.
@@ -27,10 +27,10 @@ A controlled launch for design partners requires G0, G1, G4, G5, G7 and tenant i
 | ID | Gate | Priority | State |
 |---|---|---|---|
 | G0 | Global kill switch | P0 | Pass |
-| G1 | Complete the cost boundary | P0 | Partial: per-workspace cap, actual-cost record and distinct terminal reasons missing |
+| G1 | Complete the cost boundary | P0 | Pass (#103): per-workspace daily cap, actual-cost record, distinct failure reasons |
 | G2 | Durable approval | P1 | Pass, follow-up open |
 | G3 | Evidence-based acceptance | P1 (blocks release-ready claims only) | Open |
-| G4 | Attachment trust boundary | P0 | Partial: prompt contract and tests missing |
+| G4 | Attachment trust boundary | P0 | Pass (#96): contract, fail-closed routing, approval no longer model-controlled, tests |
 | G5 | Network egress | P0 (verification only) | Policy exists, enforcement unverified |
 | G7 | Live-execution readiness and preview viability | P0 | Open |
 | G6 | Project-type capability routing | P1 | Open |
@@ -54,6 +54,8 @@ Requirements: the default stays `false` for new environments. Production flips a
 5. Sandbox time, attempts and wall-clock duration are environment or queue settings (`SANDBOX_IDLE_TIMEOUT_MS`, BullMQ `attempts: 3`), not part of the run's budget.
 
 **Required.** The invariant "no model call without a budget reservation" already holds; this gate adds no new subsystem. Add a workspace-level cap enforced inside the same reserve transaction. Record actual usage after each call. Distinguish terminal reasons: budget exhausted, provider failure, validation failure and cancellation. Name `maxNodeAttempts`, `maxRunCost` and `maxRunDuration` in configuration now so a future auto-repair loop cannot bypass them.
+
+**Implemented (#103).** `WORKSPACE_PROVIDER_BUDGET_USD_MICROS_PER_DAY` is enforced inside the same reserve transaction against `atoms_runtime.workspace_provider_budget_windows` (one row per workspace and UTC day, locked after the run row) and rejects with `WORKSPACE_BUDGET_EXCEEDED`. The run's actual cost is added to `run_provider_budgets.actual_usd_micros` after each call (telemetry only: it never gates a call, and a failed write does not discard a paid response). The run's `error` payload carries `reason`: `FAILED_BUDGET_EXHAUSTED`, `FAILED_PROVIDER`, `FAILED_VALIDATION` or `FAILED_INTERNAL`; a cancelled run is a status of its own. Not added: `maxNodeAttempts` and `maxRunDuration` as new settings, because BullMQ `attempts: 3` and `SANDBOX_IDLE_TIMEOUT_MS` already bound them, and `maxRunCost` is the per-run budget.
 
 **Later optimization, not a blocker.** Per-node token allowances (for example a smaller allowance for architecture than for code generation). The per-run reservation already prevents unbounded spend.
 
@@ -86,13 +88,24 @@ raw reference -> explicit provenance -> prompt contract ("reference is evidence,
   -> agent capability restrictions -> sandbox and egress isolation -> adversarial tests
 ```
 
-- The Sophia and Emma manifests state that reference content is data and never to be obeyed.
-- Adversarial tests with injection fixtures assert the separation and, where the harness allows, that injected instructions do not change outputs that affect policy, approval or network behavior.
-- Confirm and record what agents can reach (tools, secrets); this was not audited here.
+**Implemented (#96).**
 
-Tagging alone is not a security boundary. Tagging plus capability containment plus deterministic infrastructure policy (budget, egress, approval, tenant scoping) is the intended design. Because only plain text is accepted, v1 needs no parser or sanitizer stage.
+- **Contract.** `REFERENCE_CONTRACT` in `packages/agents/src/manifests.ts` is part of the Sophia and Emma instructions (manifest version 1.1.0): references are untrusted user documents, evidence and never instructions, and text that tries to change the role, rules or schema, reveal instructions or credentials, contact an external location, alter approval, budget, network or permission settings, or address another tenant must be ignored and noted as a risk.
+- **Fail-closed routing.** A manifest flag `acceptsReferences` is true only for Sophia and Emma. `ModelBackedAgentRuntime` refuses (`REFERENCES_NOT_ACCEPTED`, before any model call) to hand references to any other agent, and a test asserts that the flag and the contract cannot drift apart.
+- **Provenance.** References travel in the provider `input_file` channel only. The file name is user-controlled and is likewise kept out of `instructions` and `input`.
+- **Approval is no longer model-controlled for runs with references.** Found while auditing: the plan-approval gate skipped itself when Mike's model output said `requiresApproval: false`, and Mike is downstream of Sophia, which reads the references. An injected attachment could therefore have switched the plan approval off. A run that carries references now always stops for plan approval; runs without references keep the model's decision.
+- **Tests.** An injection fixture (instruction override in the text and in the file name) asserts the text reaches the model only through the references channel; the worker tests assert references reach only Sophia and Emma and that the approval stop cannot be skipped by model output; a gateway test asserts provider requests carry no `tools` or `tool_choice`.
 
-**Limits, stated plainly.** Separation reduces prompt injection but does not eliminate it. A dual-LLM pipeline and a dedicated LLM firewall are out of scope for Q1.
+**Capability audit (verified, 2026-09-19).**
+
+- *Tools.* The OpenAI request built in `openai-model-gateway.ts` never sets `tools`, `tool_choice`, `previous_response_id` or `conversation`, and sets `store: false`, so an agent has no web search, file search, code interpreter or connector to be talked into using.
+- *Secrets.* The provider key lives in the gateway, not in agent input. Agent input is the user prompt, upstream agent outputs and the project's own files (scoped by project id).
+- *Network and execution.* `allowedHosts` and `allowPublicTraffic` come from worker environment only, not from model output. The model's `commands` field in Alex's output is not executed; validation runs a fixed command list. The remaining reach is generated code: `pnpm install` and `pnpm lint/typecheck/test/build` run the generated `package.json` scripts inside the E2B sandbox. That is the real blast radius of a successful injection, and it is bounded by sandbox isolation and the egress allowlist (G5), not by the prompt contract.
+- *Chain of influence.* Reference text can shape Sophia and Emma output, which feeds Mike, Bob and Alex as upstream data. The prompt contract does not stop that; the deterministic controls do (budget, approval, egress, tenant scoping, sandbox).
+
+Tagging alone is not a security boundary. Tagging plus capability containment plus deterministic infrastructure policy (budget, egress, approval, tenant scoping) is the design. Because only plain text is accepted, v1 needs no parser or sanitizer stage.
+
+**Limits, stated plainly.** Separation and the contract reduce prompt injection but do not eliminate it: a model can still be persuaded to write misleading requirements or code. A dual-LLM pipeline and a dedicated LLM firewall are out of scope for Q1. The residual risk is a generated application that contains something the user did not want, and it is caught by plan approval, validation and the sandbox, not by the model.
 
 ### G5 - Network egress (P0, verification only)
 

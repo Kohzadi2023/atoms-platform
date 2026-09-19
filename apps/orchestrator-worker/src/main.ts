@@ -49,6 +49,7 @@ import { BullMqAttachmentWorker } from "./attachment-bullmq-worker.js";
 import { AttachmentProcessor } from "./attachment-processor.js";
 import { PrismaAttachmentScanRepository } from "./attachment-repository.js";
 import { PrismaRunAttachmentLoader } from "./attachment-loader.js";
+import { parseEgressAllowedHosts } from "./egress-policy.js";
 
 const EnvironmentSchema = z
   .object({
@@ -180,6 +181,15 @@ const EnvironmentSchema = z
   })
   .passthrough()
   .superRefine((environment, context) => {
+    try {
+      parseEgressAllowedHosts(environment.E2B_ALLOWED_HOSTS);
+    } catch (error) {
+      context.addIssue({
+        code: "custom",
+        path: ["E2B_ALLOWED_HOSTS"],
+        message: error instanceof Error ? error.message : "invalid host list",
+      });
+    }
     const phase3Values = [
       environment.SUPABASE_ACCESS_TOKEN,
       environment.SUPABASE_ORGANIZATION_SLUG,
@@ -253,9 +263,7 @@ async function main(): Promise<void> {
     ...(environment.E2B_TEMPLATE === undefined
       ? {}
       : { template: environment.E2B_TEMPLATE }),
-    allowedHosts: environment.E2B_ALLOWED_HOSTS.split(",")
-      .map((host) => host.trim())
-      .filter((host) => host.length > 0),
+    allowedHosts: parseEgressAllowedHosts(environment.E2B_ALLOWED_HOSTS),
     sandboxTimeoutMs: environment.SANDBOX_IDLE_TIMEOUT_MS,
   });
   const previewStore = new RedisPreviewSessionStore({
@@ -386,9 +394,7 @@ async function main(): Promise<void> {
       ...(environment.E2B_TEMPLATE === undefined
         ? {}
         : { template: environment.E2B_TEMPLATE }),
-      packageHosts: environment.E2B_ALLOWED_HOSTS.split(",")
-        .map((host) => host.trim())
-        .filter((host) => host.length > 0),
+      packageHosts: parseEgressAllowedHosts(environment.E2B_ALLOWED_HOSTS),
       sandboxTimeoutMs: environment.SANDBOX_IDLE_TIMEOUT_MS,
     });
     const databaseProcessor = new DatabaseOperationProcessor({

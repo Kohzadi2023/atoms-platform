@@ -1,4 +1,5 @@
 import {
+  ALL_TRAFFIC,
   CommandExitError,
   Sandbox,
   SandboxNotFoundError,
@@ -70,6 +71,24 @@ export interface E2BSandboxAdapterOptions extends E2BConnectionOptions {
   readonly now?: () => Date;
 }
 
+/**
+ * Translates the platform's network policy into E2B's. The SDK documents
+ * `allowOut` as "allow these" and, when it is absent, allows everything; it does
+ * not say that setting `allowOut` alone denies the rest. So the allowlist is
+ * always paired with an explicit deny-all (allow entries take precedence over
+ * deny entries), which makes the result an allowlist regardless of that default.
+ */
+export function toE2BNetworkOptions(network: {
+  readonly allowedHosts: readonly string[];
+  readonly allowPublicTraffic: boolean;
+}): NonNullable<SandboxOpts["network"]> {
+  return {
+    allowOut: [...network.allowedHosts],
+    denyOut: [ALL_TRAFFIC],
+    allowPublicTraffic: network.allowPublicTraffic,
+  };
+}
+
 const defaultFactory: E2BSandboxFactory = {
   async create(options) {
     const sdkOptions: SandboxOpts = {
@@ -80,12 +99,7 @@ const defaultFactory: E2BSandboxFactory = {
         : { allowInternetAccess: options.allowInternetAccess }),
       ...(options.network === undefined
         ? {}
-        : {
-            network: {
-              allowOut: [...options.network.allowedHosts],
-              allowPublicTraffic: options.network.allowPublicTraffic,
-            },
-          }),
+        : { network: toE2BNetworkOptions(options.network) }),
       ...(options.apiKey === undefined ? {} : { apiKey: options.apiKey }),
       ...(options.requestTimeoutMs === undefined
         ? {}

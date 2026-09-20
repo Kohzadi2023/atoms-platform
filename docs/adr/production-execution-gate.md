@@ -33,7 +33,7 @@ A controlled launch for design partners requires G0, G1, G4, G5, G7 and tenant i
 | G4 | Attachment trust boundary | P0 | Pass (#96, #110): contract, fail-closed routing, approval no longer model-controlled, tests, requirements review at plan approval |
 | G5 | Network egress | P0 (verification only) | Offline checks pass (#97); live probe pending, needs E2B credential (#14) |
 | G7 | Live-execution readiness and preview viability | P0 | Readiness decision and browser check implemented (#98); browser check needs a Playwright-enabled sandbox template before it can be switched on |
-| G6 | Project-type capability routing | P1 | Implemented: `ProjectType`, routing and a capability-based smoke (#116, #117, #119); web selector open, live smoke not yet run |
+| G6 | Project-type capability routing | P1 | Implemented: `ProjectType`, routing, a capability-based smoke and a web selector (#116, #117, #119, #120 and the selector PR); live smoke not yet run |
 
 ### G0 - Global kill switch (pass)
 
@@ -198,7 +198,8 @@ For example an internal portal requires product, architecture, engineering and d
 
 - **`GENERAL` is every graph agent**, which is what every existing project needed, so nothing changes for projects created before this or without a type. Existing rows get `GENERAL` from the migration default.
 - **`CLIENT_PORTAL` is Mike, Emma, Bob, Alex and David.** That follows the draft in `docs/client-portal-reference-architecture.md`, which is a proposal and not yet confirmed. Changing it is one line in `PROJECT_TYPE_AGENTS`.
-- **Not done:** the web app has no project-type selector, so a portal project is created through the API; the API still does not expose a workspace's plan.
+- **Web selector.** The project form has a project-type select (default `GENERAL`, so nothing changes unless someone chooses otherwise). The chosen type is sent on create, checked on the read-back, and locked once the project exists. The screen has not been looked at in a browser: it needs a control API to list workspaces.
+- **Not done:** the API still does not expose a workspace's plan.
 
 **Consequence for existing tests (done, #117 and #119).** The smoke test used to hardcode an eight-agent list. It now runs a `CLIENT_PORTAL` project and checks coverage by capability through `scripts/project-capability-coverage.mjs`: every capability the type needs must have its agent's artifact, and an artifact from an agent outside the route fails the run. The content approval is expected only if a content capability is in the route. That module holds capability names and the premium flag, and a test checks its agent lists against `PROJECT_TYPE_AGENTS` so the two cannot drift. The check is `project_capability_routing` and the evidence carries `projectType` and `capabilities`. The API still does not expose a workspace's plan (`GET /v1/workspaces/:id` returns id, name, slug and role only), so plan-aware coverage of a `GENERAL` project on `FREE` exists in the module but is not used by the smoke.
 

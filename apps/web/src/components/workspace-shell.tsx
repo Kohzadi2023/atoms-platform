@@ -6,6 +6,7 @@ import type {
   FileContentResponse,
   ProjectFileSummary,
   ProjectResponse,
+  ProjectType,
   ProjectAttachment,
   WorkspaceAdminOverviewResponse,
   WorkspaceSummary,
@@ -68,6 +69,7 @@ import {
   ControlApiError,
   type ControlApiAccessTokenProvider,
 } from "../lib/control-api";
+import { PROJECT_TYPE_OPTIONS, projectTypeOption } from "../lib/project-type-selection";
 import {
   canApprove,
   extractPlanApprovalSummary,
@@ -155,6 +157,8 @@ export function WorkspaceShell({
   >("idle");
   const [projectName, setProjectName] = useState("Customer operations portal");
   const [projectSlug, setProjectSlug] = useState("customer-operations-portal");
+  // GENERAL is the route every project had before types existed, so it stays the default.
+  const [projectType, setProjectType] = useState<ProjectType>("GENERAL");
   const [prompt, setPrompt] = useState(
     "Build a responsive customer operations portal with account summaries, support requests, role-based navigation, Prisma models, API routes, and deterministic tests.",
   );
@@ -372,14 +376,16 @@ export function WorkspaceShell({
         name: projectName,
         slug: projectSlug,
         description: "Created from the Atoms developer workspace",
+        projectType,
       });
       const verified = await api.getProject(created.id);
       if (
         verified.id !== created.id ||
         verified.workspaceId !== workspaceId ||
-        verified.slug !== projectSlug
+        verified.slug !== projectSlug ||
+        verified.projectType !== projectType
       ) {
-        throw new Error("Created project could not be verified against its workspace and slug.");
+        throw new Error("Created project could not be verified against its workspace, slug and project type.");
       }
       setProject(verified);
       setNotice("Project created and verified. No run has been started.");
@@ -831,6 +837,24 @@ export function WorkspaceShell({
                   />
                 </Field>
               </div>
+              <Field label="Project type">
+                <select
+                  className={inputClass}
+                  value={projectType}
+                  disabled={project !== undefined}
+                  onChange={(event) => setProjectType(parseProjectType(event.target.value))}
+                >
+                  {PROJECT_TYPE_OPTIONS.map((option) => (
+                    <option key={option.value} value={option.value}>
+                      {option.label}
+                    </option>
+                  ))}
+                </select>
+                <span className="mt-1 block text-[11px] leading-4 text-[#7f8b9d]">
+                  {projectTypeOption(projectType).description} The type is fixed once the
+                  project is created.
+                </span>
+              </Field>
 
               {project === undefined ? (
                 <div className="rounded-xl border border-[#2f4a42] bg-[#0e1d18] p-3 text-xs leading-5 text-[#a8d8c6]">
@@ -1518,6 +1542,12 @@ function RequirementList({
       </ul>
     </div>
   );
+}
+
+function parseProjectType(value: string): ProjectType {
+  const option = PROJECT_TYPE_OPTIONS.find((candidate) => candidate.value === value);
+  if (option === undefined) throw new Error(`Unsupported project type: ${value}`);
+  return option.value;
 }
 
 function ArtifactsPanel({

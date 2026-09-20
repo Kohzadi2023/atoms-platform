@@ -11,6 +11,10 @@ import { dirname, isAbsolute, relative, resolve } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
 
 import { validateSmokeAccessTokens, validateStagingDeployment } from "./check-staging-deployment.mjs";
+import {
+  assertCapabilityRouting,
+  requiredCapabilityAgents,
+} from "./project-capability-coverage.mjs";
 
 export const SMOKE_CONFIRMATION =
   "RUN_AUTHENTICATED_ATOMS_STAGING_SMOKE";
@@ -19,16 +23,16 @@ export const LIVE_PROVIDER_CONFIRMATION =
 export const MAX_ALLOWED_COST_CAD = 4;
 
 const repositoryRoot = fileURLToPath(new URL("../", import.meta.url));
-const REQUIRED_AGENTS = [
-  "Sophia",
-  "Mike",
-  "Emma",
-  "Bob",
-  "Alex",
-  "David",
-  "Sarah",
-  "Adrian",
-];
+const SMOKE_PROJECT_TYPE = "CLIENT_PORTAL";
+const SMOKE_REQUIRED_CAPABILITIES = requiredCapabilityAgents(SMOKE_PROJECT_TYPE);
+const SMOKE_EXPECTED_APPROVALS = Object.freeze([
+  "plan",
+  ...(SMOKE_REQUIRED_CAPABILITIES.some(
+    ({ capability }) => capability === "growth-copy",
+  )
+    ? ["content"]
+    : []),
+]);
 const TERMINAL_ATTACHMENT_STATUSES = new Set([
   "REJECTED",
   "FAILED",
@@ -248,7 +252,8 @@ export async function executeAuthenticatedStagingSmoke(
         workspaceId: administrativeMembership.workspace.id,
         name: `Authenticated staging smoke ${suffix}`,
         slug: `authenticated-smoke-${suffix}`.toLowerCase(),
-        description: "Ephemeral authenticated staging acceptance project",
+        description: "Ephemeral authenticated staging client-portal acceptance project",
+        projectType: SMOKE_PROJECT_TYPE,
       }),
     },
     [201],
@@ -256,6 +261,9 @@ export async function executeAuthenticatedStagingSmoke(
     "project creation",
   );
   const projectId = requireUuid(project?.id, "created project");
+  if (project?.projectType !== SMOKE_PROJECT_TYPE) {
+    throw new Error("created smoke project did not preserve CLIENT_PORTAL projectType");
+  }
   sensitiveValues.add(projectId);
   sensitiveValues.add(administrativeMembership.workspace.id);
 
@@ -377,7 +385,7 @@ export async function executeAuthenticatedStagingSmoke(
       headers: { "idempotency-key": `smoke-${createId()}` },
       body: JSON.stringify({
         prompt:
-          "Build a small authenticated product landing page. Require explicit plan approval, produce at least one evidence-aware CTA variant, validate the generated project, and publish a signed preview.",
+          "Build a small authenticated agency client portal with a client list, project status view, and tenant-safe data model. Require explicit plan approval, validate the generated project, and publish a signed preview.",
         attachmentIds: [attachmentId],
       }),
     },
@@ -394,6 +402,7 @@ export async function executeAuthenticatedStagingSmoke(
     runId,
     deadline,
     sleep,
+    expectedApprovals: SMOKE_EXPECTED_APPROVALS,
   });
   sensitiveValues.add(orchestration.previewUrl);
   checks.push("sse_reconnect_and_scoped_approvals");
@@ -414,12 +423,11 @@ export async function executeAuthenticatedStagingSmoke(
       .map((item) => item?.payload?.agent)
       .filter((agent) => typeof agent === "string"),
   );
-  for (const agent of REQUIRED_AGENTS) {
-    if (!artifactAgents.has(agent)) {
-      throw new Error(`run artifacts are missing the ${agent} agent output`);
-    }
-  }
-  checks.push("seven_agent_artifacts");
+  const capabilityCoverage = assertCapabilityRouting({
+    projectType: project.projectType,
+    artifactAgents,
+  });
+  checks.push("project_capability_routing");
 
   assertPreviewCapability(orchestration.previewUrl, configuration);
   const preview = await request(
@@ -462,6 +470,7 @@ export async function executeAuthenticatedStagingSmoke(
     completedAt: now().toISOString(),
     changeTicket: configuration.changeTicket,
     revision: configuration.revision,
+    projectType: project.projectType,
     costBoundary: {
       currency: "CAD",
       approvedMaximum: configuration.maximumCostCad,
@@ -476,7 +485,8 @@ export async function executeAuthenticatedStagingSmoke(
       forcedReconnect: orchestration.forcedReconnect,
       resumedWithLastEventId: orchestration.resumedWithLastEventId,
       approvals: orchestration.approvals,
-      artifactAgents: REQUIRED_AGENTS,
+      capabilities: capabilityCoverage.map(({ capability }) => capability),
+      artifactAgents: capabilityCoverage.map(({ agent }) => agent),
     },
   };
   assertRedactedEvidence(evidence, sensitiveValues);
@@ -522,6 +532,9 @@ async function observeRun(options) {
           const scope = event.payload?.scope;
           if (!["plan", "content"].includes(scope)) {
             throw new Error("approval event omitted its supported scope");
+          }
+          if (!options.expectedApprovals.includes(scope)) {
+            throw new Error(`live run requested unexpected ${scope} approval`);
           }
           if (approvals.includes(scope)) {
             throw new Error("run requested the same approval scope more than once");
@@ -610,8 +623,10 @@ async function observeRun(options) {
     }
   }
 
-  if (approvals.join(",") !== "plan,content") {
-    throw new Error("live run must exercise plan then content approvals");
+  if (approvals.join(",") !== options.expectedApprovals.join(",")) {
+    throw new Error(
+      `live run approval scopes did not match expected route: ${options.expectedApprovals.join(",")}`,
+    );
   }
   if (typeof previewUrl !== "string") {
     throw new Error("completed run did not emit a ready signed preview");

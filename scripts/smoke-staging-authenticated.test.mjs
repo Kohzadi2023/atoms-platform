@@ -21,6 +21,7 @@ const ids = {
   attachment: "00000000-0000-4000-8000-000000000011",
   run: "00000000-0000-4000-8000-000000000012",
 };
+const CORE_AGENTS = ["Mike", "Emma", "Bob", "Alex", "David"];
 // Format-only mock fixtures. Real signatures/expiry are checked by Control API.
 const primaryToken = "fixture-primary.jwt-payload.not-a-signature";
 const foreignToken = "fixture-foreign.jwt-payload.not-a-signature";
@@ -109,7 +110,7 @@ test("live command inputs require two exact confirmations and a bounded audit co
   assert.match(rejected.violations.join("\n"), /outside the secrets directory/u);
 });
 
-test("authenticated smoke exercises the complete redacted mock journey", async () => {
+test("authenticated smoke exercises the CLIENT_PORTAL capability route", async () => {
   const mock = createMockFetch();
   const result = await executeAuthenticatedStagingSmoke(
     configuration(),
@@ -123,24 +124,23 @@ test("authenticated smoke exercises the complete redacted mock journey", async (
 
   assert.equal(result.evidence.outcome, "passed");
   assert.equal(result.evidence.identityProvider, "ENTRA_EXTERNAL_ID");
+  assert.equal(result.evidence.projectType, "CLIENT_PORTAL");
   assert.ok(result.evidence.checks.includes("entra_control_api_identity"));
-  assert.deepEqual(result.evidence.orchestration.approvals, ["plan", "content"]);
+  assert.ok(result.evidence.checks.includes("project_capability_routing"));
+  assert.deepEqual(result.evidence.orchestration.approvals, ["plan"]);
   assert.equal(result.evidence.orchestration.forcedReconnect, true);
   assert.equal(result.evidence.orchestration.resumedWithLastEventId, true);
-  assert.deepEqual(result.evidence.orchestration.artifactAgents, [
-    "Sophia",
-    "Mike",
-    "Emma",
-    "Bob",
-    "Alex",
-    "David",
-    "Sarah",
-    "Adrian",
+  assert.deepEqual(result.evidence.orchestration.capabilities, [
+    "product-planning",
+    "requirements-architecture",
+    "implementation",
+    "validation",
+    "data-design",
   ]);
-  assert.deepEqual(mock.lastEventIds, [null, "1", "2", "4"]);
+  assert.deepEqual(result.evidence.orchestration.artifactAgents, CORE_AGENTS);
+  assert.deepEqual(mock.lastEventIds, [null, "1", "2"]);
   assert.deepEqual(mock.approvals, [
     { scope: "plan", expectedControlVersion: 1 },
-    { scope: "content", expectedControlVersion: 3 },
   ]);
 
   const serialized = JSON.stringify(result.evidence);
@@ -314,7 +314,12 @@ function createMockFetch() {
     if (url.pathname === "/v1/projects" && method === "POST") {
       const body = JSON.parse(String(init.body));
       assert.equal(body.workspaceId, ids.primaryWorkspace);
-      return json({ id: ids.project, workspaceId: ids.primaryWorkspace }, 201);
+      assert.equal(body.projectType, "CLIENT_PORTAL");
+      return json({
+        id: ids.project,
+        workspaceId: ids.primaryWorkspace,
+        projectType: "CLIENT_PORTAL",
+      }, 201);
     }
     if (
       url.pathname === `/v1/projects/${ids.project}/attachments/upload-intents`
@@ -350,6 +355,8 @@ function createMockFetch() {
     }
     if (url.pathname === `/v1/projects/${ids.project}/runs` && method === "POST") {
       assert.match(headers.get("idempotency-key") ?? "", /^smoke-/u);
+      const body = JSON.parse(String(init.body));
+      assert.match(body.prompt, /agency client portal/u);
       return json({ id: ids.run, status: "PENDING", controlVersion: 0 }, 201);
     }
     if (url.pathname === `/v1/runs/${ids.run}/events`) {
@@ -359,30 +366,18 @@ function createMockFetch() {
         [event(1, "run.created", {})],
         [event(2, "approval.required", { version: "v1", scope: "plan", reason: "plan" })],
         [
-          event(3, "artifact.created", {
-            version: "v1",
-            agent: "Mike",
-          }),
-          event(4, "approval.required", {
-            version: "v1",
-            scope: "content",
-            reason: "content",
-          }),
-        ],
-        [
-          event(5, "preview.updated", {
+          event(3, "preview.updated", {
             version: "v1",
             status: "READY",
             url: previewUrl,
           }),
-          event(6, "run.completed", {}),
+          event(4, "run.completed", {}),
         ],
       ];
       const batch = batches[eventConnection];
       eventConnection += 1;
       if (eventConnection === 2) pendingApproval = "plan";
-      if (eventConnection === 3) pendingApproval = "content";
-      if (eventConnection === 4) completed = true;
+      if (eventConnection === 3) completed = true;
       return new Response(batch.join(""), {
         status: 200,
         headers: { "content-type": "text/event-stream; charset=utf-8" },
@@ -400,21 +395,16 @@ function createMockFetch() {
     }
     if (url.pathname === `/v1/runs/${ids.run}/artifacts`) {
       return json({
-        items: ["Sophia", "Mike", "Emma", "Bob", "Alex", "David", "Sarah", "Adrian"].map(
-          (agent) => ({ payload: { agent } }),
-        ),
+        items: CORE_AGENTS.map((agent) => ({ payload: { agent } })),
       });
     }
     if (url.pathname === `/v1/runs/${ids.run}`) {
       if (pendingApproval === "plan") {
         return json({ status: "PAUSED", controlVersion: 1 });
       }
-      if (pendingApproval === "content") {
-        return json({ status: "PAUSED", controlVersion: 3 });
-      }
       return json({
         status: completed ? "COMPLETED" : "RUNNING",
-        controlVersion: completed ? 4 : 0,
+        controlVersion: completed ? 2 : 0,
       });
     }
     assert.fail(`Unexpected mock request: ${method} ${url.pathname}`);

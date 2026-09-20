@@ -24,7 +24,7 @@ export const PROJECT_TYPE_OPTIONS: readonly ProjectTypeOption[] = [
 export function projectTypeOption(projectType: ProjectType): ProjectTypeOption {
   const option = PROJECT_TYPE_OPTIONS.find(({ value }) => value === projectType);
   if (option === undefined) {
-    throw new Error(`Unsupported project type: ${projectType satisfies never}`);
+    throw new Error(`Unsupported project type: ${String(projectType)}`);
   }
   return option;
 }

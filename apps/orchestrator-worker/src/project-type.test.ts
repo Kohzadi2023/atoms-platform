@@ -2,9 +2,9 @@ import assert from "node:assert/strict";
 import test from "node:test";
 
 import { activeAgents } from "@atoms/agents";
-import { ProjectTypeSchema } from "@atoms/contracts";
+import { PROJECT_TYPE_AGENTS, ProjectTypeSchema } from "@atoms/contracts";
 
-import { PROJECT_TYPE_AGENTS, isRequiredForProjectType } from "./project-type.js";
+import { isRequiredForProjectType } from "./project-type.js";
 
 // The agents the run graph actually has nodes for.
 const GRAPH_AGENTS: readonly string[] = activeAgents.filter(

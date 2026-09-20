@@ -1,19 +1,23 @@
+// The agents each project type needs are defined once, in PROJECT_TYPE_AGENTS in
+// @atoms/contracts (the worker routes on it). This matrix adds capability names and which
+// agents are premium so a coverage failure reads in capability terms; a test keeps it from
+// drifting from the contracts table.
 const PROJECT_CAPABILITIES = Object.freeze({
   GENERAL: Object.freeze([
     ["market-research", "Sophia", true],
     ["product-planning", "Mike", false],
-    ["requirements-architecture", "Emma", false],
-    ["implementation", "Bob", false],
-    ["validation", "Alex", false],
+    ["requirements", "Emma", false],
+    ["architecture", "Bob", false],
+    ["implementation", "Alex", false],
     ["data-design", "David", false],
     ["seo", "Sarah", true],
     ["growth-copy", "Adrian", true],
   ]),
   CLIENT_PORTAL: Object.freeze([
     ["product-planning", "Mike", false],
-    ["requirements-architecture", "Emma", false],
-    ["implementation", "Bob", false],
-    ["validation", "Alex", false],
+    ["requirements", "Emma", false],
+    ["architecture", "Bob", false],
+    ["implementation", "Alex", false],
     ["data-design", "David", false],
   ]),
 });

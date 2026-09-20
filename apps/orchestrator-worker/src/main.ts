@@ -56,6 +56,7 @@ import {
 } from "./approval-expiry.js";
 import { parseEgressAllowedHosts } from "./egress-policy.js";
 import { WorkerReadinessPublisher } from "./readiness-publisher.js";
+import { createThrottledLogger } from "./throttled-log.js";
 import { Redis } from "ioredis";
 
 const EnvironmentSchema = z
@@ -244,6 +245,8 @@ const EnvironmentSchema = z
 
 async function main(): Promise<void> {
   const environment = EnvironmentSchema.parse(process.env);
+  // A persistent queue or database error repeats every few milliseconds; print it once, then count.
+  const logError = createThrottledLogger();
   const prisma = createPrismaClient(environment.DATABASE_URL);
   const repository = new PrismaWorkerRepository(prisma);
   const attachmentRepository = new PrismaAttachmentScanRepository(prisma);
@@ -359,11 +362,9 @@ async function main(): Promise<void> {
       ? {}
       : { prefix: environment.RUN_QUEUE_PREFIX }),
   });
-  attachmentWorker.onError((error) =>
-    console.error("Attachment worker error", error),
-  );
+  attachmentWorker.onError((error) => logError("Attachment worker error", error));
   attachmentWorker.onFailed((jobId, error) =>
-    console.error("Attachment scan job failed", { jobId, error }),
+    logError("Attachment scan job failed", error, { jobId }),
   );
 
   const customerSuccessHandoffRepository = new PrismaCustomerSuccessHandoffRepository(
@@ -382,13 +383,10 @@ async function main(): Promise<void> {
   });
   await customerSuccessHandoffWorker.start();
   customerSuccessHandoffWorker.onError((error) =>
-    console.error("Customer success handoff worker error", error),
+    logError("Customer success handoff worker error", error),
   );
   customerSuccessHandoffWorker.onFailed((jobId, error) =>
-    console.error("Customer success handoff reconciliation job failed", {
-      jobId,
-      error,
-    }),
+    logError("Customer success handoff reconciliation job failed", error, { jobId }),
   );
 
   const phase3Enabled = environment.SUPABASE_ACCESS_TOKEN !== undefined;
@@ -435,11 +433,9 @@ async function main(): Promise<void> {
         ? {}
         : { prefix: environment.RUN_QUEUE_PREFIX }),
     });
-    databaseWorker.onError((error) =>
-      console.error("Database operation worker error", error),
-    );
+    databaseWorker.onError((error) => logError("Database operation worker error", error));
     databaseWorker.onFailed((jobId, error) =>
-      console.error("Database operation job failed", { jobId, error }),
+      logError("Database operation job failed", error, { jobId }),
     );
 
     const reconciliationRepository =
@@ -473,16 +469,16 @@ async function main(): Promise<void> {
       });
     await databaseReconciliationWorker.start();
     databaseReconciliationWorker.onError((error) =>
-      console.error("Database reconciliation worker error", error),
+      logError("Database reconciliation worker error", error),
     );
     databaseReconciliationWorker.onFailed((jobId, error) =>
-      console.error("Database reconciliation job failed", { jobId, error }),
+      logError("Database reconciliation job failed", error, { jobId }),
     );
   }
 
-  worker.onError((error) => console.error("Orchestrator worker error", error));
+  worker.onError((error) => logError("Orchestrator worker error", error));
   worker.onFailed((jobId, error) =>
-    console.error("Orchestrator job failed", { jobId, error }),
+    logError("Orchestrator job failed", error, { jobId }),
   );
 
   // The Control API cannot see this process's environment, so the worker
@@ -490,9 +486,7 @@ async function main(): Promise<void> {
   const readinessRedis = new Redis(environment.REDIS_URL, {
     maxRetriesPerRequest: 1,
   });
-  readinessRedis.on("error", (error) =>
-    console.error("Readiness publisher redis error", error),
-  );
+  readinessRedis.on("error", (error) => logError("Readiness publisher redis error", error));
   const readinessPublisher = new WorkerReadinessPublisher({
     store: {
       set: async (key, value, ttlSeconds) => {
@@ -510,7 +504,7 @@ async function main(): Promise<void> {
       attachmentContractVerified: referenceContractIntact(),
       browserViabilityRequired: environment.PREVIEW_BROWSER_VIABILITY === "required",
     },
-    onError: (error) => console.error("Readiness publish failed", error),
+    onError: (error) => logError("Readiness publish failed", error),
   });
   readinessPublisher.start();
 
@@ -521,7 +515,7 @@ async function main(): Promise<void> {
       ttlMs: environment.PAUSED_RUN_TTL_HOURS * 3_600_000,
       onExpired: (runIds) =>
         console.warn("Cancelled paused runs whose approval expired", { runIds }),
-      onError: (error) => console.error("Approval expiry sweep failed", error),
+      onError: (error) => logError("Approval expiry sweep failed", error),
     });
     approvalExpirySweeper.start();
   }

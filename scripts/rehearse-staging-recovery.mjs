@@ -95,7 +95,7 @@ const REQUIRED_SMOKE_CHECKS = Object.freeze([
   "two_identity_workspace_isolation",
   "attachment_upload_scan_download",
   "sse_reconnect_and_scoped_approvals",
-  "seven_agent_artifacts",
+  "required_agent_artifacts",
   "signed_preview_security",
   "run_completed",
 ]);

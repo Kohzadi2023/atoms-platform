@@ -10,6 +10,11 @@ import {
 import { dirname, isAbsolute, relative, resolve } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
 
+import {
+  ProjectTypeSchema,
+  agentsRequiredFor,
+  expectedApprovalScopes,
+} from "../packages/contracts/dist/index.js";
 import { validateSmokeAccessTokens, validateStagingDeployment } from "./check-staging-deployment.mjs";
 
 export const SMOKE_CONFIRMATION =
@@ -19,16 +24,6 @@ export const LIVE_PROVIDER_CONFIRMATION =
 export const MAX_ALLOWED_COST_CAD = 4;
 
 const repositoryRoot = fileURLToPath(new URL("../", import.meta.url));
-const REQUIRED_AGENTS = [
-  "Sophia",
-  "Mike",
-  "Emma",
-  "Bob",
-  "Alex",
-  "David",
-  "Sarah",
-  "Adrian",
-];
 const TERMINAL_ATTACHMENT_STATUSES = new Set([
   "REJECTED",
   "FAILED",
@@ -48,6 +43,14 @@ export function validateSmokeCommandOptions(options) {
   }
   if (!/^[A-Z][A-Z0-9-]{1,63}$/u.test(options.changeTicket ?? "")) {
     violations.push("--change-ticket must be a normalized identifier");
+  }
+  if (
+    options.projectType !== undefined &&
+    !ProjectTypeSchema.safeParse(options.projectType).success
+  ) {
+    violations.push(
+      `--project-type must be one of ${ProjectTypeSchema.options.join(", ")}`,
+    );
   }
   const maximumCostCad = parseMaximumCost(options.maximumCostCad);
   if (maximumCostCad === undefined) {
@@ -237,6 +240,12 @@ export async function executeAuthenticatedStagingSmoke(
   checks.push("two_identity_workspace_isolation");
 
   const suffix = `${now().getTime().toString(36)}-${createId().slice(0, 8)}`;
+  // What "complete" means is derived from the project type, not from an agent count: the
+  // agents it needs must have produced output, and the ones it does not need must not have.
+  // (The workspace is expected to be on PRO or MAX, see docs/staging-authenticated-smoke.md,
+  // so the plan does not remove any agent the type needs.)
+  const projectType = configuration.projectType ?? "GENERAL";
+  const requiredAgents = agentsRequiredFor(projectType);
   const project = await apiJson(
     fetchImplementation,
     configuration,
@@ -249,6 +258,7 @@ export async function executeAuthenticatedStagingSmoke(
         name: `Authenticated staging smoke ${suffix}`,
         slug: `authenticated-smoke-${suffix}`.toLowerCase(),
         description: "Ephemeral authenticated staging acceptance project",
+        projectType,
       }),
     },
     [201],
@@ -394,6 +404,7 @@ export async function executeAuthenticatedStagingSmoke(
     runId,
     deadline,
     sleep,
+    expectedApprovals: expectedApprovalScopes(projectType),
   });
   sensitiveValues.add(orchestration.previewUrl);
   checks.push("sse_reconnect_and_scoped_approvals");
@@ -414,12 +425,19 @@ export async function executeAuthenticatedStagingSmoke(
       .map((item) => item?.payload?.agent)
       .filter((agent) => typeof agent === "string"),
   );
-  for (const agent of REQUIRED_AGENTS) {
+  for (const agent of requiredAgents) {
     if (!artifactAgents.has(agent)) {
       throw new Error(`run artifacts are missing the ${agent} agent output`);
     }
   }
-  checks.push("seven_agent_artifacts");
+  for (const agent of artifactAgents) {
+    if (!requiredAgents.includes(agent)) {
+      throw new Error(
+        `run artifacts contain output from ${agent}, which a ${projectType} project does not need`,
+      );
+    }
+  }
+  checks.push("required_agent_artifacts");
 
   assertPreviewCapability(orchestration.previewUrl, configuration);
   const preview = await request(
@@ -467,6 +485,7 @@ export async function executeAuthenticatedStagingSmoke(
       approvedMaximum: configuration.maximumCostCad,
       enforcement: "operator-audit-boundary-not-provider-hard-limit",
     },
+    projectType,
     checks,
     attachment: {
       bytes: attachmentBytes.byteLength,
@@ -476,7 +495,7 @@ export async function executeAuthenticatedStagingSmoke(
       forcedReconnect: orchestration.forcedReconnect,
       resumedWithLastEventId: orchestration.resumedWithLastEventId,
       approvals: orchestration.approvals,
-      artifactAgents: REQUIRED_AGENTS,
+      artifactAgents: requiredAgents,
     },
   };
   assertRedactedEvidence(evidence, sensitiveValues);
@@ -610,8 +629,10 @@ async function observeRun(options) {
     }
   }
 
-  if (approvals.join(",") !== "plan,content") {
-    throw new Error("live run must exercise plan then content approvals");
+  if (approvals.join(",") !== options.expectedApprovals.join(",")) {
+    throw new Error(
+      `live run must exercise the ${options.expectedApprovals.join(" then ")} approvals for this project type`,
+    );
   }
   if (typeof previewUrl !== "string") {
     throw new Error("completed run did not emit a ready signed preview");
@@ -964,6 +985,7 @@ function parseArguments(arguments_) {
     ["--confirmation", "confirmation"],
     ["--provider-confirmation", "providerConfirmation"],
     ["--max-cost-cad", "maximumCostCad"],
+    ["--project-type", "projectType"],
   ]);
   for (let index = 0; index < normalized.length; index += 1) {
     const argument = normalized[index];
@@ -1003,6 +1025,7 @@ async function loadConfiguration(options, maximumCostCad) {
     revision: publicEnvironment.ATOMS_IMAGE_TAG,
     changeTicket: options.changeTicket,
     maximumCostCad,
+    projectType: options.projectType ?? "GENERAL",
     primary: {
       accessToken: smokeEnvironment.ATOMS_SMOKE_PRIMARY_ACCESS_TOKEN,
     },

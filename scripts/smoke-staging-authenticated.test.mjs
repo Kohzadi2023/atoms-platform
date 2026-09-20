@@ -165,6 +165,97 @@ test("authenticated smoke exercises the complete redacted mock journey", async (
   }
 });
 
+const smokeDependencies = (mock) => ({
+  fetch: mock.fetch,
+  now: () => new Date("2026-08-30T12:00:00.000Z"),
+  randomUUID: () => "11111111-1111-4111-8111-111111111111",
+  sleep: async () => {},
+});
+
+test("a GENERAL project is created with its type and needs all eight agents and both approvals", async () => {
+  const mock = createMockFetch();
+  const result = await executeAuthenticatedStagingSmoke(configuration(), smokeDependencies(mock));
+
+  assert.equal(mock.projectBodies[0].projectType, "GENERAL");
+  assert.equal(result.evidence.projectType, "GENERAL");
+  assert.ok(result.evidence.checks.includes("required_agent_artifacts"));
+  assert.equal(result.evidence.checks.includes("seven_agent_artifacts"), false);
+});
+
+test("a CLIENT_PORTAL project is judged by its own agents and by the plan approval alone", async () => {
+  const mock = createMockFetch({
+    agents: ["Mike", "Emma", "Bob", "Alex", "David"],
+    scopes: ["plan"],
+  });
+  const result = await executeAuthenticatedStagingSmoke(
+    configuration({ projectType: "CLIENT_PORTAL" }),
+    smokeDependencies(mock),
+  );
+
+  assert.equal(mock.projectBodies[0].projectType, "CLIENT_PORTAL");
+  assert.equal(result.evidence.outcome, "passed");
+  assert.equal(result.evidence.projectType, "CLIENT_PORTAL");
+  assert.deepEqual(result.evidence.orchestration.artifactAgents, [
+    "Mike",
+    "Emma",
+    "Bob",
+    "Alex",
+    "David",
+  ]);
+  assert.deepEqual(result.evidence.orchestration.approvals, ["plan"]);
+});
+
+test("a CLIENT_PORTAL project that still ran a premium agent fails the smoke", async () => {
+  const mock = createMockFetch({
+    agents: ["Sophia", "Mike", "Emma", "Bob", "Alex", "David"],
+    scopes: ["plan"],
+  });
+
+  await assert.rejects(
+    executeAuthenticatedStagingSmoke(
+      configuration({ projectType: "CLIENT_PORTAL" }),
+      smokeDependencies(mock),
+    ),
+    /Sophia, which a CLIENT_PORTAL project does not need/u,
+  );
+});
+
+test("a required agent that produced nothing fails the smoke, whatever the project type", async () => {
+  const mock = createMockFetch({
+    agents: ["Mike", "Emma", "Bob", "Alex"],
+    scopes: ["plan"],
+  });
+
+  await assert.rejects(
+    executeAuthenticatedStagingSmoke(
+      configuration({ projectType: "CLIENT_PORTAL" }),
+      smokeDependencies(mock),
+    ),
+    /missing the David agent output/u,
+  );
+});
+
+test("the project type option accepts only known types", () => {
+  const base = {
+    changeTicket: "GH-22",
+    environmentFile: "/abs/env",
+    secretsDirectory: "/abs/secrets",
+    evidenceOut: "/abs/out/evidence.json",
+    confirmation: "RUN_AUTHENTICATED_ATOMS_STAGING_SMOKE",
+    providerConfirmation: "I_ACCEPT_ONE_LIVE_OPENAI_E2B_STAGING_RUN",
+    maximumCostCad: "4",
+  };
+
+  assert.doesNotMatch(
+    validateSmokeCommandOptions({ ...base, projectType: "CLIENT_PORTAL" }).violations.join("\n"),
+    /project-type/u,
+  );
+  assert.match(
+    validateSmokeCommandOptions({ ...base, projectType: "MARKETING_SITE" }).violations.join("\n"),
+    /--project-type must be one of GENERAL, CLIENT_PORTAL/u,
+  );
+});
+
 test("evidence guard rejects signed capabilities and secret values", () => {
   assert.throws(
     () =>
@@ -204,7 +295,7 @@ test("evidence writer is mode-0600 and never overwrites an existing file", async
   assert.equal(await readFile(existingPath, "utf8"), "keep-this-evidence\n");
 });
 
-function configuration() {
+function configuration(overrides = {}) {
   return {
     webOrigin: "https://app.staging.atoms.dev",
     controlApiOrigin: "https://api.staging.atoms.dev",
@@ -222,12 +313,17 @@ function configuration() {
       accessToken: foreignToken,
       projectId: ids.foreignProject,
     },
+    ...overrides,
   };
 }
 
-function createMockFetch() {
+const ALL_AGENTS = ["Sophia", "Mike", "Emma", "Bob", "Alex", "David", "Sarah", "Adrian"];
+
+// `agents` are the agents that produced output; `scopes` the approvals the run stops for.
+function createMockFetch({ agents = ALL_AGENTS, scopes = ["plan", "content"] } = {}) {
   const lastEventIds = [];
   const approvals = [];
+  const projectBodies = [];
   let eventConnection = 0;
   let pendingApproval;
   let completed = false;
@@ -314,6 +410,7 @@ function createMockFetch() {
     if (url.pathname === "/v1/projects" && method === "POST") {
       const body = JSON.parse(String(init.body));
       assert.equal(body.workspaceId, ids.primaryWorkspace);
+      projectBodies.push(body);
       return json({ id: ids.project, workspaceId: ids.primaryWorkspace }, 201);
     }
     if (
@@ -355,34 +452,41 @@ function createMockFetch() {
     if (url.pathname === `/v1/runs/${ids.run}/events`) {
       const lastEventId = headers.get("last-event-id");
       lastEventIds.push(lastEventId);
-      const batches = [
-        [event(1, "run.created", {})],
-        [event(2, "approval.required", { version: "v1", scope: "plan", reason: "plan" })],
-        [
-          event(3, "artifact.created", {
-            version: "v1",
-            agent: "Mike",
-          }),
-          event(4, "approval.required", {
-            version: "v1",
-            scope: "content",
-            reason: "content",
-          }),
-        ],
-        [
-          event(5, "preview.updated", {
-            version: "v1",
-            status: "READY",
-            url: previewUrl,
-          }),
-          event(6, "run.completed", {}),
-        ],
+      const finish = [
+        event(5, "preview.updated", {
+          version: "v1",
+          status: "READY",
+          url: previewUrl,
+        }),
+        event(6, "run.completed", {}),
       ];
+      const batches = scopes.includes("content")
+        ? [
+            [event(1, "run.created", {})],
+            [event(2, "approval.required", { version: "v1", scope: "plan", reason: "plan" })],
+            [
+              event(3, "artifact.created", {
+                version: "v1",
+                agent: "Mike",
+              }),
+              event(4, "approval.required", {
+                version: "v1",
+                scope: "content",
+                reason: "content",
+              }),
+            ],
+            finish,
+          ]
+        : [
+            [event(1, "run.created", {})],
+            [event(2, "approval.required", { version: "v1", scope: "plan", reason: "plan" })],
+            finish,
+          ];
       const batch = batches[eventConnection];
       eventConnection += 1;
       if (eventConnection === 2) pendingApproval = "plan";
-      if (eventConnection === 3) pendingApproval = "content";
-      if (eventConnection === 4) completed = true;
+      if (eventConnection === 3 && scopes.includes("content")) pendingApproval = "content";
+      if (eventConnection === batches.length) completed = true;
       return new Response(batch.join(""), {
         status: 200,
         headers: { "content-type": "text/event-stream; charset=utf-8" },
@@ -400,9 +504,7 @@ function createMockFetch() {
     }
     if (url.pathname === `/v1/runs/${ids.run}/artifacts`) {
       return json({
-        items: ["Sophia", "Mike", "Emma", "Bob", "Alex", "David", "Sarah", "Adrian"].map(
-          (agent) => ({ payload: { agent } }),
-        ),
+        items: agents.map((agent) => ({ payload: { agent } })),
       });
     }
     if (url.pathname === `/v1/runs/${ids.run}`) {
@@ -414,13 +516,13 @@ function createMockFetch() {
       }
       return json({
         status: completed ? "COMPLETED" : "RUNNING",
-        controlVersion: completed ? 4 : 0,
+        controlVersion: completed ? (scopes.includes("content") ? 4 : 2) : 0,
       });
     }
     assert.fail(`Unexpected mock request: ${method} ${url.pathname}`);
   }
 
-  return { fetch, lastEventIds, approvals };
+  return { fetch, lastEventIds, approvals, projectBodies };
 }
 
 function event(sequence, eventType, payload) {

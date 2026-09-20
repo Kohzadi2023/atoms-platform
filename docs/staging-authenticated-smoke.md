@@ -69,10 +69,13 @@ The smoke test fails closed unless every check succeeds:
    storage origin, followed by quarantine scanning, `CLEAN`, and a byte-identical
    signed download.
 5. One live agent run, a deliberately interrupted SSE connection,
-   replay with `Last-Event-ID`, and compare-and-swap approvals in `plan` then
-   `content` scope.
-6. Durable artifacts from Sophia, Mike, Emma, Bob, Alex, David, Sarah, and
-   Adrian.
+   replay with `Last-Event-ID`, and compare-and-swap approvals: `plan`, then
+   `content` only if the project type includes a content agent.
+6. Durable artifacts from exactly the agents the project type needs
+   (`PROJECT_TYPE_AGENTS` in `@atoms/contracts`), and none from agents it does
+   not need. For the default `GENERAL` type that is Sophia, Mike, Emma, Bob,
+   Alex, David, Sarah, and Adrian; for `CLIENT_PORTAL` it is Mike, Emma, Bob,
+   Alex, and David. The check is named `required_agent_artifacts`.
 7. A ready signed preview on the configured wildcard domain with HSTS,
    `no-store`, `nosniff`, `no-referrer`, and a CSP that permits framing only by
    the exact web origin.
@@ -95,13 +98,20 @@ pnpm staging:smoke:authenticated -- \
   --max-cost-cad 4
 ```
 
+The project type defaults to `GENERAL`. Add `--project-type CLIENT_PORTAL` to
+exercise the Q1 template instead; the run is then judged by that type's agents
+and approvals. The plan prerequisite above still applies to `GENERAL`; a
+`CLIENT_PORTAL` run does not use the entitlement-gated agents at all. The
+smoke reads the mapping from the built contracts package, so run
+`pnpm --filter @atoms/contracts build` first if it has changed.
+
 The positive maximum cost, capped at CAD 4, is an operator audit boundary. It
 is not a provider-side hard spending limiter. Check the relevant provider
 budgets and account state before supplying the confirmation.
 
 Evidence is created once with mode `0600`. It contains the revision, change
-ticket, approved audit boundary, passed logical gates, attachment byte/hash
-proof, approval scopes, and agent names. It intentionally excludes credentials,
+ticket, project type, approved audit boundary, passed logical gates,
+attachment byte/hash proof, approval scopes, and agent names. It intentionally excludes credentials,
 JWTs, emails, workspace/project/run/attachment identifiers, provider/customer
 identifiers, public origins, presigned storage URLs, and the signed preview
 hostname. A failed run emits no passing evidence.

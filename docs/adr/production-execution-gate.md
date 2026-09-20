@@ -33,7 +33,7 @@ A controlled launch for design partners requires G0, G1, G4, G5, G7 and tenant i
 | G4 | Attachment trust boundary | P0 | Pass (#96, #110): contract, fail-closed routing, approval no longer model-controlled, tests, requirements review at plan approval |
 | G5 | Network egress | P0 (verification only) | Offline checks pass (#97); live probe pending, needs E2B credential (#14) |
 | G7 | Live-execution readiness and preview viability | P0 | Readiness decision and browser check implemented (#98); browser check needs a Playwright-enabled sandbox template before it can be switched on |
-| G6 | Project-type capability routing | P1 | Partial: `ProjectType` and routing implemented; smoke assertion and UI selection open |
+| G6 | Project-type capability routing | P1 | Implemented: `ProjectType`, routing and capability-based smoke; web selector open, live smoke not yet run |
 
 ### G0 - Global kill switch (pass)
 
@@ -198,9 +198,10 @@ For example an internal portal requires product, architecture, engineering and d
 
 - **`GENERAL` is every graph agent**, which is what every existing project needed, so nothing changes for projects created before this or without a type. Existing rows get `GENERAL` from the migration default.
 - **`CLIENT_PORTAL` is Mike, Emma, Bob, Alex and David.** That follows the draft in `docs/client-portal-reference-architecture.md`, which is a proposal and not yet confirmed. Changing it is one line in `PROJECT_TYPE_AGENTS`.
-- **Not done:** the web app has no project-type selector, so a portal project is created through the API; the smoke script's hardcoded eight-agent list is unchanged (it runs a `GENERAL` project, so it is still correct); the API still does not expose a workspace's plan.
+- **Not done:** the web app has no project-type selector, so a portal project is created through the API; the API still does not expose a workspace's plan.
+- **Smoke test is capability-based.** `scripts/smoke-staging-authenticated.mjs` no longer hardcodes eight agents. `PROJECT_TYPE_AGENTS` moved to `@atoms/contracts` so the worker and the smoke share one definition; the smoke takes `--project-type` (default `GENERAL`), requires artifacts from exactly the agents that type needs and none from the others, and expects the content approval only when a content agent is part of the run. The check `seven_agent_artifacts` is now `required_agent_artifacts` (also in the recovery rehearsal's required list).
 
-**Consequence for existing tests.** `scripts/smoke-staging-authenticated.mjs` hardcodes an eight-agent `REQUIRED_AGENTS` list (extended in #87). An agent count is an implementation detail; capability coverage is the invariant. When G6 lands the smoke check must assert coverage of the required capabilities for the project type and plan. No interim change is made, because there is no project type to key on and the API does not expose a workspace's plan (`GET /v1/workspaces/:id` returns id, name, slug and role only). Until then the smoke prerequisite stays as documented in `docs/staging-authenticated-smoke.md` (workspace on `PRO` or `MAX`).
+**Consequence for existing tests (done).** The smoke test used to hardcode an eight-agent list (extended in #87). An agent count is an implementation detail; capability coverage is the invariant, and the smoke now asserts it per project type (see above). The API still does not expose a workspace's plan (`GET /v1/workspaces/:id` returns id, name, slug and role only), so for a `GENERAL` project the smoke prerequisite stays as documented in `docs/staging-authenticated-smoke.md`: a workspace on `PRO` or `MAX`.
 
 ## Exit criteria and evidence (P0)
 

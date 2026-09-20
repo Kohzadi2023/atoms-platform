@@ -132,9 +132,9 @@ test("authenticated smoke exercises the CLIENT_PORTAL capability route", async (
   assert.equal(result.evidence.orchestration.resumedWithLastEventId, true);
   assert.deepEqual(result.evidence.orchestration.capabilities, [
     "product-planning",
-    "requirements-architecture",
+    "requirements",
+    "architecture",
     "implementation",
-    "validation",
     "data-design",
   ]);
   assert.deepEqual(result.evidence.orchestration.artifactAgents, CORE_AGENTS);

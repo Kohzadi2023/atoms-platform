@@ -23,7 +23,7 @@ All of these must be true. Do not enable the flag if any is not.
    - `PREVIEW_BROWSER_VIABILITY=required`
    - `SANDBOX_EGRESS_VERIFIED_AT`, set only after the live egress probe passed
    - real `OPENAI_API_KEY` and `E2B_API_KEY`
-4. The partner's workspace exists and its plan is set. Sophia, Sarah and Adrian run only on `PRO` or `MAX`; on `FREE` they are skipped. A workspace OWNER or ADMIN changes it with `PATCH /v1/workspaces/:workspaceId/plan`; there is no screen for it. Create the partner's project as a client portal with `POST /v1/projects` and `"projectType": "CLIENT_PORTAL"` (there is no screen for it yet). That type does not run Sophia, Sarah or Adrian at all, so the plan does not matter for them; a project created without a type is `GENERAL` and behaves as before.
+4. The partner's workspace exists and its plan is set. Sophia, Sarah and Adrian run only on `PRO` or `MAX`; on `FREE` they are skipped. A workspace OWNER or ADMIN changes it with `PATCH /v1/workspaces/:workspaceId/plan`; there is no screen for it. Create the partner's project as an "Agency client portal" in the project form (or with `POST /v1/projects` and `"projectType": "CLIENT_PORTAL"`). The form defaults to "General application", so choose the portal type deliberately; it cannot be changed after the project is created. That type does not run Sophia, Sarah or Adrian at all, so the plan does not matter for them; a project created without a type is `GENERAL` and behaves as before.
 5. The partner has accepted terms that state how long the data of paused runs is kept (see "Terms").
 6. Someone is named as the person who can stop the program (see "Stopping").
 

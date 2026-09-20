@@ -50,6 +50,10 @@ import { BullMqAttachmentWorker } from "./attachment-bullmq-worker.js";
 import { AttachmentProcessor } from "./attachment-processor.js";
 import { PrismaAttachmentScanRepository } from "./attachment-repository.js";
 import { PrismaRunAttachmentLoader } from "./attachment-loader.js";
+import {
+  ApprovalExpirySweeper,
+  PrismaStalePausedRunRepository,
+} from "./approval-expiry.js";
 import { parseEgressAllowedHosts } from "./egress-policy.js";
 import { WorkerReadinessPublisher } from "./readiness-publisher.js";
 import { Redis } from "ioredis";
@@ -93,6 +97,9 @@ const EnvironmentSchema = z
     // "required" loads every validated preview in a real browser inside the sandbox, which
     // needs Playwright and Chromium in E2B_TEMPLATE (docs/adr/production-execution-gate.md, G7).
     PREVIEW_BROWSER_VIABILITY: z.enum(["off", "required"]).default("off"),
+    // Cancel runs that stay PAUSED longer than this many hours (approval expiry, G2).
+    // 0 leaves it off. Expiry only cancels the run; it deletes no data.
+    PAUSED_RUN_TTL_HOURS: z.coerce.number().int().min(0).max(8_760).default(0),
     PREVIEW_BROWSER_PLAYWRIGHT_ENTRY: z.string().trim().min(1).optional(),
     WORKSPACE_PROVIDER_BUDGET_USD_MICROS_PER_DAY: z.coerce
       .number()
@@ -507,10 +514,23 @@ async function main(): Promise<void> {
   });
   readinessPublisher.start();
 
+  let approvalExpirySweeper: ApprovalExpirySweeper | undefined;
+  if (environment.PAUSED_RUN_TTL_HOURS > 0) {
+    approvalExpirySweeper = new ApprovalExpirySweeper({
+      repository: new PrismaStalePausedRunRepository(prisma),
+      ttlMs: environment.PAUSED_RUN_TTL_HOURS * 3_600_000,
+      onExpired: (runIds) =>
+        console.warn("Cancelled paused runs whose approval expired", { runIds }),
+      onError: (error) => console.error("Approval expiry sweep failed", error),
+    });
+    approvalExpirySweeper.start();
+  }
+
   let shuttingDown = false;
   const shutdown = async (): Promise<void> => {
     if (shuttingDown) return;
     shuttingDown = true;
+    approvalExpirySweeper?.stop();
     readinessPublisher.stop();
     readinessRedis.disconnect();
     await databaseReconciliationWorker?.close();

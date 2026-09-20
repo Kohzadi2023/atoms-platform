@@ -48,7 +48,7 @@ All of these must be true. Do not enable the flag if any is not.
 4. The sandbox is created only after all agents finish; it validates (install, lint, typecheck, test, build), starts the preview and loads it in a real browser.
 5. A run that ends `FAILED` carries a reason in its error payload: `FAILED_BUDGET_EXHAUSTED`, `FAILED_PROVIDER`, `FAILED_VALIDATION` or `FAILED_INTERNAL`.
 
-A paused run holds no job, sandbox or compute, but it does hold data, and nothing expires it yet (issue #100).
+A paused run holds no job, sandbox or compute, but it does hold data. With `PAUSED_RUN_TTL_HOURS` set on the worker, a run paused longer than that many hours is cancelled (`error.code = APPROVAL_EXPIRED`); the data stays. With it unset (the default) nothing expires (issue #100).
 
 ## Daily monitoring
 
@@ -88,7 +88,7 @@ GROUP BY 1, 2
 ORDER BY 3 DESC;
 ```
 
-Runs waiting on a person, oldest first (there is no expiry, so read this list every day):
+Runs waiting on a person, oldest first (read this list every day even with expiry on; it cancels, it does not tell anyone):
 
 ```sql
 SELECT id, workspace_id, paused_at
@@ -117,12 +117,12 @@ Partner terms need a clause on retention of paused-run data. Draft wording, **no
 
 > If a run is paused awaiting your approval, we retain the run's prompt, attachments and generated outputs until you approve, cancel, or ask us to delete them, and in any case no longer than [N] days after the run was paused, after which we may delete them.
 
-The number of days is a decision for the owner. The platform does not enforce it yet: there is no expiry job (issue #100), so today deletion would be manual.
+The number of days is a decision for the owner. The platform can cancel a run after that time (`PAUSED_RUN_TTL_HOURS`), but cancelling does not delete anything: the prompt, attachments, outputs and checkpoint stay. Deletion is not built, so a promise of deletion within N days can only be kept by hand today (issue #100).
 
 ## Open decisions
 
 - Who owns each P0 gate and the stop decision.
 - The proposal thresholds above.
-- The retention period, and whether to build the expiry job (#100) before the first partner.
+- The retention period, the value of `PAUSED_RUN_TTL_HOURS` (it is off until set), and whether to build the data purge and the reminder (#100) before the first partner.
 - Whether the client portal template needs Sophia, Sarah and Adrian, which decides the plan each partner's workspace gets.
 - The order in which design partners become paying customers.

@@ -233,6 +233,26 @@ jobs:
         run: |
           pnpm --filter @atoms/control-api... build
           pnpm --filter @atoms/control-api test:readiness-redis:built
+      - name: Start a disposable three-node Redis Cluster
+        run: |
+          for port in 7000 7001 7002; do
+            docker run -d --name "redis-cluster-$port" --network host redis:8-alpine               redis-server --port "$port" --bind 127.0.0.1 --cluster-enabled yes               --cluster-config-file "/data/nodes-$port.conf" --cluster-node-timeout 5000               --appendonly no --save ""
+          done
+          for port in 7000 7001 7002; do
+            until docker exec "redis-cluster-$port" redis-cli -p "$port" ping | grep -q PONG; do sleep 1; done
+          done
+          docker exec redis-cluster-7000 redis-cli --cluster create             127.0.0.1:7000 127.0.0.1:7001 127.0.0.1:7002 --cluster-replicas 0 --cluster-yes
+          until docker exec redis-cluster-7000 redis-cli -p 7000 cluster info | grep -q cluster_state:ok; do sleep 1; done
+      - name: Exercise BullMQ against a real Redis Cluster (CROSSSLOT, MOVED, and the fix)
+        env:
+          REDIS_CLUSTER_URL: redis://127.0.0.1:7000
+          RUN_QUEUE_CLUSTER_INTEGRATION_TESTS: "true"
+        run: |
+          pnpm --filter @atoms/queue-connection... build
+          pnpm --filter @atoms/queue-connection test:cluster:built
+      - name: Remove the disposable Redis Cluster
+        if: always()
+        run: docker rm -f redis-cluster-7000 redis-cluster-7001 redis-cluster-7002 || true
       - name: Exercise attachment quota, clean snapshots, and deterministic scan jobs
         env:
           DATABASE_URL: postgresql://atoms:atoms@localhost:5432/atoms_upgrade

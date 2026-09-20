@@ -57,7 +57,7 @@ import {
 import { parseEgressAllowedHosts } from "./egress-policy.js";
 import { WorkerReadinessPublisher } from "./readiness-publisher.js";
 import { createThrottledLogger } from "./throttled-log.js";
-import { Redis } from "ioredis";
+import { QueueRedisModeSchema, createRedisClient } from "@atoms/queue-connection";
 
 const EnvironmentSchema = z
   .object({
@@ -80,6 +80,10 @@ const EnvironmentSchema = z
     PREVIEW_BASE_DOMAIN: z.string().min(3),
     PREVIEW_PUBLIC_PROTOCOL: z.enum(["http", "https"]).default("https"),
     RUN_QUEUE_PREFIX: z.string().trim().min(1).optional(),
+    // How the Redis is deployed. Azure Managed Redis with the OSS clustering policy needs
+    // oss-cluster AND a hash-tagged RUN_QUEUE_PREFIX such as {atoms-staging}; on standalone
+    // Redis leave it unset. See docs/azure-container-apps-preview-staging.md.
+    QUEUE_REDIS_MODE: QueueRedisModeSchema,
     RUN_PROVIDER_BUDGET_USD_MICROS: z.coerce
       .number()
       .int()
@@ -339,6 +343,7 @@ async function main(): Promise<void> {
   });
   const worker = new BullMqOrchestratorWorker({
     redisUrl: environment.REDIS_URL,
+    redisMode: environment.QUEUE_REDIS_MODE,
     processor,
     concurrency: environment.ORCHESTRATOR_CONCURRENCY,
     ...(environment.RUN_QUEUE_PREFIX === undefined
@@ -356,6 +361,7 @@ async function main(): Promise<void> {
   });
   const attachmentWorker = new BullMqAttachmentWorker({
     redisUrl: environment.REDIS_URL,
+    redisMode: environment.QUEUE_REDIS_MODE,
     processor: attachmentProcessor,
     concurrency: environment.ATTACHMENT_SCAN_CONCURRENCY,
     ...(environment.RUN_QUEUE_PREFIX === undefined
@@ -375,6 +381,7 @@ async function main(): Promise<void> {
   });
   const customerSuccessHandoffWorker = new BullMqCustomerSuccessHandoffWorker({
     redisUrl: environment.REDIS_URL,
+    redisMode: environment.QUEUE_REDIS_MODE,
     reconciler: customerSuccessHandoffReconciler,
     intervalMs: environment.CUSTOMER_SUCCESS_HANDOFF_RECONCILIATION_INTERVAL_MS,
     ...(environment.RUN_QUEUE_PREFIX === undefined
@@ -427,6 +434,7 @@ async function main(): Promise<void> {
     });
     databaseWorker = new BullMqDatabaseOperationWorker({
       redisUrl: environment.REDIS_URL,
+      redisMode: environment.QUEUE_REDIS_MODE,
       processor: databaseProcessor,
       concurrency: environment.DATABASE_OPERATION_CONCURRENCY,
       ...(environment.RUN_QUEUE_PREFIX === undefined
@@ -442,6 +450,7 @@ async function main(): Promise<void> {
       new PrismaDatabaseReconciliationRepository(prisma);
     databaseRecoveryQueue = new BullMqDatabaseRecoveryQueue({
       redisUrl: environment.REDIS_URL,
+      redisMode: environment.QUEUE_REDIS_MODE,
       ...(environment.RUN_QUEUE_PREFIX === undefined
         ? {}
         : { prefix: environment.RUN_QUEUE_PREFIX }),
@@ -461,6 +470,7 @@ async function main(): Promise<void> {
     databaseReconciliationWorker =
       new BullMqDatabaseReconciliationWorker({
         redisUrl: environment.REDIS_URL,
+        redisMode: environment.QUEUE_REDIS_MODE,
         reconciler,
         intervalMs: environment.DATABASE_RECONCILIATION_INTERVAL_MS,
         ...(environment.RUN_QUEUE_PREFIX === undefined
@@ -483,8 +493,10 @@ async function main(): Promise<void> {
 
   // The Control API cannot see this process's environment, so the worker
   // publishes which execution preconditions it meets (ADR G7).
-  const readinessRedis = new Redis(environment.REDIS_URL, {
-    maxRetriesPerRequest: 1,
+  const readinessRedis = createRedisClient({
+    redisUrl: environment.REDIS_URL,
+    mode: environment.QUEUE_REDIS_MODE,
+    offlineQueue: true,
   });
   readinessRedis.on("error", (error) => logError("Readiness publisher redis error", error));
   const readinessPublisher = new WorkerReadinessPublisher({

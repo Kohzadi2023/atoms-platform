@@ -6,25 +6,36 @@ import {
 import { Queue } from "bullmq";
 
 import type { DatabaseRecoveryQueue } from "./database-reconciliation-domain.js";
+import {
+  assertQueuePrefix,
+  createQueueConnection,
+  type QueueConnection,
+  type QueueRedisMode,
+} from "@atoms/queue-connection";
 
 export interface BullMqDatabaseRecoveryQueueOptions {
   readonly redisUrl: string;
+  /** How the Redis is deployed; see @atoms/queue-connection. Defaults to standalone. */
+  readonly redisMode?: QueueRedisMode;
   readonly queueName?: string;
   readonly prefix?: string;
 }
 
 export class BullMqDatabaseRecoveryQueue implements DatabaseRecoveryQueue {
+  readonly #link: QueueConnection;
   readonly #queue: Queue<DatabaseOperationJob>;
 
   constructor(options: BullMqDatabaseRecoveryQueueOptions) {
+    assertQueuePrefix(options.redisMode, options.prefix);
+    this.#link = createQueueConnection({
+      redisUrl: options.redisUrl,
+      mode: options.redisMode,
+      role: "queue",
+    });
     this.#queue = new Queue<DatabaseOperationJob>(
       options.queueName ?? DATABASE_OPERATION_QUEUE_NAME,
       {
-        connection: {
-          url: options.redisUrl,
-          enableOfflineQueue: false,
-          maxRetriesPerRequest: 1,
-        },
+        connection: this.#link.connection,
         ...(options.prefix === undefined ? {} : { prefix: options.prefix }),
         defaultJobOptions: {
           attempts: 5,
@@ -43,7 +54,8 @@ export class BullMqDatabaseRecoveryQueue implements DatabaseRecoveryQueue {
     });
   }
 
-  close(): Promise<void> {
-    return this.#queue.close();
+  async close(): Promise<void> {
+    await this.#queue.close();
+    await this.#link.close();
   }
 }

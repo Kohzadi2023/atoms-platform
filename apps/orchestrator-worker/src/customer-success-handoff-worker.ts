@@ -1,12 +1,20 @@
 import { Queue, Worker } from "bullmq";
 
 import type { CustomerSuccessHandoffReconciler } from "./customer-success-handoff-reconciler.js";
+import {
+  assertQueuePrefix,
+  createQueueConnection,
+  type QueueConnection,
+  type QueueRedisMode,
+} from "@atoms/queue-connection";
 
 const QUEUE_NAME = "customer-success-handoff-reconciliation";
 const SCHEDULER_ID = "customer-success-handoff-reconciliation-v1";
 
 export interface BullMqCustomerSuccessHandoffWorkerOptions {
   readonly redisUrl: string;
+  /** How the Redis is deployed; see @atoms/queue-connection. Defaults to standalone. */
+  readonly redisMode?: QueueRedisMode;
   readonly reconciler: CustomerSuccessHandoffReconciler;
   readonly intervalMs: number;
   readonly queueName?: string;
@@ -14,22 +22,29 @@ export interface BullMqCustomerSuccessHandoffWorkerOptions {
 }
 
 export class BullMqCustomerSuccessHandoffWorker {
+  readonly #queueLink: QueueConnection;
+  readonly #workerLink: QueueConnection;
   readonly #queue: Queue<Record<string, never>>;
   readonly #worker: Worker<Record<string, never>>;
   readonly #intervalMs: number;
 
   constructor(options: BullMqCustomerSuccessHandoffWorkerOptions) {
     const queueName = options.queueName ?? QUEUE_NAME;
-    const connection = {
-      url: options.redisUrl,
-      enableOfflineQueue: false,
-      maxRetriesPerRequest: null,
-    };
-    const queueConnection = { ...connection, maxRetriesPerRequest: 1 };
+    assertQueuePrefix(options.redisMode, options.prefix);
+    this.#queueLink = createQueueConnection({
+      redisUrl: options.redisUrl,
+      mode: options.redisMode,
+      role: "queue",
+    });
+    this.#workerLink = createQueueConnection({
+      redisUrl: options.redisUrl,
+      mode: options.redisMode,
+      role: "worker",
+    });
     const prefix = options.prefix === undefined ? {} : { prefix: options.prefix };
     this.#intervalMs = options.intervalMs;
     this.#queue = new Queue<Record<string, never>>(queueName, {
-      connection: queueConnection,
+      connection: this.#queueLink.connection,
       ...prefix,
     });
     this.#worker = new Worker<Record<string, never>>(
@@ -37,7 +52,7 @@ export class BullMqCustomerSuccessHandoffWorker {
       async () => {
         await options.reconciler.reconcile();
       },
-      { connection, ...prefix, concurrency: 1 },
+      { connection: this.#workerLink.connection, ...prefix, concurrency: 1 },
     );
   }
 
@@ -69,5 +84,7 @@ export class BullMqCustomerSuccessHandoffWorker {
   async close(): Promise<void> {
     await this.#worker.close();
     await this.#queue.close();
+    await this.#queueLink.close();
+    await this.#workerLink.close();
   }
 }

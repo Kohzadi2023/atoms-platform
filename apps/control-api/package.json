@@ -15,6 +15,7 @@
   },
   "dependencies": {
     "@atoms/contracts": "workspace:*",
+    "@atoms/queue-connection": "workspace:*",
     "@atoms/db": "workspace:*",
     "@atoms/model-gateway": "workspace:*",
     "@atoms/quality": "workspace:*",

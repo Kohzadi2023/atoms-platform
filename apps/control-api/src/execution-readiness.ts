@@ -5,7 +5,8 @@ import {
   type ExecutionReadiness,
   type WorkerReadinessReport,
 } from "@atoms/contracts";
-import { Redis } from "ioredis";
+import { createRedisClient, type QueueRedisMode } from "@atoms/queue-connection";
+import type { Cluster, Redis } from "ioredis";
 
 export interface WorkerReadinessSource {
   read(): Promise<WorkerReadinessReport | null>;
@@ -19,6 +20,8 @@ export interface ExecutionReadinessProvider {
 
 export interface RedisWorkerReadinessSourceOptions {
   readonly redisUrl: string;
+  /** Must match the queues: a standalone client against an OSS cluster fails with MOVED. */
+  readonly redisMode?: QueueRedisMode;
   readonly prefix?: string;
   readonly timeoutMs?: number;
 }
@@ -29,14 +32,18 @@ export interface RedisWorkerReadinessSourceOptions {
  * never ready.
  */
 export class RedisWorkerReadinessSource implements WorkerReadinessSource {
-  readonly #redis: Redis;
+  readonly #redis: Redis | Cluster;
   readonly #key: string;
   readonly #timeoutMs: number;
 
   constructor(options: RedisWorkerReadinessSourceOptions) {
     // The offline queue stays on so a read issued right after startup waits for the
     // connection instead of failing; the timeout in read() bounds an unreachable Redis.
-    this.#redis = new Redis(options.redisUrl, { maxRetriesPerRequest: 1 });
+    this.#redis = createRedisClient({
+      redisUrl: options.redisUrl,
+      mode: options.redisMode,
+      offlineQueue: true,
+    });
     // Connection errors surface through read(); without a listener ioredis logs them noisily.
     this.#redis.on("error", () => undefined);
     this.#key = workerReadinessKey(options.prefix);

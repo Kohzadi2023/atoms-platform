@@ -175,7 +175,16 @@ Every queue-based path on staging has therefore never worked: no run, attachment
 - The worker's active revision was **deactivated**, so the worker is not running. Nothing needs it while execution is off, except that attachment scans are not processed. `az containerapp update` on the worker creates and starts a new revision, so do not update it until the Redis connection is fixed.
 - The worker now prints an unchanged error once and then at most one summary line a minute (`throttled-log.ts`), so this class of failure cannot produce another bill like this.
 
-**Still open.** Make the BullMQ connections cluster-aware, or move staging to a Redis with the Enterprise clustering policy (that requires recreating the instance), then re-enable the worker and run one queue job end to end. Add an Azure Cost Management budget alert on `Atoms-Staging`.
+**The fix (code).** `@atoms/queue-connection` gives every BullMQ queue and worker, and the readiness clients, an ioredis `Cluster` connection when `QUEUE_REDIS_MODE=oss-cluster`; the default is `standalone`, which uses exactly the options the queues always used. In cluster mode each queue refuses to start unless `RUN_QUEUE_PREFIX` contains a hash tag such as `{atoms-staging}`, so the CROSSSLOT misconfiguration fails at startup with a clear message. CI now starts a three-node Redis Cluster and shows both failures (`CROSSSLOT` with an untagged prefix, `MOVED` with a plain connection) and a job flowing through a cluster connection with a tagged prefix.
+
+**To re-enable the worker after this merges and the images are rebuilt.** Set, on top of `RUN_QUEUE_PREFIX={atoms-staging}` (already set):
+
+- Control API: `QUEUE_REDIS_MODE=oss-cluster`
+- Worker: `QUEUE_REDIS_MODE=oss-cluster` **and** `PREVIEW_REDIS_MODE=oss-cluster`. The worker's preview session store has its own setting and is `standalone` today, which would hit the same `MOVED`; the Preview Gateway already has `oss-cluster`.
+
+Deploy the Control API first, then update the worker (which starts a new revision), and watch `ContainerAppConsoleLogs_CL` for a few minutes before leaving it: with the log cap and the throttled logger a repeat costs little, but it should not happen. Then run one queue job end to end.
+
+**Still open.** The images have not been rebuilt or redeployed. Nothing here has run against Azure Managed Redis itself, only against a three-node open-source cluster in CI; the first real run on staging is the proof. Add an Azure Cost Management budget alert (done: `Atoms-Staging-Monthly-25CAD`, CAD 25 a month) and ask Azure billing about a one-time adjustment.
 
 **How to look at it again.** Cost by service: Cost Management, `Atoms-Staging`, group by service name. Volume by table: `Usage | where TimeGenerated > ago(3d) | summarize GB=sum(Quantity)/1024 by DataType`. Errors: `ContainerAppConsoleLogs_CL | where ContainerAppName_s == 'atoms-staging-worker' | summarize count() by substring(Log_s, 0, 120)`.
 

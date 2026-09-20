@@ -168,6 +168,9 @@ importers:
       '@atoms/quality':
         specifier: workspace:*
         version: link:../../packages/quality
+      '@atoms/queue-connection':
+        specifier: workspace:*
+        version: link:../../packages/queue-connection
       '@atoms/sandbox-provider':
         specifier: workspace:*
         version: link:../../packages/sandbox-provider
@@ -235,6 +238,9 @@ importers:
       '@atoms/quality':
         specifier: workspace:*
         version: link:../../packages/quality
+      '@atoms/queue-connection':
+        specifier: workspace:*
+        version: link:../../packages/queue-connection
       '@atoms/sandbox-provider':
         specifier: workspace:*
         version: link:../../packages/sandbox-provider
@@ -485,6 +491,25 @@ importers:
       '@atoms/sandbox-provider':
         specifier: workspace:*
         version: link:../sandbox-provider
+      '@types/node':
+        specifier: 'catalog:'
+        version: 24.13.3
+      typescript:
+        specifier: 'catalog:'
+        version: 7.0.2
+
+  packages/queue-connection:
+    dependencies:
+      bullmq:
+        specifier: 'catalog:'
+        version: 6.0.2(ioredis@6.0.0)(pg@8.22.0)
+      ioredis:
+        specifier: 'catalog:'
+        version: 6.0.0
+      zod:
+        specifier: 'catalog:'
+        version: 4.4.3
+    devDependencies:
       '@types/node':
         specifier: 'catalog:'
         version: 24.13.3

@@ -3,6 +3,12 @@ import {
   type AttachmentScanJob,
 } from "@atoms/contracts";
 import { Queue } from "bullmq";
+import {
+  assertQueuePrefix,
+  createQueueConnection,
+  type QueueConnection,
+  type QueueRedisMode,
+} from "@atoms/queue-connection";
 
 export interface AttachmentScanQueue {
   enqueue(job: AttachmentScanJob): Promise<void>;
@@ -11,19 +17,24 @@ export interface AttachmentScanQueue {
 
 export interface BullMqAttachmentScanQueueOptions {
   readonly redisUrl: string;
+  /** How the Redis is deployed; see @atoms/queue-connection. Defaults to standalone. */
+  readonly redisMode?: QueueRedisMode;
   readonly prefix?: string;
 }
 
 export class BullMqAttachmentScanQueue implements AttachmentScanQueue {
+  readonly #link: QueueConnection;
   readonly #queue: Queue<AttachmentScanJob>;
 
   constructor(options: BullMqAttachmentScanQueueOptions) {
+    assertQueuePrefix(options.redisMode, options.prefix);
+    this.#link = createQueueConnection({
+      redisUrl: options.redisUrl,
+      mode: options.redisMode,
+      role: "queue",
+    });
     this.#queue = new Queue<AttachmentScanJob>(ATTACHMENT_SCAN_QUEUE_NAME, {
-      connection: {
-        url: options.redisUrl,
-        enableOfflineQueue: false,
-        maxRetriesPerRequest: 1,
-      },
+      connection: this.#link.connection,
       ...(options.prefix === undefined ? {} : { prefix: options.prefix }),
       defaultJobOptions: {
         attempts: 3,
@@ -42,5 +53,6 @@ export class BullMqAttachmentScanQueue implements AttachmentScanQueue {
 
   async close(): Promise<void> {
     await this.#queue.close();
+    await this.#link.close();
   }
 }

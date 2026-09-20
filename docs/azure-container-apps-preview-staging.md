@@ -188,6 +188,50 @@ The first command is a dry run and sends nothing. `--build` is billable and regi
 
 `/readyz` stays `200` and keeps `status: "ready"`. It adds `platformReady`, `executionReady` and an `execution` block with booleans and gate IDs only, never a configured value. A worker that has not reported for 90 seconds counts as not ready.
 
+## Renewing the preview wildcard certificate
+
+The `*.preview.genesisco.io` certificate (`genesisco-preview-wildcard-le` in `atoms-staging-env`) is from Let's Encrypt, valid 90 days, and **expires 2026-12-18**. Nothing renews it. Wildcard names need DNS-01, DNS is at Namecheap, and there is no DNS API integration (issue #93). When it expires every public preview URL fails TLS.
+
+**Warning.** `.github/workflows/preview-cert-expiry.yml` runs weekly (Mondays 06:17 UTC) and fails when fewer than 30 days remain. It is read-only: one TLS handshake to `cert-expiry-check.preview.genesisco.io`, no credentials. GitHub emails a failed scheduled run to the person who last edited the workflow's cron line, so check that this is someone who will act; the Actions tab shows it either way. Run the same check by hand any time:
+
+```bash
+node scripts/check-preview-cert-expiry.mjs
+```
+
+**Renew at the latest two weeks before expiry.** Everything below runs on an operator's machine; none of it is automated, and none of it was exercised by the change that added this section. The last issuance used the `acme` Python library because `certbot` refused to run without Windows administrator rights, so the `certbot` commands below are the standard equivalent, not a replay of what was done. Check flags with `--help` before running.
+
+1. **Issue a new certificate** on a machine where `certbot` can run (Linux or WSL is simplest), in a scratch directory outside the repository:
+
+   ```bash
+   certbot certonly --manual --preferred-challenges dns -d "*.preview.genesisco.io"      --config-dir ./le/config --work-dir ./le/work --logs-dir ./le/logs
+   ```
+
+   When it prints a value, add it at Namecheap as a TXT record named `_acme-challenge.preview`, wait until it resolves (`nslookup -type=TXT _acme-challenge.preview.genesisco.io`), then continue.
+2. **Convert to PFX** with a password you generate and do not reuse:
+
+   ```bash
+   openssl pkcs12 -export -inkey ./le/config/live/preview.genesisco.io/privkey.pem      -in ./le/config/live/preview.genesisco.io/fullchain.pem -out preview-wildcard.pfx
+   ```
+
+3. **Upload under a new name** (never overwrite the current certificate, so it stays available for rollback):
+
+   ```bash
+   az containerapp env certificate upload --name atoms-staging-env --resource-group atoms-staging-rg      --certificate-file preview-wildcard.pfx --certificate-name genesisco-preview-wildcard-le-2
+   ```
+
+4. **Bind it** to the gateway's literal wildcard hostname:
+
+   ```bash
+   az containerapp hostname bind --name atoms-staging-preview-gateway --resource-group atoms-staging-rg      --environment atoms-staging-env --hostname "*.preview.genesisco.io"      --certificate genesisco-preview-wildcard-le-2 --validation-method CNAME
+   ```
+
+5. **Verify:** `node scripts/check-preview-cert-expiry.mjs` must report about 90 days, and a made-up subdomain must still answer `401 {"error":"Invalid preview URL"}` over TLS.
+6. **Clean up:** delete `preview-wildcard.pfx` and the whole `./le` directory (they hold the private key), remove the TXT record, and only then delete the old certificate from the environment. Never commit any of these files; `pnpm secrets:scan` is a backstop, not a plan.
+
+**Rollback.** Rebind the previous certificate name with the same `hostname bind` command.
+
+**Automating it** (a Namecheap API key kept as a protected secret, or moving DNS to Azure DNS) is the real fix and is still open in #93. The expiry check above is what makes doing it by hand safe until then.
+
 ## References
 
 - [Azure Container Apps ingress](https://learn.microsoft.com/en-us/azure/container-apps/ingress-overview)

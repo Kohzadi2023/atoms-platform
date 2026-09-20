@@ -210,6 +210,7 @@ export class PrismaControlRepository implements ControlRepository {
           name: input.name,
           slug: input.slug,
           description: input.description ?? null,
+          projectType: input.projectType ?? "GENERAL",
         },
       });
     } catch (error) {

@@ -33,7 +33,7 @@ A controlled launch for design partners requires G0, G1, G4, G5, G7 and tenant i
 | G4 | Attachment trust boundary | P0 | Pass (#96, #110): contract, fail-closed routing, approval no longer model-controlled, tests, requirements review at plan approval |
 | G5 | Network egress | P0 (verification only) | Offline checks pass (#97); live probe pending, needs E2B credential (#14) |
 | G7 | Live-execution readiness and preview viability | P0 | Readiness decision and browser check implemented (#98); browser check needs a Playwright-enabled sandbox template before it can be switched on |
-| G6 | Project-type capability routing | P1 | Open |
+| G6 | Project-type capability routing | P1 | Partial: `ProjectType` and routing implemented; smoke assertion and UI selection open |
 
 ### G0 - Global kill switch (pass)
 
@@ -193,6 +193,12 @@ For example an internal portal requires product, architecture, engineering and d
 **Ordering.** Introduce `ProjectType`, define the capability mapping, expose the required plan and project context, then make execution conditional, and only then update the smoke expectations. Routing is a consequence of the domain model, not a scattered conditional in the worker.
 
 **Q1 scope note.** The 2026-09-19 review fixed Q1 on a single template, the agency client portal, and paused the vendor tracker and ticketing templates. That shrinks the first cut of `ProjectType` to one value, but it does not remove the need for the type: it is still what capability routing and the smoke expectations key on. G6 stays P1. A draft of what the portal is, and which capabilities it needs, is in `docs/client-portal-reference-architecture.md`; it is a proposal, not a decision.
+
+**Implemented, first slice.** `Project.projectType` (`GENERAL` default, `CLIENT_PORTAL`), set at `POST /v1/projects` and returned on every project response. The worker decides per agent: it runs only if the project type needs it **and** the plan entitles it; otherwise the task is recorded as `SKIPPED` with a reason (`NOT_REQUIRED_FOR_PROJECT_TYPE` or `PLAN_NOT_ENTITLED`) in the `task.skipped` event, so nothing is silently dropped. The project type is checked first, so a `CLIENT_PORTAL` project reports the project-type reason even on a plan that would also skip the agent. The mapping is `PROJECT_TYPE_AGENTS` in `apps/orchestrator-worker/src/project-type.ts`, declared as a `Record` over the enum so a new type cannot be added without deciding its agents.
+
+- **`GENERAL` is every graph agent**, which is what every existing project needed, so nothing changes for projects created before this or without a type. Existing rows get `GENERAL` from the migration default.
+- **`CLIENT_PORTAL` is Mike, Emma, Bob, Alex and David.** That follows the draft in `docs/client-portal-reference-architecture.md`, which is a proposal and not yet confirmed. Changing it is one line in `PROJECT_TYPE_AGENTS`.
+- **Not done:** the web app has no project-type selector, so a portal project is created through the API; the smoke script's hardcoded eight-agent list is unchanged (it runs a `GENERAL` project, so it is still correct); the API still does not expose a workspace's plan.
 
 **Consequence for existing tests.** `scripts/smoke-staging-authenticated.mjs` hardcodes an eight-agent `REQUIRED_AGENTS` list (extended in #87). An agent count is an implementation detail; capability coverage is the invariant. When G6 lands the smoke check must assert coverage of the required capabilities for the project type and plan. No interim change is made, because there is no project type to key on and the API does not expose a workspace's plan (`GET /v1/workspaces/:id` returns id, name, slug and role only). Until then the smoke prerequisite stays as documented in `docs/staging-authenticated-smoke.md` (workspace on `PRO` or `MAX`).
 

@@ -5,6 +5,7 @@ import type {
   JsonValue,
   ProjectFileSummary,
   ProjectResponse,
+  ProjectType,
   RunArtifactResponse,
   RunEventType,
   RunResponse,
@@ -18,6 +19,7 @@ export interface ProjectRecord {
   readonly name: string;
   readonly slug: string;
   readonly description: string | null;
+  readonly projectType: ProjectType;
   readonly createdAt: Date;
   readonly updatedAt: Date;
   readonly archivedAt: Date | null;
@@ -81,6 +83,7 @@ export function toProjectResponse(record: ProjectRecord): ProjectResponse {
     name: record.name,
     slug: record.slug,
     description: record.description,
+    projectType: record.projectType,
     createdAt: record.createdAt.toISOString(),
     updatedAt: record.updatedAt.toISOString(),
     archivedAt: record.archivedAt?.toISOString() ?? null,

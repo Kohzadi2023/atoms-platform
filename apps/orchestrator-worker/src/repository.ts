@@ -5,6 +5,7 @@ import {
   JsonValueSchema,
   type ApprovalScope,
   type JsonValue,
+  type ProjectType,
   type RunEventType,
   type RunJob,
   type WorkspacePlan,
@@ -51,6 +52,14 @@ export class PrismaWorkerRepository
       select: { plan: true },
     });
     return workspace.plan;
+  }
+
+  async getProjectType(projectId: string): Promise<ProjectType> {
+    const project = await this.#prisma.project.findUniqueOrThrow({
+      where: { id: projectId },
+      select: { projectType: true },
+    });
+    return project.projectType;
   }
 
   claimRun(job: RunJob, now: Date): Promise<RunClaimResult> {
@@ -183,6 +192,7 @@ export class PrismaWorkerRepository
           agent: task.agentName,
           ordinal: task.ordinal,
           description: task.description,
+          ...(input.skipReason === undefined ? {} : { reason: input.skipReason }),
         });
         return { kind: "ok", task: toWorkerTaskRecord(task) };
       },

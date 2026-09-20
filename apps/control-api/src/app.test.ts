@@ -102,6 +102,7 @@ class MemoryRepository implements ControlRepository {
       name: input.name,
       slug: input.slug,
       description: input.description ?? null,
+      projectType: input.projectType ?? "GENERAL",
       createdAt: FIXED_NOW,
       updatedAt: FIXED_NOW,
       archivedAt: null,
@@ -455,6 +456,53 @@ test("POST /v1/projects validates and creates a normalized project", async () =>
     });
     assert.equal(restored.statusCode, 200);
     assert.equal(restored.json().slug, "customer-portal");
+  } finally {
+    await app.close();
+  }
+});
+
+test("a project is GENERAL unless a type is given, and the type is returned", async () => {
+  const { app } = await fixture();
+  try {
+    const general = await app.inject({
+      method: "POST",
+      url: "/v1/projects",
+      payload: { workspaceId: WORKSPACE_ID, name: "Default", slug: "default-type" },
+    });
+    assert.equal(general.statusCode, 201);
+    assert.equal(general.json().projectType, "GENERAL");
+
+    const portal = await app.inject({
+      method: "POST",
+      url: "/v1/projects",
+      payload: {
+        workspaceId: WORKSPACE_ID,
+        name: "Agency portal",
+        slug: "agency-portal",
+        projectType: "CLIENT_PORTAL",
+      },
+    });
+    assert.equal(portal.statusCode, 201);
+    assert.equal(portal.json().projectType, "CLIENT_PORTAL");
+
+    const restored = await app.inject({
+      method: "GET",
+      url: `/v1/projects/${portal.json().id}`,
+    });
+    assert.equal(restored.json().projectType, "CLIENT_PORTAL");
+
+    const unknown = await app.inject({
+      method: "POST",
+      url: "/v1/projects",
+      payload: {
+        workspaceId: WORKSPACE_ID,
+        name: "Bad",
+        slug: "bad-type",
+        projectType: "MARKETING_SITE",
+      },
+    });
+    assert.equal(unknown.statusCode, 400);
+    assert.equal(unknown.json().error.code, "VALIDATION_ERROR");
   } finally {
     await app.close();
   }

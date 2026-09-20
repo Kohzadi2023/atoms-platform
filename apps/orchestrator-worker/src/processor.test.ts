@@ -13,6 +13,7 @@ import type {
   JsonValue,
   RunEventType,
   RunJob,
+  ProjectType,
   WorkspacePlan,
 } from "@atoms/contracts";
 import { MemorySaver } from "@langchain/langgraph";
@@ -73,6 +74,13 @@ class MemoryRepository implements WorkerRepository {
 
   async getWorkspacePlan(): Promise<WorkspacePlan> {
     return this.workspacePlan;
+  }
+
+  // GENERAL by default so every existing test still runs every agent.
+  projectType: ProjectType = "GENERAL";
+
+  async getProjectType(): Promise<ProjectType> {
+    return this.projectType;
   }
 
   async claimRun(job: RunJob): Promise<RunClaimResult> {
@@ -145,6 +153,7 @@ class MemoryRepository implements WorkerRepository {
       taskId: task.id,
       agent: task.agentName,
       ordinal: task.ordinal,
+      ...(input.skipReason === undefined ? {} : { reason: input.skipReason }),
     });
     return { kind: "ok", task };
   }
@@ -730,6 +739,98 @@ test("a FREE workspace plan skips Sophia, Sarah, and Adrian entirely", async () 
     (event) => event.eventType === "task.skipped",
   );
   assert.equal(skippedEvents.length, 3);
+});
+
+function skipReasons(repository: MemoryRepository): Array<string | undefined> {
+  return repository.events
+    .filter((event) => event.eventType === "task.skipped")
+    .map((event) => (event.payload as { reason?: string }).reason);
+}
+
+test("a CLIENT_PORTAL project runs only the agents it needs, even on a plan that entitles all of them", async () => {
+  const repository = new MemoryRepository();
+  repository.workspacePlan = "MAX";
+  repository.projectType = "CLIENT_PORTAL";
+  const agents = new ScriptedAgentRuntime(outputs());
+  const runProcessor = processor(repository, agents);
+
+  assert.deepEqual(
+    await runProcessor.process(startJob(), { attempt: 1, maxAttempts: 3 }),
+    { outcome: "completed" },
+  );
+  assert.deepEqual(agents.calls, ["Mike", "Emma", "Bob", "Alex", "David"]);
+  assert.equal(repository.run.status, "COMPLETED");
+  // Nothing is silently dropped: every ordinal has a task, the three unneeded ones skipped.
+  assert.equal(repository.tasks.size, 8);
+  for (const [ordinal, agent] of [
+    [1, "Sophia"],
+    [7, "Sarah"],
+    [8, "Adrian"],
+  ] as const) {
+    assert.equal(repository.tasks.get(ordinal)?.status, "SKIPPED");
+    assert.equal(repository.tasks.get(ordinal)?.agentName, agent);
+  }
+  assert.deepEqual(skipReasons(repository), [
+    "NOT_REQUIRED_FOR_PROJECT_TYPE",
+    "NOT_REQUIRED_FOR_PROJECT_TYPE",
+    "NOT_REQUIRED_FOR_PROJECT_TYPE",
+  ]);
+});
+
+test("a CLIENT_PORTAL project on FREE gives the project-type reason, not the plan reason", async () => {
+  const repository = new MemoryRepository();
+  repository.workspacePlan = "FREE";
+  repository.projectType = "CLIENT_PORTAL";
+  const agents = new ScriptedAgentRuntime(outputs());
+
+  await processor(repository, agents).process(startJob(), { attempt: 1, maxAttempts: 3 });
+
+  assert.deepEqual(agents.calls, ["Mike", "Emma", "Bob", "Alex", "David"]);
+  assert.deepEqual(skipReasons(repository), [
+    "NOT_REQUIRED_FOR_PROJECT_TYPE",
+    "NOT_REQUIRED_FOR_PROJECT_TYPE",
+    "NOT_REQUIRED_FOR_PROJECT_TYPE",
+  ]);
+});
+
+test("a GENERAL project on FREE still skips the premium agents, with the plan reason", async () => {
+  const repository = new MemoryRepository();
+  repository.workspacePlan = "FREE";
+  repository.projectType = "GENERAL";
+  const agents = new ScriptedAgentRuntime(outputs());
+
+  await processor(repository, agents).process(startJob(), { attempt: 1, maxAttempts: 3 });
+
+  assert.deepEqual(agents.calls, ["Mike", "Emma", "Bob", "Alex", "David"]);
+  assert.deepEqual(skipReasons(repository), [
+    "PLAN_NOT_ENTITLED",
+    "PLAN_NOT_ENTITLED",
+    "PLAN_NOT_ENTITLED",
+  ]);
+});
+
+test("a CLIENT_PORTAL project with references still reaches Emma, and plan approval still stops the run", async () => {
+  const repository = new MemoryRepository();
+  repository.projectType = "CLIENT_PORTAL";
+  const agents = new ScriptedAgentRuntime(outputs({ requiresApproval: false }));
+  const runProcessor = new RunProcessor({
+    repository,
+    agents,
+    attachmentLoader: referenceLoader(),
+    checkpointer: new MemorySaver(),
+    now: () => FIXED_NOW,
+  });
+
+  assert.deepEqual(
+    await runProcessor.process(startJob(), { attempt: 1, maxAttempts: 3 }),
+    { outcome: "stopped", status: "PAUSED" },
+  );
+  assert.deepEqual(agents.calls, ["Mike", "Emma", "Bob"]);
+  assert.equal(
+    agents.requests.find((request) => request.agentName === "Emma")?.referenceAttachments?.[0]
+      ?.fileName,
+    "brief.txt",
+  );
 });
 
 test("a PRO workspace plan still runs Sophia, Sarah, and Adrian", async () => {

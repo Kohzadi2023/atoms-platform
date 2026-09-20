@@ -56,7 +56,7 @@ Mapped to the platform's agents:
 | SEO | Sarah | no |
 | Growth copy | Adrian | no |
 
-So the required set is Emma, Mike, Bob, Alex and David, and the three premium agents are not needed. Today those three run only on a `PRO` or `MAX` workspace and are skipped on `FREE`, so **a partner workspace can stay on `FREE`** with no change to the platform. This is the recommendation from the review follow-up; it is not confirmed.
+So the required set is Emma, Mike, Bob, Alex and David, and the three premium agents are not needed. Today those three run only on a `PRO` or `MAX` workspace and are skipped on `FREE`, so **a partner workspace can stay on `FREE`**. The `CLIENT_PORTAL` project type now enforces this set whatever the plan is (`PROJECT_TYPE_AGENTS` in `apps/orchestrator-worker/src/project-type.ts`); the set itself is still a proposal until confirmed.
 
 ## What "working" means (acceptance journey, for #99)
 

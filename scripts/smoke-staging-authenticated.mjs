@@ -15,6 +15,7 @@ import {
   agentsRequiredFor,
   expectedApprovalScopes,
 } from "../packages/contracts/dist/index.js";
+import { assertCapabilityCoverage } from "./project-capability-coverage.mjs";
 import { validateSmokeAccessTokens, validateStagingDeployment } from "./check-staging-deployment.mjs";
 
 export const SMOKE_CONFIRMATION =
@@ -425,11 +426,10 @@ export async function executeAuthenticatedStagingSmoke(
       .map((item) => item?.payload?.agent)
       .filter((agent) => typeof agent === "string"),
   );
-  for (const agent of requiredAgents) {
-    if (!artifactAgents.has(agent)) {
-      throw new Error(`run artifacts are missing the ${agent} agent output`);
-    }
-  }
+  // The smoke cannot read the workspace plan (the API does not expose it), so it relies on the
+  // documented prerequisite: a PRO or MAX workspace, which entitles every agent. A CLIENT_PORTAL
+  // project needs no entitlement-gated agent, so the plan is irrelevant to it.
+  assertCapabilityCoverage({ projectType, plan: "PRO", artifactAgents });
   for (const agent of artifactAgents) {
     if (!requiredAgents.includes(agent)) {
       throw new Error(

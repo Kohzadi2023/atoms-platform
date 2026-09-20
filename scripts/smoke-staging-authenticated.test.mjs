@@ -231,7 +231,7 @@ test("a required agent that produced nothing fails the smoke, whatever the proje
       configuration({ projectType: "CLIENT_PORTAL" }),
       smokeDependencies(mock),
     ),
-    /missing the David agent output/u,
+    /data-design \(David\)/u,
   );
 });
 

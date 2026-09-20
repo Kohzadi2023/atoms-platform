@@ -1,6 +1,8 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 
+import { PROJECT_TYPE_AGENTS } from "../packages/contracts/dist/index.js";
+
 import {
   PROJECT_CAPABILITY_MATRIX,
   assertCapabilityCoverage,
@@ -63,4 +65,38 @@ test("unsupported project types and plans fail closed", () => {
 
 test("matrix encodes no premium capabilities for CLIENT_PORTAL", () => {
   assert.equal(PROJECT_CAPABILITY_MATRIX.CLIENT_PORTAL.some(([, , premium]) => premium), false);
+});
+
+test("the matrix cannot drift from the agents each project type needs (PROJECT_TYPE_AGENTS)", () => {
+  assert.deepEqual(
+    Object.keys(PROJECT_CAPABILITY_MATRIX).sort(),
+    Object.keys(PROJECT_TYPE_AGENTS).sort(),
+  );
+  for (const [projectType, agents] of Object.entries(PROJECT_TYPE_AGENTS)) {
+    assert.deepEqual(
+      PROJECT_CAPABILITY_MATRIX[projectType].map(([, agent]) => agent),
+      [...agents],
+      projectType,
+    );
+  }
+});
+
+test("the premium agents are exactly Sophia, Sarah and Adrian, and every capability has a distinct role", () => {
+  const premium = new Set(
+    Object.values(PROJECT_CAPABILITY_MATRIX)
+      .flat()
+      .filter(([, , isPremium]) => isPremium)
+      .map(([, agent]) => agent),
+  );
+  assert.deepEqual([...premium].sort(), ["Adrian", "Sarah", "Sophia"]);
+
+  const general = PROJECT_CAPABILITY_MATRIX.GENERAL.map(([capability]) => capability);
+  assert.equal(new Set(general).size, general.length);
+  // Each agent is named for what it does.
+  const byAgent = Object.fromEntries(
+    PROJECT_CAPABILITY_MATRIX.GENERAL.map(([capability, agent]) => [agent, capability]),
+  );
+  assert.equal(byAgent.Emma, "requirements");
+  assert.equal(byAgent.Bob, "architecture");
+  assert.equal(byAgent.Alex, "implementation");
 });

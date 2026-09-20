@@ -18,6 +18,7 @@ const project: ProjectResponse = {
   name: "Run readiness project",
   slug: "readiness-project-ab12cd34",
   description: "Prepared by the Atoms non-billable run-readiness surface; no run requested",
+  projectType: "GENERAL",
   createdAt: "2026-09-10T04:00:00.000Z",
   updatedAt: "2026-09-10T04:00:00.000Z",
   archivedAt: null,

@@ -22,6 +22,7 @@ import {
 
 import type { WorkerRepository } from "./domain.js";
 import type { RunAttachmentLoader } from "./attachment-loader.js";
+import { isRequiredForProjectType, type SkipReason } from "./project-type.js";
 import {
   GeneratedFileConflictError,
   RunStoppedError,
@@ -114,29 +115,42 @@ export function buildRunGraph(options: BuildRunGraphOptions) {
       const definition = taskDefinitions[agentName];
       const upstreamOutputs = parseUpstreamOutputs(state.outputs);
 
-      if (PREMIUM_AGENTS.has(agentName)) {
-        const plan = await options.repository.getWorkspacePlan(state.workspaceId);
-        if (!isEntitled(plan, agentName)) {
-          const skipped = await options.repository.skipTask({
-            runId: state.runId,
-            expectedControlVersion: state.controlVersion,
-            agentName,
-            description: definition.description,
-            ordinal: definition.ordinal,
-            input: JsonValueSchema.parse({
-              prompt: state.prompt,
-              upstreamOutputs,
-            }),
-            now: now(),
-          });
-          if (skipped.kind === "stopped") {
-            throw new RunStoppedError(
-              "Run stopped before the skipped task could be recorded",
-              "stopped",
-            );
-          }
-          return { outputs: {} };
+      // An agent runs only if the project type needs it AND the plan entitles it.
+      // Either way a missing agent is recorded as a skipped task, never silently dropped.
+      const projectType = await options.repository.getProjectType(state.projectId);
+      const skipReason: SkipReason | undefined = !isRequiredForProjectType(
+        projectType,
+        agentName,
+      )
+        ? "NOT_REQUIRED_FOR_PROJECT_TYPE"
+        : PREMIUM_AGENTS.has(agentName) &&
+            !isEntitled(
+              await options.repository.getWorkspacePlan(state.workspaceId),
+              agentName,
+            )
+          ? "PLAN_NOT_ENTITLED"
+          : undefined;
+      if (skipReason !== undefined) {
+        const skipped = await options.repository.skipTask({
+          runId: state.runId,
+          expectedControlVersion: state.controlVersion,
+          agentName,
+          description: definition.description,
+          ordinal: definition.ordinal,
+          input: JsonValueSchema.parse({
+            prompt: state.prompt,
+            upstreamOutputs,
+          }),
+          now: now(),
+          skipReason,
+        });
+        if (skipped.kind === "stopped") {
+          throw new RunStoppedError(
+            "Run stopped before the skipped task could be recorded",
+            "stopped",
+          );
         }
+        return { outputs: {} };
       }
 
       const prepared = await options.repository.prepareTask({

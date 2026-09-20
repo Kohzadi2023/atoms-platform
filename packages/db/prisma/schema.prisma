@@ -17,6 +17,11 @@ enum MembershipRole {
 // Controls entitlement to premium agents (Sophia, Sarah, Adrian) in
 // apps/orchestrator-worker/src/graph.ts. No billing/checkout exists yet --
 // this field is set directly until Phase 6 billing work adds a route.
+enum ProjectType {
+  GENERAL
+  CLIENT_PORTAL
+}
+
 enum WorkspacePlan {
   FREE
   PRO
@@ -289,6 +294,9 @@ model Project {
   name                   String                  @db.VarChar(160)
   slug                   String                  @db.VarChar(100)
   description            String?                 @db.Text
+  // Decides which agents a run needs (apps/orchestrator-worker/src/project-type.ts).
+  // GENERAL keeps every agent, which is what every existing project had.
+  projectType            ProjectType             @default(GENERAL) @map("project_type")
   workspace              Workspace               @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
   files                  ProjectFile[]
   attachments            ProjectAttachment[]

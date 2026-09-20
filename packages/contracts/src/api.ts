@@ -21,6 +21,13 @@ export const ProjectFilePathSchema = z
     message: "filePath must not traverse outside the project root",
   });
 
+// Decides which agents a run needs. GENERAL keeps every agent (the behavior before project
+// types existed); CLIENT_PORTAL is the Q1 template and needs no market, SEO or growth
+// agents (docs/client-portal-reference-architecture.md).
+export const ProjectTypeSchema = z.enum(["GENERAL", "CLIENT_PORTAL"]);
+
+export type ProjectType = z.infer<typeof ProjectTypeSchema>;
+
 export const CreateProjectInputSchema = z
   .object({
     workspaceId: z.string().uuid(),
@@ -34,6 +41,7 @@ export const CreateProjectInputSchema = z
         message: "slug must be lowercase kebab-case",
       }),
     description: z.string().trim().max(10_000).optional(),
+    projectType: ProjectTypeSchema.optional(),
   })
   .strict();
 
@@ -132,6 +140,7 @@ export const ProjectResponseSchema = z
     name: z.string(),
     slug: z.string(),
     description: z.string().nullable(),
+    projectType: ProjectTypeSchema,
     createdAt: IsoTimestampSchema,
     updatedAt: IsoTimestampSchema,
     archivedAt: IsoTimestampSchema.nullable(),

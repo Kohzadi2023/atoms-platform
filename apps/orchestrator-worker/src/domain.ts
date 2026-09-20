@@ -7,10 +7,13 @@ import type {
   ApprovalScope,
   AgentRunStatus,
   JsonValue,
+  ProjectType,
   RunEventType,
   RunJob,
   WorkspacePlan,
 } from "@atoms/contracts";
+
+import type { SkipReason } from "./project-type.js";
 
 export interface RunExecutionRecord {
   readonly id: string;
@@ -58,6 +61,8 @@ export interface PrepareTaskInput {
   readonly ordinal: number;
   readonly input: JsonValue;
   readonly now: Date;
+  /** Only for skipTask: why the task is recorded as skipped instead of run. */
+  readonly skipReason?: SkipReason;
 }
 
 export type TaskMutationResult =
@@ -94,6 +99,7 @@ export interface FailTaskInput {
 export interface WorkerRepository {
   claimRun(job: RunJob, now: Date): Promise<RunClaimResult>;
   getWorkspacePlan(workspaceId: string): Promise<WorkspacePlan>;
+  getProjectType(projectId: string): Promise<ProjectType>;
   prepareTask(input: PrepareTaskInput): Promise<TaskMutationResult>;
   skipTask(input: PrepareTaskInput): Promise<TaskMutationResult>;
   startTask(

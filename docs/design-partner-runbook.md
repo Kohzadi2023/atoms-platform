@@ -23,7 +23,7 @@ All of these must be true. Do not enable the flag if any is not.
    - `PREVIEW_BROWSER_VIABILITY=required`
    - `SANDBOX_EGRESS_VERIFIED_AT`, set only after the live egress probe passed
    - real `OPENAI_API_KEY` and `E2B_API_KEY`
-4. The partner's workspace exists and its plan is set. Sophia, Sarah and Adrian run only on `PRO` or `MAX`; on `FREE` they are skipped. A workspace OWNER or ADMIN changes it with `PATCH /v1/workspaces/:workspaceId/plan`; there is no screen for it. Decide per partner whether the client portal needs those agents.
+4. The partner's workspace exists and its plan is set. Sophia, Sarah and Adrian run only on `PRO` or `MAX`; on `FREE` they are skipped. A workspace OWNER or ADMIN changes it with `PATCH /v1/workspaces/:workspaceId/plan`; there is no screen for it. Create the partner's project as a client portal with `POST /v1/projects` and `"projectType": "CLIENT_PORTAL"` (there is no screen for it yet). That type does not run Sophia, Sarah or Adrian at all, so the plan does not matter for them; a project created without a type is `GENERAL` and behaves as before.
 5. The partner has accepted terms that state how long the data of paused runs is kept (see "Terms").
 6. Someone is named as the person who can stop the program (see "Stopping").
 
@@ -124,5 +124,5 @@ The number of days is a decision for the owner. The platform can cancel a run af
 - Who owns each P0 gate and the stop decision.
 - The proposal thresholds above.
 - The retention period, the value of `PAUSED_RUN_TTL_HOURS` (it is off until set), and whether to build the data purge and the reminder (#100) before the first partner.
-- Whether the client portal template needs Sophia, Sarah and Adrian, which decides the plan each partner's workspace gets. A proposed definition, with the recommendation that it does not, is in `docs/client-portal-reference-architecture.md`.
+- Confirm the client portal's agent set (Emma, Mike, Bob, Alex, David) in `docs/client-portal-reference-architecture.md`. It is implemented as proposed (`PROJECT_TYPE_AGENTS`); changing it is a one-line edit.
 - The order in which design partners become paying customers.

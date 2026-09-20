@@ -157,6 +157,28 @@ historical record of what the gate required:
 
 The public shape is a single dynamic signed label below the controlled preview base domain: `<signed-ticket>.preview.genesisco.io`. The real domain was operator-provided, not inferred from Azure resources or invented by automation.
 
+## Incident 2026-09-20: log flood from the worker (CAD 7,313 in September)
+
+`Atoms-Staging` cost CAD 7,313.81 month to date, CAD 7,239 of it Log Analytics, about CAD 915 a day from 2026-09-12. The worker (`atoms-staging-worker`) was logging a full stack trace for the same Redis error about 930,000 times an hour (roughly 230 GB a day into `ContainerAppConsoleLogs_CL`). The workspace had no daily cap.
+
+**Cause.** The staging Azure Managed Redis (`Balanced_B0`) runs with the OSS cluster policy. BullMQ, which carries the run queue, the attachment scan queue and the database queues, was pointed at it as a single node:
+
+1. With `RUN_QUEUE_PREFIX=atoms-staging` its Lua scripts touched keys in different slots: `CROSSSLOT Keys in request don't hash to the same slot`. BullMQ needs a hash-tagged prefix in cluster mode, for example `{atoms-staging}`.
+2. With the prefix fixed, the next error is `MOVED 9134 10.40.1.4:8501`: a standalone client cannot follow a cluster's redirects. BullMQ needs a cluster-aware ioredis connection (or a Redis with the Enterprise clustering policy, which presents one endpoint).
+
+Every queue-based path on staging has therefore never worked: no run, attachment scan or database operation could have been processed. The worker still looked healthy because the app itself was up. This would have failed the first live run in #14.
+
+**What was done (2026-09-20).**
+
+- Workspace `atoms-staging-logs` now has a **2 GB/day ingestion cap** (it was unlimited). Past the cap, ingestion stops until the daily reset.
+- `RUN_QUEUE_PREFIX` on the Control API and the worker is now `{atoms-staging}` (hash-tagged). The Control API revision is `--0000007` and `/readyz` returns 200.
+- The worker's active revision was **deactivated**, so the worker is not running. Nothing needs it while execution is off, except that attachment scans are not processed. `az containerapp update` on the worker creates and starts a new revision, so do not update it until the Redis connection is fixed.
+- The worker now prints an unchanged error once and then at most one summary line a minute (`throttled-log.ts`), so this class of failure cannot produce another bill like this.
+
+**Still open.** Make the BullMQ connections cluster-aware, or move staging to a Redis with the Enterprise clustering policy (that requires recreating the instance), then re-enable the worker and run one queue job end to end. Add an Azure Cost Management budget alert on `Atoms-Staging`.
+
+**How to look at it again.** Cost by service: Cost Management, `Atoms-Staging`, group by service name. Volume by table: `Usage | where TimeGenerated > ago(3d) | summarize GB=sum(Quantity)/1024 by DataType`. Errors: `ContainerAppConsoleLogs_CL | where ContainerAppName_s == 'atoms-staging-worker' | summarize count() by substring(Log_s, 0, 120)`.
+
 ## Before enabling live execution
 
 `RUN_EXECUTION_ENABLED` is one of three locks (see `docs/adr/production-execution-gate.md`), and the Control API cannot see the worker's environment, so the worker publishes its own state and `/readyz` reports it. Do not change the flag before this check passes:

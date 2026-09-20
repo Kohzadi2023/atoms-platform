@@ -6,10 +6,10 @@ It does not provision a host, configure DNS, create Entra users, or deploy
 the stack. Complete the provider gate in Issue #14 (or record its approved
 exception), persistence bootstrap, rollout, DNS, and TLS before running it.
 
-The command creates one staging project, one text attachment, and exactly one
-live OpenAI/E2B agent run. It does not automatically delete them. Those durable
-records are operational evidence and may be removed later only under the
-staging retention policy.
+The command creates one staging `CLIENT_PORTAL` project, one text attachment,
+and exactly one live OpenAI/E2B agent run. It does not automatically delete
+them. Those durable records are operational evidence and may be removed later
+only under the staging retention policy.
 
 ## Identity fixture
 
@@ -20,14 +20,16 @@ registered Web/MSAL sign-in flow using the `access_as_user` delegated scope:
 - the primary identity must be `OWNER` or `ADMIN` in the smoke workspace;
 - the foreign witness must belong to a different workspace and have access to
   one pre-existing project in that workspace;
-- the primary identity must not be a member of the witness workspace;
-- the smoke workspace's plan must already be `PRO` or `MAX`, not the default
-  `FREE`. Sophia, Sarah, and Adrian are entitlement-gated on
-  `Workspace.plan` (see `docs/web-workspace.md`); a `FREE`-plan run skips
-  their nodes entirely, producing no artifact for them, which fails check 6
-  below. This command has no step of its own that changes a workspace's
-  plan -- upgrade it beforehand with the admin-only
-  `PATCH /v1/workspaces/:workspaceId/plan` route.
+- the primary identity must not be a member of the witness workspace.
+
+The smoke workspace may be on `FREE`, `PRO`, or `MAX`. The smoke creates its
+project explicitly as `CLIENT_PORTAL`. That project type requires Mike, Emma,
+Bob, Alex, and David and intentionally does not route Sophia, Sarah, or Adrian,
+so its required capability set is independent of `Workspace.plan`. The harness
+does not mutate the workspace plan and does not pretend that a different plan
+is configured. A future smoke project type that contains premium capabilities
+must supply a verified workspace plan before its capability route can be
+evaluated.
 
 Store only these values in
 `/etc/atoms/staging/secrets/authenticated-smoke.env`:
@@ -65,14 +67,18 @@ The smoke test fails closed unless every check succeeds:
 3. Primary memberships, primary `404` access to the foreign project, and a
    successful foreign-witness read proving the resource really exists outside
    the primary tenant.
-4. Project creation and a presigned attachment upload through the exact public
-   storage origin, followed by quarantine scanning, `CLEAN`, and a byte-identical
-   signed download.
-5. One live agent run, a deliberately interrupted SSE connection,
-   replay with `Last-Event-ID`, and compare-and-swap approvals in `plan` then
-   `content` scope.
-6. Durable artifacts from Sophia, Mike, Emma, Bob, Alex, David, Sarah, and
-   Adrian.
+4. Creation of a `CLIENT_PORTAL` project and a presigned attachment upload
+   through the exact public storage origin, followed by quarantine scanning,
+   `CLEAN`, and a byte-identical signed download.
+5. One live agent run, a deliberately interrupted SSE connection, replay with
+   `Last-Event-ID`, and compare-and-swap plan approval. A content approval is
+   not expected because `CLIENT_PORTAL` does not route the growth-copy
+   capability/Adrian.
+6. Capability routing rather than an agent-count assertion: durable artifacts
+   must cover product planning (Mike), requirements/architecture (Emma),
+   implementation (Bob), validation (Alex), and data design (David), and must
+   not contain agents outside that project-type route. This is the live G6
+   assertion that Sophia, Sarah, and Adrian are skipped by design.
 7. A ready signed preview on the configured wildcard domain with HSTS,
    `no-store`, `nosniff`, `no-referrer`, and a CSP that permits framing only by
    the exact web origin.
@@ -100,14 +106,16 @@ is not a provider-side hard spending limiter. Check the relevant provider
 budgets and account state before supplying the confirmation.
 
 Evidence is created once with mode `0600`. It contains the revision, change
-ticket, approved audit boundary, passed logical gates, attachment byte/hash
-proof, approval scopes, and agent names. It intentionally excludes credentials,
-JWTs, emails, workspace/project/run/attachment identifiers, provider/customer
+ticket, project type, approved audit boundary, passed logical gates, attachment
+byte/hash proof, approval scopes, required capability names, and the agents
+that covered those capabilities. It intentionally excludes credentials, JWTs,
+emails, workspace/project/run/attachment identifiers, provider/customer
 identifiers, public origins, presigned storage URLs, and the signed preview
 hostname. A failed run emits no passing evidence.
 
-Current evidence adds `identityProvider: ENTRA_EXTERNAL_ID` and the
-`entra_control_api_identity` check to the existing v1 envelope. Historical v1
-evidence without those fields is not Entra identity evidence. This test consumes
-previously acquired access tokens; it does not itself prove the browser's
-interactive sign-in or redirect flow.
+Current evidence adds `identityProvider: ENTRA_EXTERNAL_ID`, the
+`entra_control_api_identity` check, and the G6 `project_capability_routing`
+check to the existing v1 envelope. Historical v1 evidence without those fields
+is not equivalent evidence. This test consumes previously acquired access
+tokens; it does not itself prove the browser's interactive sign-in or redirect
+flow.

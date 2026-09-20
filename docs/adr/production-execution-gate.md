@@ -28,7 +28,7 @@ A controlled launch for design partners requires G0, G1, G4, G5, G7 and tenant i
 |---|---|---|---|
 | G0 | Global kill switch | P0 | Pass |
 | G1 | Complete the cost boundary | P0 | Pass (#103): per-workspace daily cap, actual-cost record, distinct failure reasons |
-| G2 | Durable approval | P1 | Pass, follow-up open |
+| G2 | Durable approval | P1 | Pass. Expiry (cancel only) implemented, off by default; reminder and data purge open (#100) |
 | G3 | Evidence-based acceptance | P1 (blocks release-ready claims only) | Open |
 | G4 | Attachment trust boundary | P0 | Pass (#96, #110): contract, fail-closed routing, approval no longer model-controlled, tests, requirements review at plan approval |
 | G5 | Network egress | P0 (verification only) | Offline checks pass (#97); live probe pending, needs E2B credential (#14) |
@@ -61,11 +61,18 @@ Requirements: the default stays `false` for new environments. Production flips a
 
 **Not required now.** A loop governor. No auto-repair loop exists (a failed validation fails the run), so a token spiral is a future architectural risk rather than a current one.
 
-### G2 - Durable approval (pass, P1 follow-up)
+### G2 - Durable approval (pass, P1 follow-up partly done)
 
 Approval gates pause the run and end the worker job (`RunStoppedError` with status `PAUSED`); after approval the run resumes from its checkpoint. The sandbox is created only in the validation step after all agents complete, so no expensive resource is held while waiting. No new sleep/hydration subsystem is needed.
 
 **Gap (P1).** No expiry, reminder or abandonment handling was found for paused runs. Add `approvalExpiresAt`, `reminderSentAt` and `expiredAt`, and an `EXPIRED` outcome alongside approved and cancelled. Planned lifecycle fields: `pausedAt`, `approvalExpiresAt`, `expiredAt`, `purgedAt`. A paused run holds no job, sandbox or compute, so an abandoned one is a stale database row, not a safety failure; this stays P1 for a limited launch.
+
+**Implemented, minimal (#100).** With `PAUSED_RUN_TTL_HOURS` above 0, the worker cancels runs that have been `PAUSED` longer than that many hours, sweeping every 15 minutes. It is compare-and-set on status and control version, so several worker replicas, or a person approving at the same moment, cannot both win, and a stale action is rejected because the control version moves. The run ends `CANCELLED` with `error.code = "APPROVAL_EXPIRED"`, which is how an expiry is told apart from a user cancel. Default 0 leaves it off, so nothing changes until an operator picks a number.
+
+- **It is expiry, not retention.** It changes the run's status only. The run's prompt, attachments, outputs and LangGraph checkpoint stay in place. A retention promise to a partner ("deleted within N days") needs the purge below, which is not built.
+- **No new schema.** The deadline is `pausedAt` plus the TTL, computed at sweep time, so changing the TTL applies to runs already paused. `approvalExpiresAt`, `expiredAt` and `purgedAt` are not added; there is no `EXPIRED` status, so no contract or UI change.
+- **A user-paused run expires too.** The status is the same `PAUSED`, and nothing here tells a run waiting for approval from one a person paused on purpose.
+- **Still open:** the reminder (`reminderSentAt`, needs a way to reach the customer), and purging data of expired runs, which is the retention decision in `docs/design-partner-runbook.md`.
 
 ### G3 - Evidence-based acceptance (P1)
 

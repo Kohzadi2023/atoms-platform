@@ -124,5 +124,5 @@ The number of days is a decision for the owner. The platform can cancel a run af
 - Who owns each P0 gate and the stop decision.
 - The proposal thresholds above.
 - The retention period, the value of `PAUSED_RUN_TTL_HOURS` (it is off until set), and whether to build the data purge and the reminder (#100) before the first partner.
-- Whether the client portal template needs Sophia, Sarah and Adrian, which decides the plan each partner's workspace gets.
+- Whether the client portal template needs Sophia, Sarah and Adrian, which decides the plan each partner's workspace gets. A proposed definition, with the recommendation that it does not, is in `docs/client-portal-reference-architecture.md`.
 - The order in which design partners become paying customers.

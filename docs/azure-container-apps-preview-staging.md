@@ -188,6 +188,39 @@ Deploy the Control API first, then update the worker (which starts a new revisio
 
 **How to look at it again.** Cost by service: Cost Management, `Atoms-Staging`, group by service name. Volume by table: `Usage | where TimeGenerated > ago(3d) | summarize GB=sum(Quantity)/1024 by DataType`. Errors: `ContainerAppConsoleLogs_CL | where ContainerAppName_s == 'atoms-staging-worker' | summarize count() by substring(Log_s, 0, 120)`.
 
+## Minimum-cost state (from 2026-09-21) and how to bring staging back
+
+After the incident above the owner decided: keep Azure spend at the minimum until the project is finished, and make sure nothing can raise it. Staging is therefore parked. Nothing here runs a live workload, and the site and API are effectively down (the web app wakes on a request, but the API needs Postgres and Redis).
+
+**Parked state.**
+
+| Resource | State | Why |
+|---|---|---|
+| `atoms-staging-web`, `-control-api`, `-preview-gateway` | min replicas 0 | scale-to-zero costs nothing while idle |
+| `atoms-staging-worker` | no active revision | it was the loop; a running replica alone cost about CAD 2.2 a day |
+| PostgreSQL `atoms-staging-pg-91ce9` | Stopped | compute is about CAD 0.5 a day; storage stays. **Azure restarts a stopped server by itself after 7 days**, first around 2026-09-28 |
+| Log Analytics `atoms-staging-logs` | ingestion capped at 0.1 GB a day | the incident was 230 GB a day with no cap |
+| Managed Redis `atoms-staging-redis-91ce9` and its private endpoint | being deleted by the owner (about CAD 1.35 a day together); check `az resource list -g atoms-staging-rg` | nothing in it needs to survive: queues and preview sessions are ephemeral |
+
+What is left costs roughly CAD 1.5 to 3 a day (the Container Apps environment's load balancer and IP, the container registry, the virtual network, Postgres storage, and Redis until it is deleted). Per-day figures are from Cost Management for 2026-09-19 and 2026-09-20.
+
+**What keeps it parked.** A scheduled task on the owner's machine, `azure-staging-cost-guard`, runs daily at 09:08 local time and only undoes things that raise cost (start of Postgres, min replicas above 0, an active worker revision, a lifted log cap), then reports the last three daily totals. It only runs while the desktop app is open and the `az` login is valid, and it needs its first run approved by the owner. It is not a spending limit: Azure has none for this subscription.
+
+**Do not, while parked.**
+
+- Run `az containerapp update` on the worker: it creates and starts a new revision.
+- Dispatch the "Azure staging host" workflow or any deploy: it can start compute.
+- Re-enable anything before reading today's cost in Cost Management.
+
+**Bringing it back, in this order.** Tell the owner the added cost per day before each step.
+
+1. Postgres: `az postgres flexible-server start -g atoms-staging-rg -n atoms-staging-pg-91ce9` (about CAD 0.5 a day more).
+2. Redis, if it was deleted. Recreate it with the same settings and then the private endpoint and DNS (`infra/azure/staging/main.bicep` and `managed-redis-private-dns.bicep` define them). Settings of the deleted instance: Azure Managed Redis, Canada Central, SKU `Balanced_B0`, TLS 1.2, database `default` on port 10000, clustering policy **OSSCluster**, eviction `NoEviction`, access keys enabled, no persistence or modules, private endpoint in subnet `private-endpoints` of `atoms-staging-vnet`. Then update the `redis-url` secret on the Control API, the worker and the Preview Gateway; the host name and key are new.
+3. Images: the worker image in the registry (`provider-disabled-0482b37eab42`) predates the cluster-aware queue fix (#124), so rebuild and push the Control API and worker images from `main` before starting the worker.
+4. Settings: on the Control API `QUEUE_REDIS_MODE=oss-cluster`; on the worker `QUEUE_REDIS_MODE=oss-cluster` and `PREVIEW_REDIS_MODE=oss-cluster`; `RUN_QUEUE_PREFIX={atoms-staging}` on both (already set). Keep `RUN_EXECUTION_ENABLED=false`.
+5. Web and Control API: set min replicas back only if a warm start is needed; scale-to-zero works and is free while idle.
+6. Start the worker last, watch `ContainerAppConsoleLogs_CL` for a few minutes, run one queue job end to end, then read the cost the next day.
+
 ## Before enabling live execution
 
 `RUN_EXECUTION_ENABLED` is one of three locks (see `docs/adr/production-execution-gate.md`), and the Control API cannot see the worker's environment, so the worker publishes its own state and `/readyz` reports it. Do not change the flag before this check passes:

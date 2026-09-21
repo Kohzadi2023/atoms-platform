@@ -2,6 +2,7 @@ import {
   ExecutionReadinessService,
   RedisWorkerReadinessSource,
 } from "./execution-readiness.js";
+import { QueueRedisModeSchema } from "@atoms/queue-connection";
 import { createPrismaClient } from "@atoms/db";
 import { S3ObjectStorageProvider } from "@atoms/storage-provider";
 import { z } from "zod";
@@ -49,6 +50,10 @@ const EnvironmentSchema = z
     S3_SECRET_ACCESS_KEY: z.string().min(1).optional(),
     S3_KMS_KEY_ID: z.string().min(1).optional(),
     RUN_QUEUE_PREFIX: z.string().trim().min(1).optional(),
+    // How the Redis is deployed. Azure Managed Redis with the OSS clustering policy needs
+    // oss-cluster AND a hash-tagged RUN_QUEUE_PREFIX such as {atoms-staging}; on standalone
+    // Redis leave it unset. See docs/azure-container-apps-preview-staging.md.
+    QUEUE_REDIS_MODE: QueueRedisModeSchema,
     RUN_EXECUTION_ENABLED: z
       .enum(["true", "false"])
       .default("false")
@@ -123,12 +128,14 @@ async function main(): Promise<void> {
   });
   const runQueue = new BullMqRunQueue({
     redisUrl: environment.REDIS_URL,
+    redisMode: environment.QUEUE_REDIS_MODE,
     ...(environment.RUN_QUEUE_PREFIX === undefined
       ? {}
       : { prefix: environment.RUN_QUEUE_PREFIX }),
   });
   const attachmentQueue = new BullMqAttachmentScanQueue({
     redisUrl: environment.REDIS_URL,
+    redisMode: environment.QUEUE_REDIS_MODE,
     ...(environment.RUN_QUEUE_PREFIX === undefined
       ? {}
       : { prefix: environment.RUN_QUEUE_PREFIX }),
@@ -156,6 +163,7 @@ async function main(): Promise<void> {
   });
   const databaseQueue = new BullMqDatabaseOperationQueue({
     redisUrl: environment.REDIS_URL,
+    redisMode: environment.QUEUE_REDIS_MODE,
   });
   const app = await buildControlApi({
     repository,
@@ -164,6 +172,7 @@ async function main(): Promise<void> {
     executionReadiness: new ExecutionReadinessService({
       source: new RedisWorkerReadinessSource({
         redisUrl: environment.REDIS_URL,
+        redisMode: environment.QUEUE_REDIS_MODE,
         ...(environment.RUN_QUEUE_PREFIX === undefined
           ? {}
           : { prefix: environment.RUN_QUEUE_PREFIX }),

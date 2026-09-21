@@ -18,6 +18,7 @@
   "dependencies": {
     "@atoms/agents": "workspace:*",
     "@atoms/contracts": "workspace:*",
+    "@atoms/queue-connection": "workspace:*",
     "@atoms/database-provider": "workspace:*",
     "@atoms/db": "workspace:*",
     "@atoms/model-gateway": "workspace:*",

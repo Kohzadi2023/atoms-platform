@@ -6,9 +6,17 @@ import {
 import { Worker } from "bullmq";
 
 import type { DatabaseOperationProcessor } from "./database-processor.js";
+import {
+  assertQueuePrefix,
+  createQueueConnection,
+  type QueueConnection,
+  type QueueRedisMode,
+} from "@atoms/queue-connection";
 
 export interface BullMqDatabaseOperationWorkerOptions {
   readonly redisUrl: string;
+  /** How the Redis is deployed; see @atoms/queue-connection. Defaults to standalone. */
+  readonly redisMode?: QueueRedisMode;
   readonly processor: DatabaseOperationProcessor;
   readonly queueName?: string;
   readonly prefix?: string;
@@ -16,9 +24,16 @@ export interface BullMqDatabaseOperationWorkerOptions {
 }
 
 export class BullMqDatabaseOperationWorker {
+  readonly #link: QueueConnection;
   readonly #worker: Worker<DatabaseOperationJob>;
 
   constructor(options: BullMqDatabaseOperationWorkerOptions) {
+    assertQueuePrefix(options.redisMode, options.prefix);
+    this.#link = createQueueConnection({
+      redisUrl: options.redisUrl,
+      mode: options.redisMode,
+      role: "worker",
+    });
     this.#worker = new Worker<DatabaseOperationJob>(
       options.queueName ?? DATABASE_OPERATION_QUEUE_NAME,
       async (job) => {
@@ -29,11 +44,7 @@ export class BullMqDatabaseOperationWorker {
         });
       },
       {
-        connection: {
-          url: options.redisUrl,
-          enableOfflineQueue: false,
-          maxRetriesPerRequest: null,
-        },
+        connection: this.#link.connection,
         ...(options.prefix === undefined ? {} : { prefix: options.prefix }),
         concurrency: options.concurrency ?? 1,
       },
@@ -48,7 +59,8 @@ export class BullMqDatabaseOperationWorker {
     this.#worker.on("failed", (job, error) => listener(job?.id, error));
   }
 
-  close(): Promise<void> {
-    return this.#worker.close();
+  async close(): Promise<void> {
+    await this.#worker.close();
+    await this.#link.close();
   }
 }

@@ -7,9 +7,17 @@ import {
 import { Queue, Worker } from "bullmq";
 
 import type { DatabaseReconciler } from "./database-reconciler.js";
+import {
+  assertQueuePrefix,
+  createQueueConnection,
+  type QueueConnection,
+  type QueueRedisMode,
+} from "@atoms/queue-connection";
 
 export interface BullMqDatabaseReconciliationWorkerOptions {
   readonly redisUrl: string;
+  /** How the Redis is deployed; see @atoms/queue-connection. Defaults to standalone. */
+  readonly redisMode?: QueueRedisMode;
   readonly reconciler: DatabaseReconciler;
   readonly intervalMs: number;
   readonly queueName?: string;
@@ -17,22 +25,29 @@ export interface BullMqDatabaseReconciliationWorkerOptions {
 }
 
 export class BullMqDatabaseReconciliationWorker {
+  readonly #queueLink: QueueConnection;
+  readonly #workerLink: QueueConnection;
   readonly #queue: Queue<DatabaseReconciliationJob>;
   readonly #worker: Worker<DatabaseReconciliationJob>;
   readonly #intervalMs: number;
 
   constructor(options: BullMqDatabaseReconciliationWorkerOptions) {
     const queueName = options.queueName ?? DATABASE_RECONCILIATION_QUEUE_NAME;
-    const connection = {
-      url: options.redisUrl,
-      enableOfflineQueue: false,
-      maxRetriesPerRequest: null,
-    };
-    const queueConnection = { ...connection, maxRetriesPerRequest: 1 };
+    assertQueuePrefix(options.redisMode, options.prefix);
+    this.#queueLink = createQueueConnection({
+      redisUrl: options.redisUrl,
+      mode: options.redisMode,
+      role: "queue",
+    });
+    this.#workerLink = createQueueConnection({
+      redisUrl: options.redisUrl,
+      mode: options.redisMode,
+      role: "worker",
+    });
     const prefix = options.prefix === undefined ? {} : { prefix: options.prefix };
     this.#intervalMs = options.intervalMs;
     this.#queue = new Queue<DatabaseReconciliationJob>(queueName, {
-      connection: queueConnection,
+      connection: this.#queueLink.connection,
       ...prefix,
     });
     this.#worker = new Worker<DatabaseReconciliationJob>(
@@ -41,7 +56,7 @@ export class BullMqDatabaseReconciliationWorker {
         DatabaseReconciliationJobSchema.parse(job.data);
         await options.reconciler.reconcile();
       },
-      { connection, ...prefix, concurrency: 1 },
+      { connection: this.#workerLink.connection, ...prefix, concurrency: 1 },
     );
   }
 
@@ -73,5 +88,7 @@ export class BullMqDatabaseReconciliationWorker {
   async close(): Promise<void> {
     await this.#worker.close();
     await this.#queue.close();
+    await this.#queueLink.close();
+    await this.#workerLink.close();
   }
 }

@@ -321,6 +321,6 @@ test("denies workspace-scoped creation outside membership", async (t) => {
     },
   });
 
-  assert.equal(response.statusCode, 403);
+  assert.equal(response.statusCode, 404);
   assert.equal(repository.meeting, undefined);
 });

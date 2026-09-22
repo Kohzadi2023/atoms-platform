@@ -6,10 +6,11 @@ import {
   Check,
   CheckCircle2,
   ClipboardCopy,
+  LoaderCircle,
   LockKeyhole,
   Sparkles,
 } from "lucide-react";
-import { useMemo, useState } from "react";
+import { useMemo, useState, type ReactNode } from "react";
 
 import {
   createMeetingBriefAction,
@@ -23,30 +24,41 @@ import {
 
 export interface OliviaMeetingBriefActionProps {
   readonly context: MeetingBriefContext;
+  readonly preparedPrompt?: string;
   readonly initialMeetingBrief?: string;
-  readonly onMeetingBriefApplied?: (meetingBrief: string) => void;
+  readonly initialActionStatus?: OliviaAssistedActionStatus;
+  readonly onMeetingBriefApplied?: (
+    meetingBrief: string,
+  ) => void | Promise<void>;
 }
 
 export function OliviaMeetingBriefAction({
   context,
+  preparedPrompt,
   initialMeetingBrief,
+  initialActionStatus,
   onMeetingBriefApplied,
 }: OliviaMeetingBriefActionProps) {
   const normalizedInitialBrief = initialMeetingBrief?.trim() ?? "";
   const [meetingBrief, setMeetingBrief] = useState(normalizedInitialBrief);
   const [response, setResponse] = useState("");
   const [actionStatus, setActionStatus] = useState<OliviaAssistedActionStatus>(
-    normalizedInitialBrief.length > 0 ? "COMPLETED" : "PENDING",
+    initialActionStatus ?? (normalizedInitialBrief.length > 0 ? "COMPLETED" : "PENDING"),
   );
-  const [dialogOpen, setDialogOpen] = useState(normalizedInitialBrief.length === 0);
-  const [validation, setValidation] = useState<MeetingBriefValidationResult | undefined>();
-  const [copyNotice, setCopyNotice] = useState<string | undefined>();
-  const [completionNotice, setCompletionNotice] = useState<string | undefined>();
+  const [dialogOpen, setDialogOpen] = useState(
+    normalizedInitialBrief.length === 0 || initialActionStatus !== "COMPLETED",
+  );
+  const [validation, setValidation] = useState<MeetingBriefValidationResult>();
+  const [copyNotice, setCopyNotice] = useState<string>();
+  const [completionNotice, setCompletionNotice] = useState<string>();
+  const [applyError, setApplyError] = useState<string>();
+  const [applying, setApplying] = useState(false);
 
-  const action = useMemo(
-    () => createMeetingBriefAction(context, actionStatus),
-    [actionStatus, context],
-  );
+  const action = useMemo(() => {
+    const generated = createMeetingBriefAction(context, actionStatus);
+    return preparedPrompt === undefined ? generated : { ...generated, prompt: preparedPrompt };
+  }, [actionStatus, context, preparedPrompt]);
+
   const meetingState = resolveMeetingPreparationState(meetingBrief, actionStatus);
   const blocked = meetingState === "OLIVIA_ACTION_REQUIRED";
 
@@ -54,20 +66,17 @@ export function OliviaMeetingBriefAction({
     setCopyNotice(undefined);
     try {
       await globalThis.navigator.clipboard.writeText(action.prompt);
-      setActionStatus((current) =>
-        current === "PENDING" ? "PROMPT_COPIED" : current,
-      );
+      setActionStatus((current) => (current === "PENDING" ? "PROMPT_COPIED" : current));
       setCopyNotice("Prompt copied. Send it to your AI, then paste the response below.");
     } catch {
-      setCopyNotice(
-        "Clipboard access is unavailable. Select the prompt text and copy it manually.",
-      );
+      setCopyNotice("Clipboard access is unavailable. Select the prompt text and copy it manually.");
     }
   }
 
   function updateResponse(value: string) {
     setResponse(value);
     setValidation(undefined);
+    setApplyError(undefined);
     setCompletionNotice(undefined);
     setActionStatus(value.trim().length > 0 ? "RESPONSE_RECEIVED" : "PENDING");
   }
@@ -78,25 +87,31 @@ export function OliviaMeetingBriefAction({
     setActionStatus(result.valid ? "VALIDATED" : "RESPONSE_RECEIVED");
   }
 
-  function applyResponse() {
+  async function applyResponse() {
     const completion = completeMeetingBriefAction(response);
     setValidation(completion.validation);
+    setApplyError(undefined);
 
-    if (
-      completion.actionStatus !== "COMPLETED" ||
-      completion.meetingBrief === undefined
-    ) {
+    if (completion.actionStatus !== "COMPLETED" || completion.meetingBrief === undefined) {
       setActionStatus(completion.actionStatus);
       return;
     }
 
-    setMeetingBrief(completion.meetingBrief);
-    setActionStatus("COMPLETED");
-    setDialogOpen(false);
-    setCompletionNotice(
-      "Meeting Brief added. The meeting can now advance to agent preparation.",
-    );
-    onMeetingBriefApplied?.(completion.meetingBrief);
+    setApplying(true);
+    try {
+      await onMeetingBriefApplied?.(completion.meetingBrief);
+      setMeetingBrief(completion.meetingBrief);
+      setActionStatus("COMPLETED");
+      setDialogOpen(false);
+      setCompletionNotice(
+        "Meeting Brief saved. The meeting can now advance to agent preparation.",
+      );
+    } catch (error) {
+      setApplyError(toMessage(error));
+      setActionStatus("VALIDATED");
+    } finally {
+      setApplying(false);
+    }
   }
 
   return (
@@ -111,22 +126,17 @@ export function OliviaMeetingBriefAction({
               {context.title}
             </h1>
             <p className="mt-2 max-w-3xl text-sm leading-6 text-[#98a5b7]">
-              Olivia is an observer, but required AI-assisted preparation steps are surfaced as
-              explicit guided actions. The meeting stays gated until each blocking action is
-              completed.
+              Required AI-assisted preparation is explicit and gated. The Meeting Brief must be
+              validated and durably saved before agent preparation unlocks.
             </p>
           </div>
           <MeetingStateBadge blocked={blocked} />
         </header>
 
         {completionNotice !== undefined ? (
-          <div
-            className="mt-5 flex items-start gap-3 rounded-xl border border-[#315849] bg-[#0e211a] px-4 py-3 text-sm text-[#a8f0d3]"
-            role="status"
-          >
-            <CheckCircle2 className="mt-0.5 shrink-0" size={18} aria-hidden="true" />
-            <span>{completionNotice}</span>
-          </div>
+          <Notice tone="success" icon={<CheckCircle2 size={18} />}>
+            {completionNotice}
+          </Notice>
         ) : null}
 
         <div className="mt-6 grid gap-6 lg:grid-cols-[0.9fr_1.1fr]">
@@ -143,18 +153,10 @@ export function OliviaMeetingBriefAction({
                   <Sparkles className="text-[#78e6bd]" size={18} aria-hidden="true" />
                   <h2 className="font-semibold">Meeting Brief</h2>
                 </div>
-                <p className="mt-1 text-xs text-[#7f8b9d]">
-                  Prepared through a guided Olivia action
-                </p>
+                <p className="mt-1 text-xs text-[#7f8b9d]">Prepared through Olivia Assisted Action</p>
               </div>
-              <span
-                className={
-                  blocked
-                    ? "rounded-full border border-[#6a4d2d] bg-[#24190d] px-2.5 py-1 text-xs font-semibold text-[#f3bd75]"
-                    : "rounded-full border border-[#315849] bg-[#0e211a] px-2.5 py-1 text-xs font-semibold text-[#78e6bd]"
-                }
-              >
-                {blocked ? "Action required" : "Ready"}
+              <span className={blocked ? badgeClass("warning") : badgeClass("success")}>
+                {blocked ? "Action required" : "Durably saved"}
               </span>
             </div>
 
@@ -168,9 +170,8 @@ export function OliviaMeetingBriefAction({
                     <div>
                       <h3 className="text-sm font-semibold">Olivia action required</h3>
                       <p className="mt-1 text-sm leading-6 text-[#98a5b7]">
-                        The Meeting Brief is intentionally not an empty editor. Use the prepared
-                        prompt, paste the AI response, validate it, and apply it to unlock the next
-                        meeting stage.
+                        Copy the system-owned prompt, paste the AI response, validate it, and save
+                        it to the meeting record to unlock the next stage.
                       </p>
                     </div>
                   </div>
@@ -207,8 +208,8 @@ export function OliviaMeetingBriefAction({
               <h2 className="text-sm font-semibold">Next gate: Agent preparation</h2>
               <p className="mt-1 text-sm text-[#8f9bad]">
                 {blocked
-                  ? "Blocked until the Meeting Brief action is completed."
-                  : "Meeting Brief is validated and the next preparation stage is unlocked."}
+                  ? "Blocked until the durable Meeting Brief action is completed."
+                  : "The validated Meeting Brief is stored and agent preparation is unlocked."}
               </p>
             </div>
             <button
@@ -245,7 +246,7 @@ export function OliviaMeetingBriefAction({
                   </h2>
                   <p className="mt-1 text-sm leading-6 text-[#98a5b7]">{action.reason}</p>
                 </div>
-                <span className="rounded-full border border-[#6a4d2d] bg-[#24190d] px-2.5 py-1 text-xs font-semibold text-[#f3bd75]">
+                <span className={badgeClass(actionStatus === "COMPLETED" ? "success" : "warning")}>
                   {actionStatus.replaceAll("_", " ")}
                 </span>
               </div>
@@ -254,7 +255,8 @@ export function OliviaMeetingBriefAction({
             <div className="space-y-7 px-5 py-5 sm:px-6">
               <ActionStep number="1" title="Copy the prepared prompt">
                 <p className="mb-3 text-sm leading-6 text-[#8f9bad]">
-                  The prompt is owned by the system. Olivia should not have to decide what to ask.
+                  This prompt comes from the durable meeting record; Olivia does not have to
+                  decide what to ask.
                 </p>
                 <textarea
                   className="h-56 w-full resize-y rounded-xl border border-[#303846] bg-[#080c12] p-3 font-mono text-xs leading-5 text-[#c7d2df] outline-none focus:border-[#4e7668]"
@@ -272,29 +274,28 @@ export function OliviaMeetingBriefAction({
                     Copy Prompt
                   </button>
                   {copyNotice !== undefined ? (
-                    <span className="text-xs text-[#9ba8b8]" role="status">
-                      {copyNotice}
-                    </span>
+                    <span className="text-xs text-[#9ba8b8]" role="status">{copyNotice}</span>
                   ) : null}
                 </div>
               </ActionStep>
 
               <ActionStep number="2" title="Paste the AI response">
                 <textarea
-                  className="h-64 w-full resize-y rounded-xl border border-[#303846] bg-[#080c12] p-3 text-sm leading-6 text-[#d7dee8] outline-none placeholder:text-[#586476] focus:border-[#4e7668]"
+                  className="h-64 w-full resize-y rounded-xl border border-[#303846] bg-[#080c12] p-3 text-sm leading-6 text-[#d7dee8] outline-none placeholder:text-[#586476] focus:border-[#4e7668] disabled:opacity-60"
                   value={response}
                   onChange={(event) => updateResponse(event.target.value)}
                   placeholder="Paste the complete AI response here…"
                   aria-label="AI response for Meeting Brief"
+                  disabled={actionStatus === "COMPLETED" || applying}
                 />
               </ActionStep>
 
-              <ActionStep number="3" title="Validate and apply">
+              <ActionStep number="3" title="Validate and save">
                 <div className="flex flex-wrap gap-3">
                   <button
                     className="rounded-xl border border-[#475263] bg-[#141b25] px-4 py-2.5 text-sm font-semibold text-[#d5dde8] disabled:cursor-not-allowed disabled:opacity-50"
                     type="button"
-                    disabled={response.trim().length === 0}
+                    disabled={response.trim().length === 0 || applying || actionStatus === "COMPLETED"}
                     onClick={validateResponse}
                   >
                     Validate Response
@@ -302,28 +303,31 @@ export function OliviaMeetingBriefAction({
                   <button
                     className="inline-flex items-center gap-2 rounded-xl bg-[#78e6bd] px-4 py-2.5 text-sm font-bold text-[#06281e] disabled:cursor-not-allowed disabled:bg-[#33433e] disabled:text-[#7f948d]"
                     type="button"
-                    disabled={validation?.valid !== true}
-                    onClick={applyResponse}
+                    disabled={validation?.valid !== true || applying || actionStatus === "COMPLETED"}
+                    onClick={() => void applyResponse()}
                   >
-                    <Check size={16} aria-hidden="true" />
-                    Apply to Meeting
+                    {applying ? <LoaderCircle className="animate-spin" size={16} /> : <Check size={16} />}
+                    {applying ? "Saving…" : "Save to Meeting"}
                   </button>
                 </div>
 
-                {validation !== undefined ? (
-                  <ValidationFeedback validation={validation} />
-                ) : (
-                  <p className="mt-3 text-xs leading-5 text-[#758296]">
-                    Apply stays disabled until the response contains every required decision-ready
-                    section.
-                  </p>
-                )}
+                {validation !== undefined ? <ValidationFeedback validation={validation} /> : null}
+                {applyError !== undefined ? (
+                  <Notice tone="error" icon={<AlertTriangle size={17} />}>
+                    {applyError}
+                  </Notice>
+                ) : null}
+                {actionStatus === "COMPLETED" ? (
+                  <Notice tone="success" icon={<CheckCircle2 size={17} />}>
+                    This action is already completed in the meeting record.
+                  </Notice>
+                ) : null}
               </ActionStep>
             </div>
 
             <div className="flex items-center gap-2 border-t border-[#252d3a] px-5 py-4 text-xs text-[#7f8b9d] sm:px-6">
               <LockKeyhole size={14} aria-hidden="true" />
-              This popup is blocking. Complete the action to advance the meeting path.
+              The gate advances only after the Control API durably saves this action.
             </div>
           </div>
         </div>
@@ -334,13 +338,7 @@ export function OliviaMeetingBriefAction({
 
 function MeetingStateBadge({ blocked }: { readonly blocked: boolean }) {
   return (
-    <div
-      className={
-        blocked
-          ? "inline-flex items-center gap-2 self-start rounded-full border border-[#6a4d2d] bg-[#24190d] px-3 py-1.5 text-xs font-semibold text-[#f3bd75]"
-          : "inline-flex items-center gap-2 self-start rounded-full border border-[#315849] bg-[#0e211a] px-3 py-1.5 text-xs font-semibold text-[#78e6bd]"
-      }
-    >
+    <div className={blocked ? badgeClass("warning") : badgeClass("success")}>
       {blocked ? <LockKeyhole size={14} /> : <CheckCircle2 size={14} />}
       {blocked ? "Olivia action required" : "Ready for agent preparation"}
     </div>
@@ -350,8 +348,8 @@ function MeetingStateBadge({ blocked }: { readonly blocked: boolean }) {
 function ContextCard({ label, value }: { readonly label: string; readonly value: string }) {
   return (
     <article className="rounded-2xl border border-[#252d3a] bg-[#0d121a] p-5">
-      <p className="text-xs font-semibold uppercase tracking-[0.14em] text-[#718095]">{label}</p>
-      <p className="mt-2 text-sm leading-6 text-[#c8d2df]">{value}</p>
+      <p className="text-xs font-semibold uppercase tracking-[0.14em] text-[#7f8b9d]">{label}</p>
+      <p className="mt-2 text-sm leading-6 text-[#c5ceda]">{value}</p>
     </article>
   );
 }
@@ -363,12 +361,12 @@ function ActionStep({
 }: {
   readonly number: string;
   readonly title: string;
-  readonly children: React.ReactNode;
+  readonly children: ReactNode;
 }) {
   return (
     <section>
       <div className="mb-3 flex items-center gap-3">
-        <span className="grid size-7 place-items-center rounded-full border border-[#36554b] bg-[#10251e] text-xs font-bold text-[#78e6bd]">
+        <span className="grid size-7 place-items-center rounded-full border border-[#315849] bg-[#10251e] text-xs font-bold text-[#78e6bd]">
           {number}
         </span>
         <h3 className="text-sm font-semibold">{title}</h3>
@@ -378,51 +376,54 @@ function ActionStep({
   );
 }
 
-function ValidationFeedback({
-  validation,
-}: {
-  readonly validation: MeetingBriefValidationResult;
-}) {
+function ValidationFeedback({ validation }: { readonly validation: MeetingBriefValidationResult }) {
   if (validation.valid) {
     return (
-      <div className="mt-4 flex items-start gap-3 rounded-xl border border-[#315849] bg-[#0e211a] px-4 py-3 text-sm text-[#a8f0d3]">
-        <CheckCircle2 className="mt-0.5 shrink-0" size={18} aria-hidden="true" />
-        <div>
-          <p className="font-semibold">Response validated</p>
-          <p className="mt-1 text-xs leading-5 text-[#8ccdb3]">
-            All required Meeting Brief sections are present. Apply it to unlock agent preparation.
-          </p>
-        </div>
-      </div>
+      <Notice tone="success" icon={<CheckCircle2 size={17} />}>
+        Response contains every required Meeting Brief section and is ready to save.
+      </Notice>
     );
   }
 
   return (
-    <div
-      className="mt-4 rounded-xl border border-[#67333a] bg-[#1c1014] px-4 py-3 text-sm text-[#ff9ca6]"
-      role="alert"
-    >
-      <div className="flex items-start gap-3">
-        <AlertTriangle className="mt-0.5 shrink-0" size={18} aria-hidden="true" />
-        <div>
-          <p className="font-semibold">Response needs attention</p>
-          {validation.violations.map((violation) => (
-            <p className="mt-1 text-xs leading-5 text-[#d98d96]" key={violation}>
-              {violation}
-            </p>
-          ))}
-          {validation.missingSections.length > 0 ? (
-            <div className="mt-3">
-              <p className="text-xs font-semibold text-[#ffb0b8]">Missing sections</p>
-              <ul className="mt-1 list-disc space-y-1 pl-5 text-xs text-[#d98d96]">
-                {validation.missingSections.map((section) => (
-                  <li key={section}>{section}</li>
-                ))}
-              </ul>
-            </div>
-          ) : null}
-        </div>
-      </div>
+    <Notice tone="error" icon={<AlertTriangle size={17} />}>
+      <span>{validation.violations.join(" ")}</span>
+      {validation.missingSections.length > 0 ? (
+        <span className="mt-1 block text-xs">
+          Missing: {validation.missingSections.join(", ")}
+        </span>
+      ) : null}
+    </Notice>
+  );
+}
+
+function Notice({
+  tone,
+  icon,
+  children,
+}: {
+  readonly tone: "success" | "error";
+  readonly icon: ReactNode;
+  readonly children: ReactNode;
+}) {
+  const className =
+    tone === "success"
+      ? "mt-4 flex items-start gap-2 rounded-xl border border-[#315849] bg-[#0e211a] px-3 py-2.5 text-sm text-[#a8f0d3]"
+      : "mt-4 flex items-start gap-2 rounded-xl border border-[#67333a] bg-[#1c1014] px-3 py-2.5 text-sm text-[#ff9ca6]";
+  return (
+    <div className={className} role={tone === "error" ? "alert" : "status"}>
+      <span className="mt-0.5 shrink-0">{icon}</span>
+      <span>{children}</span>
     </div>
   );
+}
+
+function badgeClass(tone: "success" | "warning"): string {
+  return tone === "success"
+    ? "inline-flex items-center gap-2 self-start rounded-full border border-[#315849] bg-[#0e211a] px-3 py-1.5 text-xs font-semibold text-[#78e6bd]"
+    : "inline-flex items-center gap-2 self-start rounded-full border border-[#6a4d2d] bg-[#24190d] px-3 py-1.5 text-xs font-semibold text-[#f3bd75]";
+}
+
+function toMessage(error: unknown): string {
+  return error instanceof Error ? error.message : String(error);
 }

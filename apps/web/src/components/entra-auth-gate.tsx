@@ -21,7 +21,7 @@ import {
   resolveBrowserAuthenticationMode,
   type EntraBrowserConfiguration,
 } from "../lib/entra-auth";
-import { WorkspaceShell } from "./workspace-shell";
+import { WorkspaceExperience } from "./workspace-meeting-experience";
 
 const authenticationMode = resolveBrowserAuthenticationMode({
   nodeEnv: process.env.NODE_ENV,
@@ -34,7 +34,7 @@ const ACTIVE_RUN_STORAGE_KEY = "atoms.active-run.v1";
 
 export function EntraAuthGate() {
   if (authenticationMode.kind === "development") {
-    return <WorkspaceShell identityLabel="Development auth" />;
+    return <WorkspaceExperience identityLabel="Development auth" />;
   }
 
   if (authenticationMode.kind === "configuration_error") {
@@ -205,7 +205,7 @@ function EntraSessionBoundary({
   }
 
   return (
-    <WorkspaceShell
+    <WorkspaceExperience
       key={account.homeAccountId}
       {...(accessTokenProvider === undefined ? {} : { accessTokenProvider })}
       identityLabel={account.name ?? account.username ?? account.homeAccountId}

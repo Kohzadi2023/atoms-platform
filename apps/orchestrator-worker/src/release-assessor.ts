@@ -4,6 +4,7 @@ import {
   STANDARD_RELEASE_POLICY,
   createAcceptanceSnapshot,
   evaluateRelease,
+  evidenceFromAcceptanceRun,
   evidenceFromValidationStep,
   fingerprintProjectSnapshot,
   type QualityEvidence,
@@ -22,6 +23,13 @@ export interface AssessReleaseInput {
 
 export interface ReleaseAssessorOptions {
   readonly repository: ReleaseAssessmentRepository;
+  /**
+   * G3: which of Emma's acceptance criterion ids each acceptance-scenario
+   * name is evidence for (apps/orchestrator-worker/src/acceptance-manifest.ts).
+   * Defaults to an empty map, meaning no ACCEPTANCE evidence is ever built --
+   * the same state as before this option existed.
+   */
+  readonly criterionIdsByScenario?: Readonly<Record<string, readonly string[]>>;
   readonly now?: () => Date;
 }
 
@@ -50,10 +58,12 @@ export interface ReleaseAssessor {
  */
 export class DeterministicReleaseAssessor implements ReleaseAssessor {
   readonly #repository: ReleaseAssessmentRepository;
+  readonly #criterionIdsByScenario: Readonly<Record<string, readonly string[]>>;
   readonly #now: () => Date;
 
   constructor(options: ReleaseAssessorOptions) {
     this.#repository = options.repository;
+    this.#criterionIdsByScenario = options.criterionIdsByScenario ?? {};
     this.#now = options.now ?? (() => new Date());
   }
 
@@ -69,7 +79,7 @@ export class DeterministicReleaseAssessor implements ReleaseAssessor {
     const now = this.#now();
 
     try {
-      const { files, acceptanceTask, baselineCommands } =
+      const { files, acceptanceTask, baselineCommands, acceptanceRun } =
         await this.#repository.loadEvidenceInputs(input.run.id);
       const snapshotSha256 = fingerprintProjectSnapshot(files);
       const qualityScope: QualityScope = { ...scope, snapshotSha256 };
@@ -100,11 +110,23 @@ export class DeterministicReleaseAssessor implements ReleaseAssessor {
         });
         if (item !== null) evidence.push(item);
       }
-      // No acceptance-test runner exists yet in this repository, so no
-      // ACCEPTANCE-kind evidence is ever synthesized here. When an acceptance
-      // snapshot exists but no acceptance evidence does, evaluateRelease
-      // correctly reports MISSING_CRITERION_EVIDENCE and stays BLOCKED --
-      // that is the honest state of automation today, not a bug in this step.
+      // G3: only produces evidence for scenarios this worker's operator has
+      // explicitly mapped to specific criterion ids (see
+      // acceptance-manifest.ts) -- today that map is empty, so this remains a
+      // no-op and evaluateRelease keeps reporting MISSING_CRITERION_EVIDENCE,
+      // same as before the acceptance runner existed. That is the honest
+      // state of automation, not a bug in this step.
+      if (acceptance !== null && acceptanceRun !== null) {
+        evidence.push(...evidenceFromAcceptanceRun({
+          scope: qualityScope,
+          sourceArtifactId: acceptanceRun.id,
+          acceptanceTaskId: acceptance.taskId,
+          acceptanceTaskAttempt: acceptance.taskAttempt,
+          completedAt: acceptanceRun.completedAt,
+          criterionIdsByScenario: this.#criterionIdsByScenario,
+          stdout: acceptanceRun.stdout,
+        }));
+      }
 
       const assessment = evaluateRelease({
         scope: qualityScope,

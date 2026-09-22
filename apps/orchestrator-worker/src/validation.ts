@@ -1,10 +1,11 @@
 import type { AgentProjectFile } from "@atoms/agents";
-import type { JsonValue } from "@atoms/contracts";
+import type { JsonValue, ProjectType } from "@atoms/contracts";
 import {
   type PreviewSessionStore,
   type PreviewTicketSigner,
 } from "@atoms/preview";
 import {
+  type AcceptanceManifest,
   type ProjectValidationResult,
   type ProjectValidationRunner,
   type SandboxHandle,
@@ -58,6 +59,7 @@ export interface RecordPreviewReadyInput {
 
 export interface Phase2ValidationRepository {
   listProjectFiles(projectId: string): Promise<readonly AgentProjectFile[]>;
+  getProjectType(projectId: string): Promise<ProjectType>;
   createSandboxSession(
     input: CreateSandboxSessionInput,
   ): Promise<SandboxSessionMutationResult>;
@@ -89,6 +91,12 @@ export interface Phase2RunValidatorOptions {
   readonly runner: ValidationRunner;
   readonly previewStore: PreviewSessionStore;
   readonly previewSigner: PreviewTicketSigner;
+  /**
+   * G3: picks which fixed scenario set (if any) runs for this project's type.
+   * Omitted entirely, no acceptance step is ever requested, regardless of how
+   * the runner itself was configured -- both sides must opt in.
+   */
+  readonly acceptanceManifestForProjectType?: (projectType: ProjectType) => AcceptanceManifest | null;
   readonly now?: () => Date;
 }
 
@@ -97,6 +105,7 @@ export class Phase2RunValidator implements RunValidator {
   readonly #runner: ValidationRunner;
   readonly #previewStore: PreviewSessionStore;
   readonly #previewSigner: PreviewTicketSigner;
+  readonly #acceptanceManifestForProjectType: ((projectType: ProjectType) => AcceptanceManifest | null) | undefined;
   readonly #now: () => Date;
 
   constructor(options: Phase2RunValidatorOptions) {
@@ -104,11 +113,18 @@ export class Phase2RunValidator implements RunValidator {
     this.#runner = options.runner;
     this.#previewStore = options.previewStore;
     this.#previewSigner = options.previewSigner;
+    this.#acceptanceManifestForProjectType = options.acceptanceManifestForProjectType;
     this.#now = options.now ?? (() => new Date());
   }
 
   async validate(input: RunValidationInput): Promise<RunValidationLease> {
     const files = await this.#repository.listProjectFiles(input.run.projectId);
+    const acceptanceManifest =
+      this.#acceptanceManifestForProjectType === undefined
+        ? null
+        : this.#acceptanceManifestForProjectType(
+            await this.#repository.getProjectType(input.run.projectId),
+          );
     let sandboxSessionId: string | undefined;
     let sandbox: SandboxHandle | undefined;
     let result: ProjectValidationResult | undefined;
@@ -125,6 +141,7 @@ export class Phase2RunValidator implements RunValidator {
           runId: input.run.id,
           attempt: String(input.attempt),
         },
+        acceptanceManifest,
         hooks: {
           onSandboxCreated: async (created, expiresAt) => {
             sandbox = created;

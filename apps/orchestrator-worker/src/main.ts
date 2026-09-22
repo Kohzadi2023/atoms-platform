@@ -58,6 +58,10 @@ import { parseEgressAllowedHosts } from "./egress-policy.js";
 import { WorkerReadinessPublisher } from "./readiness-publisher.js";
 import { createThrottledLogger } from "./throttled-log.js";
 import { QueueRedisModeSchema, createRedisClient } from "@atoms/queue-connection";
+import {
+  CLIENT_PORTAL_CRITERION_IDS_BY_SCENARIO,
+  getAcceptanceManifest,
+} from "./acceptance-manifest.js";
 
 const EnvironmentSchema = z
   .object({
@@ -106,6 +110,11 @@ const EnvironmentSchema = z
     // 0 leaves it off. Expiry only cancels the run; it deletes no data.
     PAUSED_RUN_TTL_HOURS: z.coerce.number().int().min(0).max(8_760).default(0),
     PREVIEW_BROWSER_PLAYWRIGHT_ENTRY: z.string().trim().min(1).optional(),
+    // "required" runs the fixed G3 acceptance scenario set (docs/adr/production-execution-gate.md)
+    // after a passing preview-health. Needs the same Playwright/Chromium template as
+    // PREVIEW_BROWSER_VIABILITY. Evidence only; never blocks the run or withholds the preview.
+    ACCEPTANCE_CHECK: z.enum(["off", "required"]).default("off"),
+    ACCEPTANCE_CHECK_PLAYWRIGHT_ENTRY: z.string().trim().min(1).optional(),
     WORKSPACE_PROVIDER_BUDGET_USD_MICROS_PER_DAY: z.coerce
       .number()
       .int()
@@ -295,6 +304,14 @@ async function main(): Promise<void> {
               : { playwrightEntry: environment.PREVIEW_BROWSER_PLAYWRIGHT_ENTRY },
         }
       : {}),
+    ...(environment.ACCEPTANCE_CHECK === "required"
+      ? {
+          acceptanceCheck:
+            environment.ACCEPTANCE_CHECK_PLAYWRIGHT_ENTRY === undefined
+              ? {}
+              : { playwrightEntry: environment.ACCEPTANCE_CHECK_PLAYWRIGHT_ENTRY },
+        }
+      : {}),
     sandboxTimeoutMs: environment.SANDBOX_IDLE_TIMEOUT_MS,
   });
   const previewStore = new RedisPreviewSessionStore({
@@ -311,6 +328,9 @@ async function main(): Promise<void> {
     runner: validationRunner,
     previewStore,
     previewSigner,
+    ...(environment.ACCEPTANCE_CHECK === "required"
+      ? { acceptanceManifestForProjectType: getAcceptanceManifest }
+      : {}),
   });
   const attachmentStorage = new S3ObjectStorageProvider({
     bucket: environment.S3_BUCKET,
@@ -332,6 +352,7 @@ async function main(): Promise<void> {
   });
   const releaseAssessor = new DeterministicReleaseAssessor({
     repository: new PrismaReleaseAssessmentRepository(prisma),
+    criterionIdsByScenario: CLIENT_PORTAL_CRITERION_IDS_BY_SCENARIO,
   });
   const processor = new RunProcessor({
     repository,

@@ -911,7 +911,8 @@ function toSandboxCommandName(
   | "TEST"
   | "BUILD"
   | "PREVIEW_START"
-  | "PREVIEW_HEALTH" {
+  | "PREVIEW_HEALTH"
+  | "ACCEPTANCE" {
   return name.replaceAll("-", "_").toUpperCase() as
     | "INSTALL"
     | "PRISMA_VALIDATE"
@@ -920,5 +921,6 @@ function toSandboxCommandName(
     | "TEST"
     | "BUILD"
     | "PREVIEW_START"
-    | "PREVIEW_HEALTH";
+    | "PREVIEW_HEALTH"
+    | "ACCEPTANCE";
 }

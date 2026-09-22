@@ -111,7 +111,9 @@ export function DurableMeetingPreparation() {
         knownOpenItems: meeting.knownOpenItems,
       }}
       preparedPrompt={meeting.oliviaAction.prompt}
-      initialMeetingBrief={meeting.meetingBrief ?? undefined}
+      {...(meeting.meetingBrief === null
+        ? {}
+        : { initialMeetingBrief: meeting.meetingBrief })}
       initialActionStatus={meeting.oliviaAction.status}
       onMeetingBriefApplied={async (meetingBrief) => {
         const updated = await api.completeMeetingBriefAction(meeting.id, meetingBrief);

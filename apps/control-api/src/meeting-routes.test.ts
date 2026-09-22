@@ -12,9 +12,6 @@ import type {
 
 import { buildControlApi } from "./app.js";
 import type { MeetingRecord } from "./meeting-domain.js";
-import {
-  registerMeetingRoutes,
-} from "./meeting-routes.js";
 import type {
   CompleteMeetingBriefResult,
   CreateMeetingResult,
@@ -194,16 +191,15 @@ class MemoryMeetingRepository implements MeetingControlRepository {
 }
 
 async function createApp(repository: MemoryMeetingRepository) {
-  const app = await buildControlApi({
+  return buildControlApi({
     repository: new NoopControlRepository(),
     runQueue: new NoopRunQueue(),
     authRequired: false,
     logger: false,
     closeDependencies: false,
     now: () => FIXED_NOW,
+    meetingOperations: { repository },
   });
-  registerMeetingRoutes(app, { repository, now: () => FIXED_NOW });
-  return app;
 }
 
 test("creates a durable meeting with a server-owned Olivia prompt", async (t) => {

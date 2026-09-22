@@ -62,6 +62,7 @@ import {
 } from "./release-routes.js";
 import { registerGtmRoutes, type GtmRoutesOptions } from "./gtm-routes.js";
 import { registerAdminRoutes, type AdminRoutesOptions } from "./admin-routes.js";
+import { registerMeetingRoutes, type MeetingRoutesOptions } from "./meeting-routes.js";
 import {
   type Authenticator,
   InvalidAccessTokenError,
@@ -132,6 +133,7 @@ export interface BuildControlApiOptions {
   readonly attachmentOperations?: AttachmentRoutesOptions;
   readonly releaseOperations?: ReleaseRoutesOptions;
   readonly gtmOperations?: GtmRoutesOptions;
+  readonly meetingOperations?: MeetingRoutesOptions;
   readonly adminOperations?: AdminRoutesOptions;
 }
 
@@ -344,6 +346,12 @@ export async function buildControlApi(
   if (options.gtmOperations !== undefined) {
     registerGtmRoutes(api, {
       ...options.gtmOperations,
+      now,
+    });
+  }
+  if (options.meetingOperations !== undefined) {
+    registerMeetingRoutes(api, {
+      ...options.meetingOperations,
       now,
     });
   }

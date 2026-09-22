@@ -15,6 +15,7 @@ import { PrismaAttachmentRepository } from "./attachment-repository.js";
 import { BullMqDatabaseOperationQueue } from "./database-operation-queue.js";
 import { PrismaDatabaseControlRepository } from "./database-repository.js";
 import { PrismaGtmControlRepository } from "./gtm-repository.js";
+import { PrismaMeetingControlRepository } from "./meeting-repository.js";
 import { PrismaReleaseControlRepository } from "./release-repository.js";
 import { PrismaControlRepository } from "./repository.js";
 import { BullMqRunQueue } from "./run-queue.js";
@@ -200,6 +201,9 @@ async function main(): Promise<void> {
     },
     gtmOperations: {
       repository: new PrismaGtmControlRepository(prisma),
+    },
+    meetingOperations: {
+      repository: new PrismaMeetingControlRepository(prisma),
     },
     adminOperations: {
       repository,

@@ -5,6 +5,8 @@ import {
   ListWorkspacesResponseSchema,
   FileContentResponseSchema,
   IdempotencyKeySchema,
+  MeetingListResponseSchema,
+  MeetingResponseSchema,
   ProjectAttachmentSchema,
   ProjectFileListResponseSchema,
   ProjectResponseSchema,
@@ -17,8 +19,11 @@ import {
   type AttachmentListResponse,
   type AttachmentUploadIntentResponse,
   type CreateAttachmentUploadIntentInput,
+  type CreateMeetingInput,
   type FileContentResponse,
   type GetMeResponse,
+  type MeetingListResponse,
+  type MeetingResponse,
   type ProjectFileListResponse,
   type ProjectResponse,
   type ProjectAttachment,
@@ -70,6 +75,42 @@ export class ControlApiClient {
 
   listWorkspaces(): Promise<ListWorkspacesResponse> {
     return this.#request("/v1/workspaces", ListWorkspacesResponseSchema);
+  }
+
+  createMeeting(
+    workspaceId: string,
+    input: CreateMeetingInput,
+  ): Promise<MeetingResponse> {
+    return this.#request(
+      `/v1/workspaces/${encodeURIComponent(workspaceId)}/meetings`,
+      MeetingResponseSchema,
+      { method: "POST", body: JSON.stringify(input) },
+    );
+  }
+
+  listMeetings(workspaceId: string): Promise<MeetingListResponse> {
+    return this.#request(
+      `/v1/workspaces/${encodeURIComponent(workspaceId)}/meetings`,
+      MeetingListResponseSchema,
+    );
+  }
+
+  getMeeting(meetingId: string): Promise<MeetingResponse> {
+    return this.#request(
+      `/v1/meetings/${encodeURIComponent(meetingId)}`,
+      MeetingResponseSchema,
+    );
+  }
+
+  completeMeetingBriefAction(
+    meetingId: string,
+    response: string,
+  ): Promise<MeetingResponse> {
+    return this.#request(
+      `/v1/meetings/${encodeURIComponent(meetingId)}/olivia-actions/meeting-brief/complete`,
+      MeetingResponseSchema,
+      { method: "POST", body: JSON.stringify({ response }) },
+    );
   }
 
   getWorkspaceAdminOverview(

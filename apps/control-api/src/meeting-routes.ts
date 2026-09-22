@@ -53,7 +53,16 @@ export function registerMeetingRoutes(
         throw workspaceAccessDeniedError(request.params.workspaceId);
       }
 
-      const prompt = buildMeetingBriefPrompt(request.body);
+      const prompt = buildMeetingBriefPrompt({
+        title: request.body.title,
+        objective: request.body.objective,
+        expectedOutcome: request.body.expectedOutcome,
+        decisionQuestion: request.body.decisionQuestion,
+        ...(request.body.relevantProjectContext === undefined
+          ? {}
+          : { relevantProjectContext: request.body.relevantProjectContext }),
+        knownOpenItems: request.body.knownOpenItems,
+      });
       const result = await options.repository.createMeeting(
         request.params.workspaceId,
         request.body,

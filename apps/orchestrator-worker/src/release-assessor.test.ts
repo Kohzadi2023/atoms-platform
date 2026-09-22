@@ -65,6 +65,7 @@ class FakeRepository implements ReleaseAssessmentRepository {
       output: emmaOutput(["Own workspace is accessible.", "Foreign workspace is inaccessible."]),
     },
     baselineCommands: baselineCommands(),
+    acceptanceRun: null,
   };
   loadInputsError: Error | null = null;
   persisted: { readonly scope: ReleaseAssessmentScope; readonly assessment: ReleaseAssessment; readonly evidence: readonly QualityEvidence[] }[] = [];
@@ -92,7 +93,7 @@ class FakeRepository implements ReleaseAssessmentRepository {
   }
 }
 
-test("no acceptance-test runner exists yet, so a fully passing baseline still stays BLOCKED on missing criterion evidence", async () => {
+test("with no acceptance run recorded, a fully passing baseline still stays BLOCKED on missing criterion evidence", async () => {
   const repository = new FakeRepository();
   const assessor = new DeterministicReleaseAssessor({ repository, now: () => NOW });
 
@@ -107,9 +108,90 @@ test("no acceptance-test runner exists yet, so a fully passing baseline still st
     JSON.stringify(assessment.issues),
   );
   // The four baseline checks are still real, submitted evidence -- only
-  // acceptance coverage is missing, because no acceptance-test runner exists.
+  // acceptance coverage is missing, because no acceptance step was recorded.
   assert.equal(evidence.filter((item) => item.kind !== "ACCEPTANCE").length, 4);
   assert.equal(evidence.some((item) => item.kind === "ACCEPTANCE"), false);
+});
+
+// G3 (docs/adr/production-execution-gate.md): the acceptance step exists and
+// its stdout is read, but only scenarios the operator has explicitly mapped
+// to a criterion id in criterionIdsByScenario ever become ACCEPTANCE evidence.
+test("G3: an acceptance run mapped to the run's only criterion clears MISSING_CRITERION_EVIDENCE", async () => {
+  const repository = new FakeRepository();
+  repository.inputs = {
+    ...repository.inputs,
+    acceptanceTask: {
+      taskId: EMMA_TASK_ID, attempt: 0,
+      output: emmaOutput(["Own workspace is accessible."]),
+    },
+    acceptanceRun: {
+      id: "00000000-0000-4000-8000-000000000200",
+      completedAt: "2026-09-14T00:00:20.000Z",
+      stdout: JSON.stringify({ ok: true, results: [{ scenario: "home-loads", status: "PASSED", durationMs: 120 }] }),
+    },
+  };
+  const assessor = new DeterministicReleaseAssessor({
+    repository, now: () => NOW,
+    criterionIdsByScenario: { "home-loads": ["US-001:1"] },
+  });
+
+  await assessor.assess({ run: RUN, attempt: 2 });
+
+  const { assessment, evidence } = repository.persisted[0]!;
+  // Still BLOCKED: the standard policy also requires REGRESSION/E2E/ACCESSIBILITY/
+  // PERFORMANCE/SECURITY checks, which nothing in this repository submits -- that
+  // gap is unrelated to G3. What G3 closes is specifically the criterion trace.
+  assert.ok(
+    assessment.issues.every((issue) => issue.code !== "MISSING_CRITERION_EVIDENCE"),
+    JSON.stringify(assessment.issues),
+  );
+  const trace = assessment.traceToAcceptance.find((item) => item.criterionId === "US-001:1");
+  assert.equal(trace?.status, "PASSED");
+  assert.equal(evidence.filter((item) => item.kind === "ACCEPTANCE").length, 1);
+});
+
+test("G3: a scenario the operator has not mapped to any criterion produces no evidence and stays BLOCKED", async () => {
+  const repository = new FakeRepository();
+  repository.inputs = {
+    ...repository.inputs,
+    acceptanceRun: {
+      id: "00000000-0000-4000-8000-000000000200",
+      completedAt: "2026-09-14T00:00:20.000Z",
+      stdout: JSON.stringify({ ok: true, results: [{ scenario: "home-loads", status: "PASSED", durationMs: 120 }] }),
+    },
+  };
+  // No criterionIdsByScenario supplied at all -- the default is an empty map.
+  const assessor = new DeterministicReleaseAssessor({ repository, now: () => NOW });
+
+  await assessor.assess({ run: RUN, attempt: 2 });
+
+  const { assessment, evidence } = repository.persisted[0]!;
+  assert.equal(assessment.status, "BLOCKED");
+  assert.equal(evidence.some((item) => item.kind === "ACCEPTANCE"), false);
+});
+
+test("G3: malformed acceptance stdout is treated as no evidence, not an evaluator failure", async () => {
+  const repository = new FakeRepository();
+  repository.inputs = {
+    ...repository.inputs,
+    acceptanceRun: {
+      id: "00000000-0000-4000-8000-000000000200",
+      completedAt: "2026-09-14T00:00:20.000Z",
+      stdout: "the sandbox exec crashed before it could report anything: contains sensitive detail",
+    },
+  };
+  const assessor = new DeterministicReleaseAssessor({
+    repository, now: () => NOW,
+    criterionIdsByScenario: { "home-loads": ["US-001:1"] },
+  });
+
+  await assessor.assess({ run: RUN, attempt: 2 });
+
+  assert.equal(repository.failures.length, 0);
+  const { assessment, evidence } = repository.persisted[0]!;
+  assert.equal(assessment.status, "BLOCKED");
+  assert.equal(evidence.some((item) => item.kind === "ACCEPTANCE"), false);
+  assert.ok(!JSON.stringify(repository.persisted).includes("sensitive detail"));
 });
 
 test("evidence bound to a superseded Emma attempt is rejected even though the current attempt's snapshot is used", async () => {

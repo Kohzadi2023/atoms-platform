@@ -1,6 +1,13 @@
 import { z } from "zod";
 
 import {
+  ACCEPTANCE_MANIFEST_PATH,
+  ACCEPTANCE_SCRIPT,
+  ACCEPTANCE_SCRIPT_PATH,
+  AcceptanceManifestSchema,
+  type AcceptanceManifest,
+} from "./acceptance-script.js";
+import {
   DEFAULT_PLAYWRIGHT_BROWSERS_PATH,
   DEFAULT_PLAYWRIGHT_ENTRY,
   PREVIEW_VIABILITY_SCRIPT,
@@ -71,7 +78,8 @@ export type ValidationStepName =
   | "test"
   | "build"
   | "preview-start"
-  | "preview-health";
+  | "preview-health"
+  | "acceptance";
 
 export interface ValidationStepReport {
   readonly ordinal: number;
@@ -92,6 +100,13 @@ export interface ProjectValidationInput {
   readonly files: ReadonlyArray<{ readonly path: string; readonly content: string }>;
   readonly metadata: Readonly<Record<string, string>>;
   readonly hooks?: ProjectValidationHooks;
+  /**
+   * G3 (docs/adr/production-execution-gate.md): when set and the runner was
+   * constructed with `acceptanceCheck`, an "acceptance" step runs after a
+   * passing preview-health and records per-scenario pass/fail evidence. Never
+   * gates run success -- see the step's own comment in `validate()`.
+   */
+  readonly acceptanceManifest?: AcceptanceManifest | null;
 }
 
 export interface ProjectValidationResult {
@@ -112,6 +127,17 @@ export interface ProjectValidationRunnerOptions {
    * it needs Playwright and Chromium in the sandbox template.
    */
   readonly browserViability?: {
+    readonly playwrightEntry?: string;
+    readonly browsersPath?: string;
+  };
+  /**
+   * When set, a passing preview-health is followed by the G3 acceptance step
+   * (see acceptance-script.ts). Off by default, and needs the same
+   * Playwright/Chromium template as `browserViability`. Whether the step
+   * actually runs also depends on a per-call `acceptanceManifest` being
+   * supplied to `validate()` -- both must be present.
+   */
+  readonly acceptanceCheck?: {
     readonly playwrightEntry?: string;
     readonly browsersPath?: string;
   };
@@ -166,6 +192,8 @@ export class ProjectValidationRunner {
   readonly #allowedHosts: readonly string[];
   readonly #browserPlaywrightEntry: string | undefined;
   readonly #browserBrowsersPath: string;
+  readonly #acceptancePlaywrightEntry: string | undefined;
+  readonly #acceptanceBrowsersPath: string;
   readonly #sandboxTimeoutMs: number;
   readonly #projectDirectory: string;
   readonly #previewPort: number;
@@ -184,6 +212,12 @@ export class ProjectValidationRunner {
         : (options.browserViability.playwrightEntry ?? DEFAULT_PLAYWRIGHT_ENTRY);
     this.#browserBrowsersPath =
       options.browserViability?.browsersPath ?? DEFAULT_PLAYWRIGHT_BROWSERS_PATH;
+    this.#acceptancePlaywrightEntry =
+      options.acceptanceCheck === undefined
+        ? undefined
+        : (options.acceptanceCheck.playwrightEntry ?? DEFAULT_PLAYWRIGHT_ENTRY);
+    this.#acceptanceBrowsersPath =
+      options.acceptanceCheck?.browsersPath ?? DEFAULT_PLAYWRIGHT_BROWSERS_PATH;
     this.#sandboxTimeoutMs = options.sandboxTimeoutMs ?? 900_000;
     this.#projectDirectory = options.projectDirectory ?? "/home/user/project";
     this.#previewPort = options.previewPort ?? 3_000;
@@ -195,6 +229,12 @@ export class ProjectValidationRunner {
       files: input.files,
       metadata: input.metadata,
     });
+    // Parsed eagerly, before any sandbox spend, since a bad manifest is an
+    // operator configuration error, not something to discover mid-run.
+    const acceptanceManifest =
+      input.acceptanceManifest === undefined || input.acceptanceManifest === null
+        ? null
+        : AcceptanceManifestSchema.parse(input.acceptanceManifest);
     const createdAt = this.#now();
     const expiresAt = new Date(
       createdAt.getTime() + this.#sandboxTimeoutMs,
@@ -287,6 +327,20 @@ export class ProjectValidationRunner {
       await input.hooks?.onStep?.(sandbox, healthStep);
       this.#assertSuccessful(healthStep);
 
+      if (this.#acceptancePlaywrightEntry !== undefined && acceptanceManifest !== null) {
+        // G3: evidence for the release assessment, never a reason to withhold
+        // the preview. A failing or crashing scenario is a normal outcome
+        // here, so this step is deliberately never passed to
+        // #assertSuccessful, and #runAcceptanceCheck itself never throws.
+        const acceptanceStep = await this.#runAcceptanceCheck(
+          sandbox,
+          steps.length + 1,
+          acceptanceManifest,
+        );
+        steps.push(acceptanceStep);
+        await input.hooks?.onStep?.(sandbox, acceptanceStep);
+      }
+
       const preview = await this.#provider.exposePort(
         sandbox.id,
         this.#previewPort,
@@ -331,6 +385,53 @@ export class ProjectValidationRunner {
       completedAt: this.#now().toISOString(),
       result,
     };
+  }
+
+  /**
+   * Unlike #executeStep, this never rejects: a sandbox exec error is reported
+   * as an ERROR-shaped step, not thrown, so it can never abort validation or
+   * withhold a preview over an optional, informational check.
+   */
+  async #runAcceptanceCheck(
+    sandbox: SandboxHandle,
+    ordinal: number,
+    manifest: AcceptanceManifest,
+  ): Promise<ValidationStepReport> {
+    const command = `node ${ACCEPTANCE_SCRIPT_PATH}`;
+    const startedAt = this.#now();
+    try {
+      await this.#provider.writeFiles(sandbox.id, [
+        { path: ACCEPTANCE_SCRIPT_PATH, content: ACCEPTANCE_SCRIPT },
+        { path: ACCEPTANCE_MANIFEST_PATH, content: JSON.stringify(manifest) },
+      ]);
+      const result = await this.#provider.exec(sandbox.id, {
+        command,
+        cwd: this.#projectDirectory,
+        timeoutMs: 120_000,
+        envs: {
+          ACCEPTANCE_PORT: String(this.#previewPort),
+          ACCEPTANCE_PLAYWRIGHT_ENTRY: this.#acceptancePlaywrightEntry ?? "",
+          ACCEPTANCE_MANIFEST_PATH,
+          PLAYWRIGHT_BROWSERS_PATH: this.#acceptanceBrowsersPath,
+        },
+      });
+      return {
+        ordinal, name: "acceptance", command,
+        startedAt: startedAt.toISOString(), completedAt: this.#now().toISOString(),
+        result,
+      };
+    } catch (error) {
+      const completedAt = this.#now();
+      return {
+        ordinal, name: "acceptance", command,
+        startedAt: startedAt.toISOString(), completedAt: completedAt.toISOString(),
+        result: {
+          exitCode: 1, stdout: "", stderr: "",
+          durationMs: Math.max(0, completedAt.getTime() - startedAt.getTime()),
+          error: error instanceof Error ? error.message : String(error),
+        },
+      };
+    }
   }
 
   #assertSuccessful(step: ValidationStepReport): void {

@@ -9,6 +9,7 @@ import {
   type PreviewTarget,
 } from "@atoms/preview";
 import type {
+  AcceptanceManifest,
   ProjectValidationInput,
   ProjectValidationResult,
   ValidationStepReport,
@@ -45,9 +46,16 @@ class MemoryValidationRepository implements Phase2ValidationRepository {
   stoppedCount = 0;
   preview: RecordPreviewReadyInput | undefined;
   previewIsActive = true;
+  projectType: "GENERAL" | "CLIENT_PORTAL" = "GENERAL";
+  getProjectTypeCalls = 0;
 
   async listProjectFiles(): Promise<readonly AgentProjectFile[]> {
     return this.files;
+  }
+
+  async getProjectType(): Promise<"GENERAL" | "CLIENT_PORTAL"> {
+    this.getProjectTypeCalls += 1;
+    return this.projectType;
   }
 
   async createSandboxSession(
@@ -100,8 +108,10 @@ class MemoryPreviewStore implements PreviewSessionStore {
 
 class SuccessfulRunner {
   terminated = false;
+  receivedAcceptanceManifest: AcceptanceManifest | null | undefined;
 
   async validate(input: ProjectValidationInput): Promise<ProjectValidationResult> {
+    this.receivedAcceptanceManifest = input.acceptanceManifest;
     const sandbox = {
       id: "sbx_phase_2",
       provider: "e2b" as const,
@@ -178,6 +188,46 @@ test("Phase 2 validator persists command evidence and exposes only the signed ga
   );
   assert.equal(runner.terminated, false);
   assert.deepEqual(repository.failures, []);
+  assert.equal(runner.receivedAcceptanceManifest, null);
+});
+
+const MANIFEST: AcceptanceManifest = {
+  schemaVersion: "atoms.acceptance-manifest.v1",
+  scenarios: [{ kind: "HEALTH_CHECK", name: "api-health", path: "/api/health" }],
+};
+
+test("G3: a configured project-type lookup passes its manifest to the runner", async () => {
+  const repository = new MemoryValidationRepository();
+  repository.projectType = "CLIENT_PORTAL";
+  const store = new MemoryPreviewStore();
+  const runner = new SuccessfulRunner();
+  const validator = new Phase2RunValidator({
+    repository,
+    runner,
+    previewStore: store,
+    previewSigner: signer(),
+    now: () => NOW,
+    acceptanceManifestForProjectType: (projectType) =>
+      projectType === "CLIENT_PORTAL" ? MANIFEST : null,
+  });
+
+  await validator.validate({ run: RUN, attempt: 1 });
+
+  assert.deepEqual(runner.receivedAcceptanceManifest, MANIFEST);
+});
+
+test("G3: omitting the lookup never requests a project type or a manifest", async () => {
+  const repository = new MemoryValidationRepository();
+  const store = new MemoryPreviewStore();
+  const runner = new SuccessfulRunner();
+  const validator = new Phase2RunValidator({
+    repository, runner, previewStore: store, previewSigner: signer(), now: () => NOW,
+  });
+
+  await validator.validate({ run: RUN, attempt: 1 });
+
+  assert.equal(repository.getProjectTypeCalls, 0);
+  assert.equal(runner.receivedAcceptanceManifest, null);
 });
 
 test("Phase 2 validator revokes the Redis target and terminates E2B if the run stops before publication", async () => {

@@ -5,7 +5,8 @@ import type { AgentProjectFile, EmmaOutput } from "@atoms/agents";
 import type { ValidationStepReport } from "@atoms/sandbox-provider";
 
 import {
-  createAcceptanceSnapshot, evidenceFromValidationStep, fingerprintProjectSnapshot, QualityInputError,
+  createAcceptanceSnapshot, evidenceFromAcceptanceRun, evidenceFromValidationStep, fingerprintProjectSnapshot,
+  QualityInputError,
 } from "./index.js";
 import { scope, uuid } from "./test-fixtures.js";
 
@@ -104,6 +105,62 @@ test("snapshot fingerprint is order-independent and binds path, version and exac
   assert.equal(fingerprintProjectSnapshot([...files].reverse()), hash);
   for (const change of [{ path: "src/other.ts" }, { version: 3 }, { content: "export const value = 2;" }]) {
     assert.notEqual(fingerprintProjectSnapshot([{ ...files[0], ...change }, files[1]]), hash);
+  }
+});
+
+const acceptanceInput = (stdout: string) => ({
+  scope, sourceArtifactId: uuid(20), acceptanceTaskId: uuid(4), acceptanceTaskAttempt: 0,
+  completedAt: "2026-09-14T00:00:20.000Z",
+  criterionIdsByScenario: { "home-loads": ["US-001:1", "US-001:2"] },
+  stdout,
+});
+
+test("G3: a scenario mapped to criterion ids becomes ACCEPTANCE evidence for exactly those ids", () => {
+  const evidence = evidenceFromAcceptanceRun(acceptanceInput(
+    JSON.stringify({ ok: true, results: [{ scenario: "home-loads", status: "PASSED", durationMs: 120 }] }),
+  ));
+  assert.equal(evidence.length, 1);
+  assert.equal(evidence[0]?.kind, "ACCEPTANCE");
+  assert.equal(evidence[0]?.status, "PASSED");
+  assert.equal(evidence[0]?.sourceArtifactId, uuid(20));
+  assert.equal(evidence[0]?.acceptanceTaskId, uuid(4));
+  assert.equal(evidence[0]?.completedAt, "2026-09-14T00:00:20.000Z");
+  assert.deepEqual(evidence[0]?.criterionIds, ["US-001:1", "US-001:2"]);
+});
+
+test("G3: a scenario absent from the map, or mapped to an empty list, produces no evidence", () => {
+  const stdout = JSON.stringify({
+    ok: false,
+    results: [
+      { scenario: "unmapped-scenario", status: "PASSED", durationMs: 50 },
+      { scenario: "home-loads", status: "FAILED", durationMs: 90 },
+    ],
+  });
+  const evidence = evidenceFromAcceptanceRun({
+    ...acceptanceInput(stdout),
+    criterionIdsByScenario: { "unmapped-scenario": [], "home-loads": ["US-001:1"] },
+  });
+  assert.equal(evidence.length, 1);
+  assert.equal(evidence[0]?.status, "FAILED");
+  assert.deepEqual(evidence[0]?.criterionIds, ["US-001:1"]);
+});
+
+test("G3: only the last stdout line is read, so preceding log noise is ignored", () => {
+  const stdout = [
+    "installing dependencies...",
+    "warning: something unrelated",
+    JSON.stringify({ ok: true, results: [{ scenario: "home-loads", status: "PASSED", durationMs: 10 }] }),
+  ].join("\n");
+  assert.equal(evidenceFromAcceptanceRun(acceptanceInput(stdout)).length, 1);
+});
+
+test("G3: missing, malformed or schema-invalid stdout yields no evidence and never throws", () => {
+  for (const stdout of [
+    "", "not json at all", JSON.stringify({ ok: true }),
+    JSON.stringify({ ok: true, results: [] }),
+    JSON.stringify({ ok: true, results: [{ scenario: "home-loads", status: "MAYBE", durationMs: 1 }] }),
+  ]) {
+    assert.deepEqual(evidenceFromAcceptanceRun(acceptanceInput(stdout)), []);
   }
 });
 

@@ -34,10 +34,20 @@ export interface BaselineCommandRecord {
   readonly exitCode: number;
 }
 
+/** The G3 acceptance step's own command row, read separately from
+ *  baselineCommands because it alone needs its stdout (the scenario results
+ *  JSON), which the baseline checks never carry into evidence. */
+export interface AcceptanceRunRecord {
+  readonly id: string;
+  readonly completedAt: string;
+  readonly stdout: string;
+}
+
 export interface ReleaseEvidenceInputs {
   readonly files: ReadonlyArray<{ readonly path: string; readonly version: number; readonly content: string }>;
   readonly acceptanceTask: AcceptanceTaskSnapshot | null;
   readonly baselineCommands: readonly BaselineCommandRecord[];
+  readonly acceptanceRun: AcceptanceRunRecord | null;
 }
 
 export interface ReleaseAssessmentScope {
@@ -110,9 +120,12 @@ export class PrismaReleaseAssessmentRepository implements ReleaseAssessmentRepos
           startedAt: true,
           completedAt: true,
           exitCode: true,
+          stdout: true,
         },
       }),
     ]);
+
+    const acceptanceRun = sandboxCommands.find((command) => command.name === "ACCEPTANCE") ?? null;
 
     return {
       files: files.map((file) => ({
@@ -130,13 +143,20 @@ export class PrismaReleaseAssessmentRepository implements ReleaseAssessmentRepos
               attempt: acceptanceTask.attempt,
               output: JsonValueSchema.parse(acceptanceTask.output),
             },
-      baselineCommands: sandboxCommands.map((command) => ({
-        id: command.id,
-        name: SANDBOX_COMMAND_NAME_TO_STEP[command.name] ?? "install",
-        startedAt: command.startedAt.toISOString(),
-        completedAt: command.completedAt.toISOString(),
-        exitCode: command.exitCode,
-      })),
+      baselineCommands: sandboxCommands
+        .filter((command) => command.name !== "ACCEPTANCE")
+        .map((command) => ({
+          id: command.id,
+          name: SANDBOX_COMMAND_NAME_TO_STEP[command.name] ?? "install",
+          startedAt: command.startedAt.toISOString(),
+          completedAt: command.completedAt.toISOString(),
+          exitCode: command.exitCode,
+        })),
+      acceptanceRun: acceptanceRun === null ? null : {
+        id: acceptanceRun.id,
+        completedAt: acceptanceRun.completedAt.toISOString(),
+        stdout: acceptanceRun.stdout,
+      },
     };
   }
 

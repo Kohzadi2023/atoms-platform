@@ -1,8 +1,9 @@
-import { createHash } from "node:crypto";
+import { createHash, randomUUID } from "node:crypto";
 import { z } from "zod";
 
 import {
   AcceptanceSnapshotSchema,
+  EvidenceStatusSchema,
   QualityEvidenceSchema,
   QualityInputError,
   parseQualityInput,
@@ -87,6 +88,75 @@ const FilesSchema = z.array(z.object({
   version: z.number().int().min(1).max(Number.MAX_SAFE_INTEGER),
   content: z.string().max(5_000_000),
 }).strict()).min(1).max(1_000);
+
+const AcceptanceScenarioResultSchema = z.object({
+  scenario: z.string().trim().min(1).max(120),
+  status: EvidenceStatusSchema,
+  durationMs: z.number().int().min(0).max(3_600_000),
+  note: z.string().max(2_000).optional(),
+}).strict();
+
+const AcceptanceRunOutputSchema = z.object({
+  ok: z.boolean(),
+  results: z.array(AcceptanceScenarioResultSchema).min(1).max(50),
+}).strict();
+
+/**
+ * Builds ACCEPTANCE evidence from the G3 Playwright acceptance runner's stdout
+ * (packages/sandbox-provider/src/acceptance-script.ts): the last stdout line
+ * is a JSON report of `{ scenario, status, durationMs }` per scenario, same
+ * convention as preview-viability-script.ts.
+ *
+ * The runner only knows how to execute a scenario, never which of Emma's
+ * free-text acceptance criteria it speaks to -- that mapping is supplied by
+ * the caller as `criterionIdsByScenario`, keyed by scenario name. A scenario
+ * absent from the map, or mapped to an empty list, produces no evidence: only
+ * a scenario an operator has explicitly tied to specific criterion ids can
+ * move `traceToAcceptance`, so this can never manufacture coverage for a
+ * criterion nobody actually checked. Malformed or missing stdout (no
+ * acceptance step ran, or it crashed before reporting) is not an evaluator
+ * error -- it yields no evidence, the same state as before this adapter
+ * existed, matching how the caller (release-assessor.ts) must never fail the
+ * whole assessment over an optional, off-by-default step.
+ */
+export function evidenceFromAcceptanceRun(input: {
+  readonly scope: QualityScope;
+  readonly sourceArtifactId: string;
+  readonly acceptanceTaskId: string;
+  readonly acceptanceTaskAttempt: number;
+  readonly completedAt: string;
+  readonly criterionIdsByScenario: Readonly<Record<string, readonly string[]>>;
+  readonly stdout: string;
+}): QualityEvidence[] {
+  const line = input.stdout.split("\n").map((value) => value.trim()).filter((value) => value.length > 0).at(-1);
+  if (line === undefined) return [];
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(line);
+  } catch {
+    return [];
+  }
+  const run = AcceptanceRunOutputSchema.safeParse(parsed);
+  if (!run.success) return [];
+
+  const evidence: QualityEvidence[] = [];
+  for (const result of run.data.results) {
+    const criterionIds = input.criterionIdsByScenario[result.scenario];
+    if (criterionIds === undefined || criterionIds.length === 0) continue;
+    evidence.push(parseQualityInput(QualityEvidenceSchema, {
+      id: randomUUID(),
+      sourceArtifactId: input.sourceArtifactId,
+      scope: input.scope,
+      kind: "ACCEPTANCE",
+      status: result.status,
+      completedAt: input.completedAt,
+      acceptanceTaskId: input.acceptanceTaskId,
+      acceptanceTaskAttempt: input.acceptanceTaskAttempt,
+      criterionIds: [...criterionIds],
+    }));
+  }
+  return evidence;
+}
 
 /** Hash the exact captured file snapshot, including versions, without reading a filesystem. */
 export function fingerprintProjectSnapshot(raw: unknown): string {

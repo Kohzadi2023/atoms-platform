@@ -2,12 +2,16 @@ import assert from "node:assert/strict";
 import test from "node:test";
 
 import {
+  ACCEPTANCE_MANIFEST_PATH,
+  ACCEPTANCE_SCRIPT,
+  ACCEPTANCE_SCRIPT_PATH,
   DEFAULT_PLAYWRIGHT_BROWSERS_PATH,
   DEFAULT_PLAYWRIGHT_ENTRY,
   PREVIEW_VIABILITY_SCRIPT,
   PREVIEW_VIABILITY_SCRIPT_PATH,
   ProjectValidationRunner,
   SandboxValidationError,
+  type AcceptanceManifest,
   type BackgroundProcess,
   type ExecCommand,
   type ExecResult,
@@ -314,4 +318,122 @@ test("browserViability defaults to the template's Playwright location", async ()
       ?.VIABILITY_PLAYWRIGHT_ENTRY,
     DEFAULT_PLAYWRIGHT_ENTRY,
   );
+});
+
+const acceptanceManifest: AcceptanceManifest = {
+  schemaVersion: "atoms.acceptance-manifest.v1",
+  scenarios: [{ kind: "HEALTH_CHECK", name: "api-health", path: "/api/health" }],
+};
+
+test("without acceptanceCheck configured, no manifest is ever run even if one is supplied", async () => {
+  const provider = new FakeSandboxProvider();
+  const steps: string[] = [];
+
+  await new ProjectValidationRunner({ provider }).validate({
+    files,
+    metadata: { runId: "run-1" },
+    acceptanceManifest,
+    hooks: { onStep: async (_sandbox, step) => { steps.push(step.name); } },
+  });
+
+  assert.equal(steps.includes("acceptance"), false);
+  assert.equal(provider.written.some((file) => file.path === ACCEPTANCE_SCRIPT_PATH), false);
+});
+
+test("with acceptanceCheck configured but no manifest supplied for this run, acceptance is skipped", async () => {
+  const provider = new FakeSandboxProvider();
+  const steps: string[] = [];
+
+  await new ProjectValidationRunner({ provider, acceptanceCheck: {} }).validate({
+    files,
+    metadata: { runId: "run-1" },
+    hooks: { onStep: async (_sandbox, step) => { steps.push(step.name); } },
+  });
+
+  assert.equal(steps.includes("acceptance"), false);
+});
+
+test("G3: both configured, acceptance runs after a passing preview-health, writes the manifest, and never blocks the run", async () => {
+  const provider = new FakeSandboxProvider();
+  const execs: ExecCommand[] = [];
+  const original = provider.exec.bind(provider);
+  provider.exec = async (id, command) => {
+    execs.push(command);
+    return original(id, command);
+  };
+  const steps: string[] = [];
+
+  const result = await new ProjectValidationRunner({
+    provider,
+    previewPort: 3100,
+    acceptanceCheck: { playwrightEntry: "/opt/pw/index.mjs" },
+  }).validate({
+    files,
+    metadata: { runId: "run-1" },
+    acceptanceManifest,
+    hooks: { onStep: async (_sandbox, step) => { steps.push(step.name); } },
+  });
+
+  assert.deepEqual(steps.slice(-2), ["preview-health", "acceptance"]);
+  const manifestFile = provider.written.find((file) => file.path === ACCEPTANCE_MANIFEST_PATH);
+  assert.equal(manifestFile?.content, JSON.stringify(acceptanceManifest));
+  const scriptFile = provider.written.find((file) => file.path === ACCEPTANCE_SCRIPT_PATH);
+  assert.equal(scriptFile?.content, ACCEPTANCE_SCRIPT);
+  const acceptanceExec = execs.find((command) => command.command === `node ${ACCEPTANCE_SCRIPT_PATH}`);
+  assert.deepEqual(acceptanceExec?.envs, {
+    ACCEPTANCE_PORT: "3100",
+    ACCEPTANCE_PLAYWRIGHT_ENTRY: "/opt/pw/index.mjs",
+    ACCEPTANCE_MANIFEST_PATH,
+    PLAYWRIGHT_BROWSERS_PATH: DEFAULT_PLAYWRIGHT_BROWSERS_PATH,
+  });
+  // The preview is still exposed: an acceptance outcome never withholds it.
+  assert.equal(result.previewProcessId, 73);
+});
+
+test("G3: a failing acceptance command never fails validation or terminates the sandbox early", async () => {
+  const provider = new FakeSandboxProvider();
+  provider.failCommand = `node ${ACCEPTANCE_SCRIPT_PATH}`;
+
+  const result = await new ProjectValidationRunner({
+    provider,
+    acceptanceCheck: {},
+  }).validate({ files, metadata: {}, acceptanceManifest });
+
+  assert.equal(provider.terminated, false);
+  assert.equal(result.steps.some((step) => step.name === "acceptance" && step.result.exitCode !== 0), true);
+});
+
+test("acceptanceCheck defaults to the template's Playwright location, same as browserViability", async () => {
+  const provider = new FakeSandboxProvider();
+  const execs: ExecCommand[] = [];
+  const original = provider.exec.bind(provider);
+  provider.exec = async (id, command) => {
+    execs.push(command);
+    return original(id, command);
+  };
+
+  await new ProjectValidationRunner({ provider, acceptanceCheck: {} }).validate({
+    files,
+    metadata: {},
+    acceptanceManifest,
+  });
+
+  assert.equal(
+    execs.find((command) => command.command === `node ${ACCEPTANCE_SCRIPT_PATH}`)?.envs
+      ?.ACCEPTANCE_PLAYWRIGHT_ENTRY,
+    DEFAULT_PLAYWRIGHT_ENTRY,
+  );
+});
+
+test("an invalid acceptance manifest is rejected before any sandbox is created", async () => {
+  const provider = new FakeSandboxProvider();
+
+  await assert.rejects(
+    new ProjectValidationRunner({ provider, acceptanceCheck: {} }).validate({
+      files,
+      metadata: {},
+      acceptanceManifest: { schemaVersion: "atoms.acceptance-manifest.v1", scenarios: [] } as unknown as AcceptanceManifest,
+    }),
+  );
+  assert.deepEqual(provider.calls, []);
 });

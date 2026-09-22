@@ -84,6 +84,7 @@ enum SandboxCommandName {
   BUILD
   PREVIEW_START
   PREVIEW_HEALTH
+  ACCEPTANCE
 }
 
 enum SandboxCommandStatus {

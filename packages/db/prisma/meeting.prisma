@@ -1,0 +1,54 @@
+enum MeetingPreparationState {
+  OLIVIA_ACTION_REQUIRED
+  READY_FOR_AGENT_PREPARATION
+}
+
+enum OliviaAssistedActionKind {
+  PREPARE_MEETING_BRIEF
+}
+
+enum OliviaAssistedActionStatus {
+  PENDING
+  PROMPT_COPIED
+  RESPONSE_RECEIVED
+  VALIDATED
+  COMPLETED
+}
+
+model Meeting {
+  id                     String                  @id @default(uuid()) @db.Uuid
+  workspaceId            String                  @map("workspace_id") @db.Uuid
+  projectId              String?                 @map("project_id") @db.Uuid
+  title                  String                  @db.VarChar(200)
+  objective              String                  @db.Text
+  expectedOutcome        String                  @map("expected_outcome") @db.Text
+  decisionQuestion       String                  @map("decision_question") @db.Text
+  relevantProjectContext String?                 @map("relevant_project_context") @db.Text
+  knownOpenItems         String[]                @default([]) @map("known_open_items")
+  meetingBrief           String?                 @map("meeting_brief") @db.Text
+  preparationState       MeetingPreparationState @default(OLIVIA_ACTION_REQUIRED) @map("preparation_state")
+  oliviaAction           OliviaAssistedAction?
+  createdAt              DateTime                @default(now()) @map("created_at") @db.Timestamptz(3)
+  updatedAt              DateTime                @updatedAt @map("updated_at") @db.Timestamptz(3)
+
+  @@index([workspaceId, createdAt])
+  @@index([projectId, createdAt])
+  @@map("meetings")
+}
+
+model OliviaAssistedAction {
+  id          String                     @id @default(uuid()) @db.Uuid
+  meetingId   String                     @unique @map("meeting_id") @db.Uuid
+  kind        OliviaAssistedActionKind
+  status      OliviaAssistedActionStatus @default(PENDING)
+  targetField String                     @default("meetingBrief") @map("target_field") @db.VarChar(80)
+  prompt      String                     @db.Text
+  response    String?                    @db.Text
+  completedAt DateTime?                  @map("completed_at") @db.Timestamptz(3)
+  meeting     Meeting                    @relation(fields: [meetingId], references: [id], onDelete: Cascade)
+  createdAt   DateTime                   @default(now()) @map("created_at") @db.Timestamptz(3)
+  updatedAt   DateTime                   @updatedAt @map("updated_at") @db.Timestamptz(3)
+
+  @@index([status, createdAt])
+  @@map("olivia_assisted_actions")
+}

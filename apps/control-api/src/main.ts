@@ -15,6 +15,8 @@ import { PrismaAttachmentRepository } from "./attachment-repository.js";
 import { BullMqDatabaseOperationQueue } from "./database-operation-queue.js";
 import { PrismaDatabaseControlRepository } from "./database-repository.js";
 import { PrismaGtmControlRepository } from "./gtm-repository.js";
+import { PrismaMeetingControlRepository } from "./meeting-repository.js";
+import { registerMeetingRoutes } from "./meeting-routes.js";
 import { PrismaReleaseControlRepository } from "./release-repository.js";
 import { PrismaControlRepository } from "./repository.js";
 import { BullMqRunQueue } from "./run-queue.js";
@@ -205,6 +207,9 @@ async function main(): Promise<void> {
       repository,
       loadCounts: (workspaceId) => getWorkspaceAdminOverviewCounts(prisma, workspaceId),
     },
+  });
+  registerMeetingRoutes(app, {
+    repository: new PrismaMeetingControlRepository(prisma),
   });
 
   const shutdown = async (): Promise<void> => {

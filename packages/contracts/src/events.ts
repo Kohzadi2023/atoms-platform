@@ -157,6 +157,15 @@ export const SandboxValidationProgressEventPayloadV1Schema = z
       "build",
       "preview-start",
       "preview-health",
+      // G3 (docs/adr/production-execution-gate.md), added with #129/#133: a
+      // task.progress event is appended for every ValidationStepReport the
+      // sandbox runner produces, so a step name missing here throws inside
+      // the same DB transaction that records it -- silently defeating the
+      // "never blocks the run" design of these four steps.
+      "db-start",
+      "db-migrate",
+      "db-seed",
+      "acceptance",
     ]),
     status: z.enum(["SUCCEEDED", "FAILED"]),
     exitCode: z.number().int(),

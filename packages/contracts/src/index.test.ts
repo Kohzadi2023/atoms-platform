@@ -297,6 +297,27 @@ test("Phase 2 SSE payloads are versioned and reject provider credentials", () =>
     }).step,
     "install",
   );
+  // G3 (docs/adr/production-execution-gate.md): every ValidationStepName the
+  // sandbox runner can report (packages/sandbox-provider/src/project-validation-runner.ts)
+  // must parse here, or recording it throws inside the same DB transaction
+  // that persists the step -- silently defeating those steps' non-blocking design.
+  for (const step of ["db-start", "db-migrate", "db-seed", "acceptance"] as const) {
+    assert.equal(
+      SandboxValidationProgressEventPayloadV1Schema.parse({
+        version: "v1",
+        phase: "sandbox-validation",
+        sandboxSessionId,
+        ordinal: 1,
+        step,
+        status: "SUCCEEDED",
+        exitCode: 0,
+        durationMs: 25,
+        stdout: "",
+        stderr: "",
+      }).step,
+      step,
+    );
+  }
   assert.throws(() =>
     PreviewUpdatedEventPayloadV1Schema.parse({
       version: "v1",

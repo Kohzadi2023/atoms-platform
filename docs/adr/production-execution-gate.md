@@ -28,7 +28,7 @@ A controlled launch for design partners requires G0, G1, G4, G5, G7 and tenant i
 |---|---|---|---|
 | G0 | Global kill switch | P0 | Pass |
 | G1 | Complete the cost boundary | P0 | Pass (#103): per-workspace daily cap, actual-cost record, distinct failure reasons |
-| G2 | Durable approval | P1 | Pass. Expiry (cancel only) implemented, off by default; reminder and data purge open (#100) |
+| G2 | Durable approval | P1 | Pass. Expiry, reminder and data purge all implemented, off by default (#100); retention period set at 30 days |
 | G3 | Evidence-based acceptance | P1 (blocks release-ready claims only) | Open |
 | G4 | Attachment trust boundary | P0 | Pass (#96, #110): contract, fail-closed routing, approval no longer model-controlled, tests, requirements review at plan approval |
 | G5 | Network egress | P0 (verification only) | Offline checks pass (#97); live probe pending, needs E2B credential (#14) |
@@ -61,7 +61,7 @@ Requirements: the default stays `false` for new environments. Production flips a
 
 **Not required now.** A loop governor. No auto-repair loop exists (a failed validation fails the run), so a token spiral is a future architectural risk rather than a current one.
 
-### G2 - Durable approval (pass, P1 follow-up partly done)
+### G2 - Durable approval (pass, P1 follow-up done)
 
 Approval gates pause the run and end the worker job (`RunStoppedError` with status `PAUSED`); after approval the run resumes from its checkpoint. The sandbox is created only in the validation step after all agents complete, so no expensive resource is held while waiting. No new sleep/hydration subsystem is needed.
 
@@ -69,10 +69,16 @@ Approval gates pause the run and end the worker job (`RunStoppedError` with stat
 
 **Implemented, minimal (#100).** With `PAUSED_RUN_TTL_HOURS` above 0, the worker cancels runs that have been `PAUSED` longer than that many hours, sweeping every 15 minutes. It is compare-and-set on status and control version, so several worker replicas, or a person approving at the same moment, cannot both win, and a stale action is rejected because the control version moves. The run ends `CANCELLED` with `error.code = "APPROVAL_EXPIRED"`, which is how an expiry is told apart from a user cancel. Default 0 leaves it off, so nothing changes until an operator picks a number.
 
-- **It is expiry, not retention.** It changes the run's status only. The run's prompt, attachments, outputs and LangGraph checkpoint stay in place. A retention promise to a partner ("deleted within N days") needs the purge below, which is not built.
-- **No new schema.** The deadline is `pausedAt` plus the TTL, computed at sweep time, so changing the TTL applies to runs already paused. `approvalExpiresAt`, `expiredAt` and `purgedAt` are not added; there is no `EXPIRED` status, so no contract or UI change.
+- **It is expiry, not retention.** It changes the run's status only. The run's prompt, attachments, outputs and LangGraph checkpoint stay in place until the purge below runs.
+- **No new schema for expiry itself.** The deadline is `pausedAt` plus the TTL, computed at sweep time, so changing the TTL applies to runs already paused. There is still no `EXPIRED` status: an expired run stays `CANCELLED` with `error.code = "APPROVAL_EXPIRED"`.
 - **A user-paused run expires too.** The status is the same `PAUSED`, and nothing here tells a run waiting for approval from one a person paused on purpose.
-- **Still open:** the reminder (`reminderSentAt`, needs a way to reach the customer), and purging data of expired runs, which is the retention decision in `docs/design-partner-runbook.md`.
+
+**Implemented: reminder and purge (issue #100, retention period set by the owner at 30 days on 2026-09-23).**
+
+- **Reminder.** `PAUSED_RUN_REMINDER_HOURS` (default 0, off) records a `run.approval_reminder_due` event once, before expiry (validated to be less than `PAUSED_RUN_TTL_HOURS` when both are set). This is the full extent of "reminder": no email, webhook or any delivery channel exists anywhere in this platform, so nothing is sent. A future notifier can watch the event.
+- **Purge.** `PAUSED_RUN_DATA_PURGE_AFTER_DAYS` (default 0, off) redacts an already-expired run's `prompt` and `checkpoint`, and its tasks' `input`/`output`, and drops its `AgentRunAttachment` links, that many days after `cancelledAt` -- only for runs this platform itself cancelled on expiry (`error.code = APPROVAL_EXPIRED`), never a run a person cancelled themselves. The row is never deleted, only redacted in place; `purgedAt` marks it done. A `run.data_purged` event is appended; the rest of the run's event log is left intact as an audit trail -- redaction does not extend to `RunEvent` rows.
+- **Two new nullable columns**, `reminderSentAt` and `purgedAt` on `AgentRun` (still no `approvalExpiresAt` or `EXPIRED` status -- the deadline stays computed at sweep time, as above).
+- **Independent sweepers, same safety properties.** `ApprovalReminderSweeper` and `RunDataPurgeSweeper` mirror `ApprovalExpirySweeper`'s compare-and-set batching, on their own schedules; either can be off while the other runs.
 
 ### G3 - Evidence-based acceptance (P1)
 

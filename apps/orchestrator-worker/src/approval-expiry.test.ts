@@ -5,6 +5,10 @@ import test from "node:test";
 
 import {
   ApprovalExpirySweeper,
+  ApprovalReminderSweeper,
+  RunDataPurgeSweeper,
+  type ExpiredRunDataRepository,
+  type PendingReminderRunRepository,
   type StalePausedRunRepository,
 } from "./approval-expiry.js";
 
@@ -135,4 +139,144 @@ test("the worker enables expiry only when a TTL is configured and stops it on sh
   assert.match(source, /if \(environment\.PAUSED_RUN_TTL_HOURS > 0\)/u);
   assert.match(source, /new PrismaStalePausedRunRepository\(prisma\)/u);
   assert.match(source, /approvalExpirySweeper\?\.stop\(\)/u);
+});
+
+// --- G2 remainder: reminder (issue #100) ---
+
+class FakeReminderRepository implements PendingReminderRunRepository {
+  readonly calls: Array<{ pausedBefore: Date; now: Date; limit: number }> = [];
+  constructor(private readonly batches: ReadonlyArray<readonly string[] | Error>) {}
+
+  async sendReminders(input: {
+    readonly pausedBefore: Date;
+    readonly now: Date;
+    readonly limit: number;
+  }): Promise<readonly string[]> {
+    const next = this.batches[this.calls.length] ?? [];
+    this.calls.push(input);
+    if (next instanceof Error) throw next;
+    return next;
+  }
+}
+
+test("G2: a reminder sweep records reminders for runs paused before now minus afterMs", async () => {
+  const repository = new FakeReminderRepository([["run-1", "run-2"]]);
+  const sweeper = new ApprovalReminderSweeper({
+    repository,
+    afterMs: 24 * HOUR,
+    now: () => NOW,
+  });
+
+  const count = await sweeper.sweepOnce();
+
+  assert.equal(count, 2);
+  assert.equal(repository.calls[0]?.pausedBefore.toISOString(), "2026-09-18T12:00:00.000Z");
+});
+
+test("G2: a reminder backlog is worked off in batches, and a repository failure is reported without throwing", async () => {
+  const repository = new FakeReminderRepository([["a", "b"], ["c"]]);
+  const reminded: string[] = [];
+  const sweeper = new ApprovalReminderSweeper({
+    repository, afterMs: HOUR, batchSize: 2, now: () => NOW,
+    onReminded: (ids) => reminded.push(...ids),
+  });
+  assert.equal(await sweeper.sweepOnce(), 3);
+  assert.deepEqual(reminded, ["a", "b", "c"]);
+
+  const errors: unknown[] = [];
+  const failing = new ApprovalReminderSweeper({
+    repository: new FakeReminderRepository([new Error("db down")]),
+    afterMs: HOUR, now: () => NOW,
+    onError: (error) => errors.push(error),
+  });
+  assert.equal(await failing.sweepOnce(), 0);
+  assert.equal(errors.length, 1);
+});
+
+test("G2: a non-positive or fractional afterMs is refused for the reminder sweeper", () => {
+  for (const afterMs of [0, -1, 1.5, Number.NaN]) {
+    assert.throws(
+      () => new ApprovalReminderSweeper({ repository: new FakeReminderRepository([]), afterMs }),
+      RangeError,
+    );
+  }
+});
+
+test("G2: reminder is wired independently of expiry, and both stop on shutdown", async () => {
+  const source = await readFile(resolve(process.cwd(), "src/main.ts"), "utf8");
+
+  assert.match(source, /PAUSED_RUN_REMINDER_HOURS: z\.coerce[\s\S]*?\.default\(0\)/u);
+  assert.match(source, /if \(environment\.PAUSED_RUN_REMINDER_HOURS > 0\)/u);
+  assert.match(source, /new PrismaPendingReminderRunRepository\(prisma\)/u);
+  assert.match(source, /approvalReminderSweeper\?\.stop\(\)/u);
+});
+
+// --- G2 remainder: data purge (design-partner-runbook.md) ---
+
+class FakePurgeRepository implements ExpiredRunDataRepository {
+  readonly calls: Array<{ cancelledBefore: Date; now: Date; limit: number }> = [];
+  constructor(private readonly batches: ReadonlyArray<readonly string[] | Error>) {}
+
+  async purgeExpiredRunData(input: {
+    readonly cancelledBefore: Date;
+    readonly now: Date;
+    readonly limit: number;
+  }): Promise<readonly string[]> {
+    const next = this.batches[this.calls.length] ?? [];
+    this.calls.push(input);
+    if (next instanceof Error) throw next;
+    return next;
+  }
+}
+
+test("G2: a purge sweep redacts runs expired before now minus afterMs", async () => {
+  const repository = new FakePurgeRepository([["run-3"]]);
+  const sweeper = new RunDataPurgeSweeper({
+    repository,
+    afterMs: 30 * 24 * HOUR,
+    now: () => NOW,
+  });
+
+  const count = await sweeper.sweepOnce();
+
+  assert.equal(count, 1);
+  assert.equal(repository.calls[0]?.cancelledBefore.toISOString(), "2026-08-20T12:00:00.000Z");
+});
+
+test("G2: a purge backlog is worked off in batches, and a repository failure is reported without throwing", async () => {
+  const repository = new FakePurgeRepository([["a", "b"], ["c"]]);
+  const purged: string[] = [];
+  const sweeper = new RunDataPurgeSweeper({
+    repository, afterMs: HOUR, batchSize: 2, now: () => NOW,
+    onPurged: (ids) => purged.push(...ids),
+  });
+  assert.equal(await sweeper.sweepOnce(), 3);
+  assert.deepEqual(purged, ["a", "b", "c"]);
+
+  const errors: unknown[] = [];
+  const failing = new RunDataPurgeSweeper({
+    repository: new FakePurgeRepository([new Error("db down")]),
+    afterMs: HOUR, now: () => NOW,
+    onError: (error) => errors.push(error),
+  });
+  assert.equal(await failing.sweepOnce(), 0);
+  assert.equal(errors.length, 1);
+});
+
+test("G2: a non-positive or fractional afterMs is refused for the purge sweeper", () => {
+  for (const afterMs of [0, -1, 1.5, Number.NaN]) {
+    assert.throws(
+      () => new RunDataPurgeSweeper({ repository: new FakePurgeRepository([]), afterMs }),
+      RangeError,
+    );
+  }
+});
+
+test("G2: purge is wired independently of expiry and reminder, and stops on shutdown", async () => {
+  const source = await readFile(resolve(process.cwd(), "src/main.ts"), "utf8");
+
+  assert.match(source, /PAUSED_RUN_DATA_PURGE_AFTER_DAYS: z\.coerce[\s\S]*?\.default\(0\)/u);
+  assert.match(source, /if \(environment\.PAUSED_RUN_DATA_PURGE_AFTER_DAYS > 0\)/u);
+  assert.match(source, /new PrismaExpiredRunDataRepository\(prisma\)/u);
+  assert.match(source, /runDataPurgeSweeper\?\.stop\(\)/u);
 });

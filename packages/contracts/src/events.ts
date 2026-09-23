@@ -27,6 +27,11 @@ export const RunEventTypeSchema = z.enum([
   "release.assessment_started",
   "release.ready",
   "release.blocked",
+  // G2 (docs/adr/production-execution-gate.md), issue #100. Neither ever
+  // blocks or retries the run; both are additive lifecycle markers on a
+  // PAUSED or already-CANCELLED run.
+  "run.approval_reminder_due",
+  "run.data_purged",
   // Compatibility aliases retained for the already-shipped Checkpoint 2 API.
   "task_started",
   "code_generated",
@@ -250,6 +255,36 @@ export type ReleaseBlockedEventPayloadV1 = z.infer<
   typeof ReleaseBlockedEventPayloadV1Schema
 >;
 
+// G2: no delivery channel exists yet (no email/webhook integration anywhere
+// in this platform) -- this event is the full extent of "reminder" today. A
+// future notifier can watch for it; nothing here sends anything.
+export const ApprovalReminderDueEventPayloadV1Schema = z
+  .object({
+    version: z.literal("v1"),
+    pausedAt: z.string().datetime({ offset: true }),
+    approvalExpiresAt: z.string().datetime({ offset: true }).optional(),
+  })
+  .strict();
+
+export type ApprovalReminderDueEventPayloadV1 = z.infer<
+  typeof ApprovalReminderDueEventPayloadV1Schema
+>;
+
+// G2 / design-partner-runbook.md retention clause. Redacts the run's prompt,
+// checkpoint and task input/output, and drops its attachment links; the
+// run's own event log (this one included) is left intact as an audit trail.
+export const RunDataPurgedEventPayloadV1Schema = z
+  .object({
+    version: z.literal("v1"),
+    reason: z.literal("APPROVAL_EXPIRED"),
+    cancelledAt: z.string().datetime({ offset: true }),
+  })
+  .strict();
+
+export type RunDataPurgedEventPayloadV1 = z.infer<
+  typeof RunDataPurgedEventPayloadV1Schema
+>;
+
 export function validateRunEventPayload(
   eventType: RunEventType,
   payload: unknown,
@@ -283,6 +318,12 @@ export function validateRunEventPayload(
   }
   if (eventType === "release.blocked") {
     return ReleaseBlockedEventPayloadV1Schema.parse(payload);
+  }
+  if (eventType === "run.approval_reminder_due") {
+    return ApprovalReminderDueEventPayloadV1Schema.parse(payload);
+  }
+  if (eventType === "run.data_purged") {
+    return RunDataPurgedEventPayloadV1Schema.parse(payload);
   }
   return JsonValueSchema.parse(payload);
 }

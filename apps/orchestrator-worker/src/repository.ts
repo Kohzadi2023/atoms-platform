@@ -912,7 +912,10 @@ function toSandboxCommandName(
   | "BUILD"
   | "PREVIEW_START"
   | "PREVIEW_HEALTH"
-  | "ACCEPTANCE" {
+  | "ACCEPTANCE"
+  | "DB_START"
+  | "DB_MIGRATE"
+  | "DB_SEED" {
   return name.replaceAll("-", "_").toUpperCase() as
     | "INSTALL"
     | "PRISMA_VALIDATE"
@@ -922,5 +925,8 @@ function toSandboxCommandName(
     | "BUILD"
     | "PREVIEW_START"
     | "PREVIEW_HEALTH"
-    | "ACCEPTANCE";
+    | "ACCEPTANCE"
+    | "DB_START"
+    | "DB_MIGRATE"
+    | "DB_SEED";
 }

@@ -310,6 +310,10 @@ async function main(): Promise<void> {
             environment.ACCEPTANCE_CHECK_PLAYWRIGHT_ENTRY === undefined
               ? {}
               : { playwrightEntry: environment.ACCEPTANCE_CHECK_PLAYWRIGHT_ENTRY },
+          // The local database (packages/sandbox-provider/src/local-database-template.ts)
+          // exists only to give acceptance scenarios something real to sign in and read
+          // against, so it is gated on the same flag rather than a separate one.
+          provisionLocalDatabase: true,
         }
       : {}),
     sandboxTimeoutMs: environment.SANDBOX_IDLE_TIMEOUT_MS,

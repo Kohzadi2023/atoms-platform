@@ -7,6 +7,11 @@ import {
   ACCEPTANCE_SCRIPT_PATH,
   DEFAULT_PLAYWRIGHT_BROWSERS_PATH,
   DEFAULT_PLAYWRIGHT_ENTRY,
+  LOCAL_DATABASE_BIN_DIRECTORY,
+  LOCAL_DATABASE_DATA_DIRECTORY,
+  LOCAL_DATABASE_LOG_PATH,
+  LOCAL_DATABASE_PORT,
+  LOCAL_DATABASE_URL,
   PREVIEW_VIABILITY_SCRIPT,
   PREVIEW_VIABILITY_SCRIPT_PATH,
   ProjectValidationRunner,
@@ -22,6 +27,12 @@ import {
   type SandboxSpec,
   type ValidationStepName,
 } from "./index.js";
+
+const dbStartCommand =
+  `${LOCAL_DATABASE_BIN_DIRECTORY}/pg_ctl -D ${LOCAL_DATABASE_DATA_DIRECTORY} ` +
+  `-o '-p ${String(LOCAL_DATABASE_PORT)} -k /tmp' -l ${LOCAL_DATABASE_LOG_PATH} -w start`;
+const dbMigrateCommand = "pnpm exec prisma migrate deploy";
+const dbSeedCommand = "pnpm run seed";
 
 const handle: SandboxHandle = {
   id: "sbx_validation",
@@ -423,6 +434,107 @@ test("acceptanceCheck defaults to the template's Playwright location, same as br
       ?.ACCEPTANCE_PLAYWRIGHT_ENTRY,
     DEFAULT_PLAYWRIGHT_ENTRY,
   );
+});
+
+test("without provisionLocalDatabase, no db steps run and preview-start gets no DATABASE_URL", async () => {
+  const provider = new FakeSandboxProvider();
+  const starts: ExecCommand[] = [];
+  const originalStart = provider.startProcess.bind(provider);
+  provider.startProcess = async (id, command) => {
+    starts.push(command);
+    return originalStart(id, command);
+  };
+  const steps: string[] = [];
+
+  await new ProjectValidationRunner({ provider }).validate({
+    files, metadata: {}, hooks: { onStep: async (_sandbox, step) => { steps.push(step.name); } },
+  });
+
+  assert.equal(steps.some((name) => name.startsWith("db-")), false);
+  assert.equal(starts.length, 1);
+  assert.equal(starts[0]?.envs, undefined);
+});
+
+test("G3: provisionLocalDatabase runs db-start, db-migrate and db-seed in order and hands DATABASE_URL to preview-start", async () => {
+  const provider = new FakeSandboxProvider();
+  const execs: ExecCommand[] = [];
+  const original = provider.exec.bind(provider);
+  provider.exec = async (id, command) => {
+    execs.push(command);
+    return original(id, command);
+  };
+  const originalStart = provider.startProcess.bind(provider);
+  provider.startProcess = async (id, command) => {
+    execs.push(command);
+    return originalStart(id, command);
+  };
+  const steps: string[] = [];
+
+  await new ProjectValidationRunner({ provider, provisionLocalDatabase: true }).validate({
+    files, metadata: {}, hooks: { onStep: async (_sandbox, step) => { steps.push(step.name); } },
+  });
+
+  const dbStepIndex = steps.indexOf("db-start");
+  assert.ok(dbStepIndex >= 0);
+  assert.deepEqual(steps.slice(dbStepIndex, dbStepIndex + 4), ["db-start", "db-migrate", "db-seed", "preview-start"]);
+  assert.ok(execs.some((command) => command.command === dbStartCommand));
+  const migrate = execs.find((command) => command.command === dbMigrateCommand);
+  assert.deepEqual(migrate?.envs, { DATABASE_URL: LOCAL_DATABASE_URL });
+  const seed = execs.find((command) => command.command === dbSeedCommand);
+  assert.deepEqual(seed?.envs, { DATABASE_URL: LOCAL_DATABASE_URL });
+  const previewStart = execs.find((command) => command.command.startsWith("pnpm start"));
+  assert.deepEqual(previewStart?.envs, { DATABASE_URL: LOCAL_DATABASE_URL });
+});
+
+test("G3: a failing db-start skips migrate and seed, never throws, and preview-start gets no DATABASE_URL", async () => {
+  const provider = new FakeSandboxProvider();
+  provider.failCommand = dbStartCommand;
+  const steps: string[] = [];
+  const execs: ExecCommand[] = [];
+  const original = provider.exec.bind(provider);
+  provider.exec = async (id, command) => {
+    execs.push(command);
+    return original(id, command);
+  };
+  const starts: ExecCommand[] = [];
+  const originalStart = provider.startProcess.bind(provider);
+  provider.startProcess = async (id, command) => {
+    starts.push(command);
+    return originalStart(id, command);
+  };
+
+  const result = await new ProjectValidationRunner({ provider, provisionLocalDatabase: true }).validate({
+    files, metadata: {}, hooks: { onStep: async (_sandbox, step) => { steps.push(step.name); } },
+  });
+
+  assert.deepEqual(steps.filter((name) => name.startsWith("db-")), ["db-start"]);
+  assert.equal(execs.some((command) => command.command === dbMigrateCommand), false);
+  assert.equal(starts.length, 1);
+  assert.equal(starts[0]?.envs, undefined);
+  assert.equal(result.previewProcessId, 73);
+});
+
+test("G3: a failing db-seed still leaves the database usable for preview-start (migrate had already succeeded)", async () => {
+  const provider = new FakeSandboxProvider();
+  provider.failCommand = dbSeedCommand;
+  const execs: ExecCommand[] = [];
+  const original = provider.exec.bind(provider);
+  provider.exec = async (id, command) => {
+    execs.push(command);
+    return original(id, command);
+  };
+  const originalStart = provider.startProcess.bind(provider);
+  provider.startProcess = async (id, command) => {
+    execs.push(command);
+    return originalStart(id, command);
+  };
+
+  await new ProjectValidationRunner({ provider, provisionLocalDatabase: true }).validate({
+    files, metadata: {},
+  });
+
+  const previewStart = execs.find((command) => command.command.startsWith("pnpm start"));
+  assert.deepEqual(previewStart?.envs, { DATABASE_URL: LOCAL_DATABASE_URL });
 });
 
 test("an invalid acceptance manifest is rejected before any sandbox is created", async () => {

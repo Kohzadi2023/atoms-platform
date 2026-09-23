@@ -85,6 +85,11 @@ const SANDBOX_COMMAND_NAME_TO_STEP: Record<string, BaselineCommandRecord["name"]
   PREVIEW_HEALTH: "preview-health",
 };
 
+/** Steps read separately (ACCEPTANCE) or not at all (the db-* steps, which
+ *  never become quality evidence) -- kept out of baselineCommands so none of
+ *  them is ever silently mislabeled through the fallback below. */
+const NON_BASELINE_SANDBOX_COMMAND_NAMES = new Set(["ACCEPTANCE", "DB_START", "DB_MIGRATE", "DB_SEED"]);
+
 export class PrismaReleaseAssessmentRepository implements ReleaseAssessmentRepository {
   readonly #prisma: PrismaClient;
 
@@ -144,7 +149,7 @@ export class PrismaReleaseAssessmentRepository implements ReleaseAssessmentRepos
               output: JsonValueSchema.parse(acceptanceTask.output),
             },
       baselineCommands: sandboxCommands
-        .filter((command) => command.name !== "ACCEPTANCE")
+        .filter((command) => !NON_BASELINE_SANDBOX_COMMAND_NAMES.has(command.name))
         .map((command) => ({
           id: command.id,
           name: SANDBOX_COMMAND_NAME_TO_STEP[command.name] ?? "install",

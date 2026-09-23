@@ -8,6 +8,13 @@ import {
   type AcceptanceManifest,
 } from "./acceptance-script.js";
 import {
+  LOCAL_DATABASE_BIN_DIRECTORY,
+  LOCAL_DATABASE_DATA_DIRECTORY,
+  LOCAL_DATABASE_LOG_PATH,
+  LOCAL_DATABASE_PORT,
+  LOCAL_DATABASE_URL,
+} from "./local-database-template.js";
+import {
   DEFAULT_PLAYWRIGHT_BROWSERS_PATH,
   DEFAULT_PLAYWRIGHT_ENTRY,
   PREVIEW_VIABILITY_SCRIPT,
@@ -79,6 +86,9 @@ export type ValidationStepName =
   | "build"
   | "preview-start"
   | "preview-health"
+  | "db-start"
+  | "db-migrate"
+  | "db-seed"
   | "acceptance";
 
 export interface ValidationStepReport {
@@ -141,6 +151,19 @@ export interface ProjectValidationRunnerOptions {
     readonly playwrightEntry?: string;
     readonly browsersPath?: string;
   };
+  /**
+   * When true and a build's template carries the local database (see
+   * local-database-template.ts), a passing build is followed by db-start,
+   * db-migrate (`prisma migrate deploy`) and db-seed (`pnpm run seed`, only if
+   * the generated package.json defines one) before preview-start, so the
+   * delivered preview -- and the G3 acceptance scenarios that need real
+   * sign-in -- have a live, ephemeral database to run against. None of these
+   * three steps ever blocks the run: a missing or failing seed script simply
+   * means those steps report failure and whatever preview-health or
+   * acceptance scenarios depend on data will fail as evidence, same as any
+   * other unmet precondition.
+   */
+  readonly provisionLocalDatabase?: boolean;
   readonly sandboxTimeoutMs?: number;
   readonly projectDirectory?: string;
   readonly previewPort?: number;
@@ -194,6 +217,7 @@ export class ProjectValidationRunner {
   readonly #browserBrowsersPath: string;
   readonly #acceptancePlaywrightEntry: string | undefined;
   readonly #acceptanceBrowsersPath: string;
+  readonly #provisionLocalDatabase: boolean;
   readonly #sandboxTimeoutMs: number;
   readonly #projectDirectory: string;
   readonly #previewPort: number;
@@ -218,6 +242,7 @@ export class ProjectValidationRunner {
         : (options.acceptanceCheck.playwrightEntry ?? DEFAULT_PLAYWRIGHT_ENTRY);
     this.#acceptanceBrowsersPath =
       options.acceptanceCheck?.browsersPath ?? DEFAULT_PLAYWRIGHT_BROWSERS_PATH;
+    this.#provisionLocalDatabase = options.provisionLocalDatabase ?? false;
     this.#sandboxTimeoutMs = options.sandboxTimeoutMs ?? 900_000;
     this.#projectDirectory = options.projectDirectory ?? "/home/user/project";
     this.#previewPort = options.previewPort ?? 3_000;
@@ -275,11 +300,17 @@ export class ProjectValidationRunner {
         this.#assertSuccessful(step);
       }
 
+      let databaseReady = false;
+      if (this.#provisionLocalDatabase) {
+        databaseReady = await this.#provisionDatabase(sandbox, steps, input);
+      }
+
       const previewStartedAt = this.#now();
       const process = await this.#provider.startProcess(sandbox.id, {
         command: previewStartCommand.replace("3000", String(this.#previewPort)),
         cwd: this.#projectDirectory,
         timeoutMs: this.#sandboxTimeoutMs,
+        ...(databaseReady ? { envs: { DATABASE_URL: LOCAL_DATABASE_URL } } : {}),
       });
       const previewStartStep: ValidationStepReport = {
         ordinal: steps.length + 1,
@@ -388,23 +419,50 @@ export class ProjectValidationRunner {
   }
 
   /**
-   * Unlike #executeStep, this never rejects: a sandbox exec error is reported
-   * as an ERROR-shaped step, not thrown, so it can never abort validation or
-   * withhold a preview over an optional, informational check.
+   * Unlike #executeStep, this never rejects: any error `run` throws is caught
+   * and reported as an ERROR-shaped step, so it can never abort validation or
+   * withhold a preview over an optional, informational step.
    */
+  async #tryStep(
+    ordinal: number,
+    name: ValidationStepName,
+    command: string,
+    run: () => Promise<ExecResult>,
+  ): Promise<ValidationStepReport> {
+    const startedAt = this.#now();
+    try {
+      const result = await run();
+      return {
+        ordinal, name, command,
+        startedAt: startedAt.toISOString(), completedAt: this.#now().toISOString(),
+        result,
+      };
+    } catch (error) {
+      const completedAt = this.#now();
+      return {
+        ordinal, name, command,
+        startedAt: startedAt.toISOString(), completedAt: completedAt.toISOString(),
+        result: {
+          exitCode: 1, stdout: "", stderr: "",
+          durationMs: Math.max(0, completedAt.getTime() - startedAt.getTime()),
+          error: error instanceof Error ? error.message : String(error),
+        },
+      };
+    }
+  }
+
   async #runAcceptanceCheck(
     sandbox: SandboxHandle,
     ordinal: number,
     manifest: AcceptanceManifest,
   ): Promise<ValidationStepReport> {
     const command = `node ${ACCEPTANCE_SCRIPT_PATH}`;
-    const startedAt = this.#now();
-    try {
+    return this.#tryStep(ordinal, "acceptance", command, async () => {
       await this.#provider.writeFiles(sandbox.id, [
         { path: ACCEPTANCE_SCRIPT_PATH, content: ACCEPTANCE_SCRIPT },
         { path: ACCEPTANCE_MANIFEST_PATH, content: JSON.stringify(manifest) },
       ]);
-      const result = await this.#provider.exec(sandbox.id, {
+      return this.#provider.exec(sandbox.id, {
         command,
         cwd: this.#projectDirectory,
         timeoutMs: 120_000,
@@ -415,23 +473,57 @@ export class ProjectValidationRunner {
           PLAYWRIGHT_BROWSERS_PATH: this.#acceptanceBrowsersPath,
         },
       });
-      return {
-        ordinal, name: "acceptance", command,
-        startedAt: startedAt.toISOString(), completedAt: this.#now().toISOString(),
-        result,
-      };
-    } catch (error) {
-      const completedAt = this.#now();
-      return {
-        ordinal, name: "acceptance", command,
-        startedAt: startedAt.toISOString(), completedAt: completedAt.toISOString(),
-        result: {
-          exitCode: 1, stdout: "", stderr: "",
-          durationMs: Math.max(0, completedAt.getTime() - startedAt.getTime()),
-          error: error instanceof Error ? error.message : String(error),
-        },
-      };
-    }
+    });
+  }
+
+  /**
+   * G3 / issue #130: brings up the local database baked into the template
+   * (local-database-template.ts) and applies David's migrations and seed
+   * data, so AUTH_FLOW acceptance scenarios and the delivered preview itself
+   * have something real to read and write. Returns whether DATABASE_URL
+   * should be handed to preview-start: true only once both db-start and
+   * db-migrate succeed. A missing or failing seed script does not change the
+   * answer -- the database is still usable, only fixture-dependent scenarios
+   * are affected, and that shows up as their own evidence, not as a blocked
+   * run.
+   */
+  async #provisionDatabase(
+    sandbox: SandboxHandle,
+    steps: ValidationStepReport[],
+    input: ProjectValidationInput,
+  ): Promise<boolean> {
+    const startCommand =
+      `${LOCAL_DATABASE_BIN_DIRECTORY}/pg_ctl -D ${LOCAL_DATABASE_DATA_DIRECTORY} ` +
+      `-o '-p ${String(LOCAL_DATABASE_PORT)} -k /tmp' -l ${LOCAL_DATABASE_LOG_PATH} -w start`;
+    const startStep = await this.#tryStep(steps.length + 1, "db-start", startCommand, () =>
+      this.#provider.exec(sandbox.id, { command: startCommand, timeoutMs: 30_000 }));
+    steps.push(startStep);
+    await input.hooks?.onStep?.(sandbox, startStep);
+    if (startStep.result.exitCode !== 0) return false;
+
+    const migrateCommand = "pnpm exec prisma migrate deploy";
+    const migrateStep = await this.#tryStep(steps.length + 1, "db-migrate", migrateCommand, () =>
+      this.#provider.exec(sandbox.id, {
+        command: migrateCommand,
+        cwd: this.#projectDirectory,
+        timeoutMs: 120_000,
+        envs: { DATABASE_URL: LOCAL_DATABASE_URL },
+      }));
+    steps.push(migrateStep);
+    await input.hooks?.onStep?.(sandbox, migrateStep);
+    if (migrateStep.result.exitCode !== 0) return false;
+
+    const seedCommand = "pnpm run seed";
+    const seedStep = await this.#tryStep(steps.length + 1, "db-seed", seedCommand, () =>
+      this.#provider.exec(sandbox.id, {
+        command: seedCommand,
+        cwd: this.#projectDirectory,
+        timeoutMs: 60_000,
+        envs: { DATABASE_URL: LOCAL_DATABASE_URL },
+      }));
+    steps.push(seedStep);
+    await input.hooks?.onStep?.(sandbox, seedStep);
+    return true;
   }
 
   #assertSuccessful(step: ValidationStepReport): void {

@@ -85,6 +85,9 @@ enum SandboxCommandName {
   PREVIEW_START
   PREVIEW_HEALTH
   ACCEPTANCE
+  DB_START
+  DB_MIGRATE
+  DB_SEED
 }
 
 enum SandboxCommandStatus {

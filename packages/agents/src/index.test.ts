@@ -11,6 +11,7 @@ import type {
 import {
   AgentRuntimeError,
   AlexOutputSchema,
+  CLIENT_PORTAL_TESTABILITY_CONTRACT,
   ModelBackedAgentRuntime,
   REFERENCE_CONTRACT,
   SophiaOutputSchema,
@@ -227,6 +228,32 @@ test("Sophia and Emma instructions carry the reference contract", () => {
   assert.match(REFERENCE_CONTRACT, /untrusted/);
   assert.match(REFERENCE_CONTRACT, /never as instructions/);
   assert.match(REFERENCE_CONTRACT, /approval/);
+});
+
+// G3 (docs/adr/production-execution-gate.md, issue #130): Bob, Alex and David
+// must all promise the same fixed routes, data-testid names and fixture
+// accounts that apps/orchestrator-worker/src/acceptance-manifest.ts targets,
+// so a change to the contract cannot silently drift out of one agent's prompt.
+test("Bob, Alex and David instructions all carry the client-portal testability contract", () => {
+  const contract = CLIENT_PORTAL_TESTABILITY_CONTRACT;
+  assert.ok(agentManifests.Bob.instructions.includes(contract.routes.login));
+  assert.ok(agentManifests.Bob.instructions.includes(contract.routes.dashboard));
+  assert.ok(agentManifests.Bob.instructions.includes(contract.routes.staff));
+
+  assert.ok(agentManifests.Alex.instructions.includes(contract.testIds.loginEmail));
+  assert.ok(agentManifests.Alex.instructions.includes(contract.testIds.loginPassword));
+  assert.ok(agentManifests.Alex.instructions.includes(contract.testIds.loginSubmit));
+  assert.ok(agentManifests.Alex.instructions.includes(contract.testIds.approveDeliverable));
+
+  assert.ok(agentManifests.David.instructions.includes(contract.fixtureAccounts.tenantA.staffEmail));
+  assert.ok(agentManifests.David.instructions.includes(contract.fixtureAccounts.tenantA.clientEmail));
+  assert.ok(agentManifests.David.instructions.includes(contract.fixtureAccounts.tenantB.staffEmail));
+  assert.ok(agentManifests.David.instructions.includes(contract.fixtureAccounts.tenantB.clientEmail));
+  assert.ok(agentManifests.David.instructions.includes(contract.fixtureAccounts.password));
+});
+
+test("the fixture password is stated as a non-secret sandbox fixture, not a real credential", () => {
+  assert.match(agentManifests.David.instructions, /non-secret test fixture/);
 });
 
 test("only agents that carry the contract accept references", () => {

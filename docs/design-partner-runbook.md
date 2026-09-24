@@ -115,14 +115,14 @@ To stop: set `RUN_EXECUTION_ENABLED=false` on the Control API. New runs are refu
 
 Partner terms need a clause on retention of paused-run data. Draft wording, **not legal advice and not reviewed by counsel**:
 
-> If a run is paused awaiting your approval, we retain the run's prompt, attachments and generated outputs until you approve, cancel, or ask us to delete them, and in any case no longer than [N] days after the run was paused, after which we may delete them.
+> If a run is paused awaiting your approval, we retain the run's prompt, attachments and generated outputs until you approve, cancel, or ask us to delete them, and in any case no longer than 30 days after the run was cancelled for non-response, after which we may delete them.
 
-The number of days is a decision for the owner. The platform can cancel a run after that time (`PAUSED_RUN_TTL_HOURS`), but cancelling does not delete anything: the prompt, attachments, outputs and checkpoint stay. Deletion is not built, so a promise of deletion within N days can only be kept by hand today (issue #100).
+**The owner set the retention period at 30 days (2026-09-23).** The platform cancels a run after `PAUSED_RUN_TTL_HOURS` of no response (off until set); a separate, independently configured setting, `PAUSED_RUN_DATA_PURGE_AFTER_DAYS`, then redacts that expired run's prompt, checkpoint and task input/output, and drops its attachment links, after that many days (issue #100). Redaction happens in place -- the row is never deleted, only its content -- and only for a run the platform itself cancelled on expiry, never one a person cancelled themselves. Both settings are off by default; an operator sets `PAUSED_RUN_TTL_HOURS` and `PAUSED_RUN_DATA_PURGE_AFTER_DAYS=30` for a real environment before this clause is true in practice. A reminder before expiry (`PAUSED_RUN_REMINDER_HOURS`) is also built, but only as a recorded event: no email, webhook or any other delivery channel exists anywhere in this platform yet, so nothing is actually sent to the partner.
 
 ## Open decisions
 
 - Who owns each P0 gate and the stop decision.
 - The proposal thresholds above.
-- The retention period, the value of `PAUSED_RUN_TTL_HOURS` (it is off until set), and whether to build the data purge and the reminder (#100) before the first partner.
+- ~~The retention period~~ **Set: 30 days (2026-09-23).** Still open: whether `PAUSED_RUN_TTL_HOURS` and `PAUSED_RUN_DATA_PURGE_AFTER_DAYS` are turned on before the first partner, and how (if at all) the reminder should actually reach a partner, since no delivery channel exists today.
 - Confirm the client portal's agent set (Emma, Mike, Bob, Alex, David) in `docs/client-portal-reference-architecture.md`. It is implemented as proposed (`PROJECT_TYPE_AGENTS`); changing it is a one-line edit.
 - The order in which design partners become paying customers.

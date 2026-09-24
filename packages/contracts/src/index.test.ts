@@ -3,8 +3,10 @@ import test from "node:test";
 
 import {
   ApproveOrphanCleanupInputSchema,
+  ApprovalReminderDueEventPayloadV1Schema,
   ApprovalRequiredEventPayloadV1Schema,
   ReleaseBlockedEventPayloadV1Schema,
+  RunDataPurgedEventPayloadV1Schema,
   ArtifactCreatedEventPayloadV1Schema,
   AttachmentScanJobSchema,
   ContentPackageSchema,
@@ -802,5 +804,40 @@ test("release assessment events are additive and dispatch to their own schemas",
   assert.deepEqual(
     validateRunEventPayload("run.completed", { completedAt: "2026-09-14T00:00:00.000Z" }),
     { completedAt: "2026-09-14T00:00:00.000Z" },
+  );
+});
+
+test("G2 approval-reminder and data-purge events dispatch to their own schemas", () => {
+  const reminder = validateRunEventPayload("run.approval_reminder_due", {
+    version: "v1",
+    pausedAt: "2026-09-20T00:00:00.000Z",
+    approvalExpiresAt: "2026-09-22T00:00:00.000Z",
+  });
+  assert.deepEqual(reminder, {
+    version: "v1",
+    pausedAt: "2026-09-20T00:00:00.000Z",
+    approvalExpiresAt: "2026-09-22T00:00:00.000Z",
+  });
+  assert.deepEqual(
+    ApprovalReminderDueEventPayloadV1Schema.parse({ version: "v1", pausedAt: "2026-09-20T00:00:00.000Z" }),
+    { version: "v1", pausedAt: "2026-09-20T00:00:00.000Z" },
+  );
+
+  const purged = validateRunEventPayload("run.data_purged", {
+    version: "v1",
+    reason: "APPROVAL_EXPIRED",
+    cancelledAt: "2026-09-20T00:00:00.000Z",
+  });
+  assert.deepEqual(purged, {
+    version: "v1",
+    reason: "APPROVAL_EXPIRED",
+    cancelledAt: "2026-09-20T00:00:00.000Z",
+  });
+  assert.throws(() =>
+    RunDataPurgedEventPayloadV1Schema.parse({
+      version: "v1",
+      reason: "USER_CANCELLED",
+      cancelledAt: "2026-09-20T00:00:00.000Z",
+    }),
   );
 });

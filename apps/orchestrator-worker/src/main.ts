@@ -52,7 +52,11 @@ import { PrismaAttachmentScanRepository } from "./attachment-repository.js";
 import { PrismaRunAttachmentLoader } from "./attachment-loader.js";
 import {
   ApprovalExpirySweeper,
+  ApprovalReminderSweeper,
+  PrismaExpiredRunDataRepository,
+  PrismaPendingReminderRunRepository,
   PrismaStalePausedRunRepository,
+  RunDataPurgeSweeper,
 } from "./approval-expiry.js";
 import { parseEgressAllowedHosts } from "./egress-policy.js";
 import { WorkerReadinessPublisher } from "./readiness-publisher.js";
@@ -109,6 +113,15 @@ const EnvironmentSchema = z
     // Cancel runs that stay PAUSED longer than this many hours (approval expiry, G2).
     // 0 leaves it off. Expiry only cancels the run; it deletes no data.
     PAUSED_RUN_TTL_HOURS: z.coerce.number().int().min(0).max(8_760).default(0),
+    // G2 remainder (issue #100). 0 leaves it off. Records a run.approval_reminder_due
+    // event only -- no delivery channel exists anywhere in this platform, so nothing is
+    // sent. When PAUSED_RUN_TTL_HOURS is also set, the reminder must fire strictly before
+    // expiry; see the refinement below.
+    PAUSED_RUN_REMINDER_HOURS: z.coerce.number().int().min(0).max(8_760).default(0),
+    // 0 leaves it off. Redacts (never deletes the row of) an expired run's prompt,
+    // checkpoint and task input/output, and drops its attachment links, this many days
+    // after it expired -- the retention clause in docs/design-partner-runbook.md.
+    PAUSED_RUN_DATA_PURGE_AFTER_DAYS: z.coerce.number().int().min(0).max(3_650).default(0),
     PREVIEW_BROWSER_PLAYWRIGHT_ENTRY: z.string().trim().min(1).optional(),
     // "required" runs the fixed G3 acceptance scenario set (docs/adr/production-execution-gate.md)
     // after a passing preview-health. Needs the same Playwright/Chromium template as
@@ -252,6 +265,17 @@ const EnvironmentSchema = z
         code: "custom",
         message:
           "S3_ACCESS_KEY_ID and S3_SECRET_ACCESS_KEY must be configured together",
+      });
+    }
+    if (
+      environment.PAUSED_RUN_REMINDER_HOURS > 0 &&
+      environment.PAUSED_RUN_TTL_HOURS > 0 &&
+      environment.PAUSED_RUN_REMINDER_HOURS >= environment.PAUSED_RUN_TTL_HOURS
+    ) {
+      context.addIssue({
+        code: "custom",
+        message:
+          "PAUSED_RUN_REMINDER_HOURS must be less than PAUSED_RUN_TTL_HOURS: a reminder that fires at or after expiry is pointless",
       });
     }
   });
@@ -557,11 +581,41 @@ async function main(): Promise<void> {
     approvalExpirySweeper.start();
   }
 
+  // G2 remainder (issue #100). Independent of the sweeper above: a reminder only
+  // records that one was due (no delivery channel exists), it never cancels anything.
+  let approvalReminderSweeper: ApprovalReminderSweeper | undefined;
+  if (environment.PAUSED_RUN_REMINDER_HOURS > 0) {
+    approvalReminderSweeper = new ApprovalReminderSweeper({
+      repository: new PrismaPendingReminderRunRepository(prisma),
+      afterMs: environment.PAUSED_RUN_REMINDER_HOURS * 3_600_000,
+      onReminded: (runIds) =>
+        console.warn("Recorded an approval reminder for paused runs", { runIds }),
+      onError: (error) => logError("Approval reminder sweep failed", error),
+    });
+    approvalReminderSweeper.start();
+  }
+
+  // G2 remainder / design-partner-runbook.md. Only ever redacts an already-CANCELLED,
+  // already-expired run's own row; never deletes the row and never touches a run a
+  // person cancelled themselves.
+  let runDataPurgeSweeper: RunDataPurgeSweeper | undefined;
+  if (environment.PAUSED_RUN_DATA_PURGE_AFTER_DAYS > 0) {
+    runDataPurgeSweeper = new RunDataPurgeSweeper({
+      repository: new PrismaExpiredRunDataRepository(prisma),
+      afterMs: environment.PAUSED_RUN_DATA_PURGE_AFTER_DAYS * 24 * 3_600_000,
+      onPurged: (runIds) => console.warn("Purged expired runs' retained data", { runIds }),
+      onError: (error) => logError("Run data purge sweep failed", error),
+    });
+    runDataPurgeSweeper.start();
+  }
+
   let shuttingDown = false;
   const shutdown = async (): Promise<void> => {
     if (shuttingDown) return;
     shuttingDown = true;
     approvalExpirySweeper?.stop();
+    approvalReminderSweeper?.stop();
+    runDataPurgeSweeper?.stop();
     readinessPublisher.stop();
     readinessRedis.disconnect();
     await databaseReconciliationWorker?.close();

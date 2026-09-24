@@ -60,7 +60,7 @@ export type ModelResponseStatus =
 
 export interface ModelResponse {
   readonly id: string;
-  readonly provider: "openai";
+  readonly provider: "openai" | "google";
   readonly policy: ModelPolicy;
   readonly model: string;
   readonly status: ModelResponseStatus;

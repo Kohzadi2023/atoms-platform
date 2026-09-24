@@ -6,7 +6,7 @@ import {
   SupabaseDatabaseProvider,
   VaultSecretStore,
 } from "@atoms/database-provider";
-import { OpenAIModelGateway } from "@atoms/model-gateway";
+import { GeminiModelGateway, OpenAIModelGateway } from "@atoms/model-gateway";
 import {
   PreviewTicketSigner,
   RedisPreviewSessionStore,
@@ -36,6 +36,9 @@ import { BullMqDatabaseRecoveryQueue } from "./database-recovery-queue.js";
 import { PrismaDatabaseOperationRepository } from "./database-repository.js";
 import {
   BudgetedModelGateway,
+  PINNED_GEMINI_MODELS,
+  PINNED_GEMINI_OUTPUT_LIMITS,
+  PINNED_GEMINI_PRICING,
   PINNED_OPENAI_MODELS,
   PINNED_OPENAI_OUTPUT_LIMITS,
   PINNED_OPENAI_PRICING,
@@ -72,7 +75,13 @@ const EnvironmentSchema = z
     DATABASE_URL: z.string().min(1),
     REDIS_URL: z.string().url(),
     PREVIEW_REDIS_MODE: PreviewRedisModeSchema,
-    OPENAI_API_KEY: z.string().min(1),
+    // Which model provider backs the agent runtime. Google's Gemini API is reached through
+    // its OpenAI-compatibility layer (GeminiModelGateway); the agent/budget/readiness code is
+    // fully provider-agnostic. Pricing in PINNED_GEMINI_PRICING is an approximation -- see its
+    // own comment -- so this is meant for a small, explicitly capped run, not unattended scale.
+    MODEL_PROVIDER: z.enum(["openai", "google"]).default("openai"),
+    OPENAI_API_KEY: z.string().min(1).optional(),
+    GOOGLE_API_KEY: z.string().min(1).optional(),
     E2B_API_KEY: z.string().min(1),
     E2B_TEMPLATE: z.string().trim().min(1).optional(),
     E2B_ALLOWED_HOSTS: z
@@ -278,6 +287,18 @@ const EnvironmentSchema = z
           "PAUSED_RUN_REMINDER_HOURS must be less than PAUSED_RUN_TTL_HOURS: a reminder that fires at or after expiry is pointless",
       });
     }
+    if (environment.MODEL_PROVIDER === "openai" && environment.OPENAI_API_KEY === undefined) {
+      context.addIssue({
+        code: "custom",
+        message: "MODEL_PROVIDER=openai requires OPENAI_API_KEY",
+      });
+    }
+    if (environment.MODEL_PROVIDER === "google" && environment.GOOGLE_API_KEY === undefined) {
+      context.addIssue({
+        code: "custom",
+        message: "MODEL_PROVIDER=google requires GOOGLE_API_KEY",
+      });
+    }
   });
 
 async function main(): Promise<void> {
@@ -291,13 +312,25 @@ async function main(): Promise<void> {
   await checkpointer.setup();
 
   const budgetStore = new PostgresRunProviderBudgetStore(prisma);
-  const openAiGateway = new OpenAIModelGateway({
-    apiKey: environment.OPENAI_API_KEY,
-    models: PINNED_OPENAI_MODELS,
-    pricing: PINNED_OPENAI_PRICING,
-  });
+  const providerGateway =
+    environment.MODEL_PROVIDER === "google"
+      ? new GeminiModelGateway({
+          // Validated by the schema's superRefine above whenever MODEL_PROVIDER=google.
+          apiKey: environment.GOOGLE_API_KEY ?? "",
+          models: PINNED_GEMINI_MODELS,
+          pricing: PINNED_GEMINI_PRICING,
+        })
+      : new OpenAIModelGateway({
+          apiKey: environment.OPENAI_API_KEY ?? "",
+          models: PINNED_OPENAI_MODELS,
+          pricing: PINNED_OPENAI_PRICING,
+        });
+  const [providerPricing, providerOutputLimits] =
+    environment.MODEL_PROVIDER === "google"
+      ? [PINNED_GEMINI_PRICING, PINNED_GEMINI_OUTPUT_LIMITS]
+      : [PINNED_OPENAI_PRICING, PINNED_OPENAI_OUTPUT_LIMITS];
   const gateway = new BudgetedModelGateway({
-    gateway: openAiGateway,
+    gateway: providerGateway,
     budgetStore,
     totalBudgetUsdMicros: environment.RUN_PROVIDER_BUDGET_USD_MICROS,
     ...(environment.WORKSPACE_PROVIDER_BUDGET_USD_MICROS_PER_DAY > 0
@@ -306,8 +339,8 @@ async function main(): Promise<void> {
             environment.WORKSPACE_PROVIDER_BUDGET_USD_MICROS_PER_DAY,
         }
       : {}),
-    pricing: PINNED_OPENAI_PRICING,
-    outputTokenLimits: PINNED_OPENAI_OUTPUT_LIMITS,
+    pricing: providerPricing,
+    outputTokenLimits: providerOutputLimits,
     safetyMultiplier: environment.RUN_PROVIDER_BUDGET_SAFETY_MULTIPLIER,
   });
   const agents = new ModelBackedAgentRuntime(gateway);
@@ -560,7 +593,10 @@ async function main(): Promise<void> {
       workspaceDailyBudgetUsdMicros:
         environment.WORKSPACE_PROVIDER_BUDGET_USD_MICROS_PER_DAY,
       providerCredentialsPresent:
-        environment.OPENAI_API_KEY.length > 0 && environment.E2B_API_KEY.length > 0,
+        (environment.MODEL_PROVIDER === "google"
+          ? (environment.GOOGLE_API_KEY?.length ?? 0) > 0
+          : (environment.OPENAI_API_KEY?.length ?? 0) > 0) &&
+        environment.E2B_API_KEY.length > 0,
       egressVerifiedAt: environment.SANDBOX_EGRESS_VERIFIED_AT,
       attachmentContractVerified: referenceContractIntact(),
       browserViabilityRequired: environment.PREVIEW_BROWSER_VIABILITY === "required",

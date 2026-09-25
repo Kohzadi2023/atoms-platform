@@ -1501,7 +1501,7 @@ function PlanRequirementsReview({
                 </p>
                 <ul className="mt-1 list-disc pl-5 text-[#cdbf99]">
                   {story.acceptanceCriteria.map((criterion) => (
-                    <li key={criterion}>{criterion}</li>
+                    <li key={criterion.key}>{criterion.text}</li>
                   ))}
                 </ul>
               </li>
@@ -1746,7 +1746,7 @@ function EmptyInline({ text }: { readonly text: string }) {
   return <p className="mt-3 rounded-lg bg-[#0a0f16] px-3 py-4 text-center text-xs leading-5 text-[#718095]">{text}</p>;
 }
 
-function Feedback({ kind, message, onClose }: { readonly kind: "error" | "notice"; readonly message: string; readonly onClose: () => void }) {
+export function Feedback({ kind, message, onClose }: { readonly kind: "error" | "notice"; readonly message: string; readonly onClose: () => void }) {
   return <div className={`fixed right-4 bottom-4 z-50 flex max-w-md items-start gap-3 rounded-xl border p-3 shadow-2xl ${kind === "error" ? "border-[#68363d] bg-[#2a151a] text-[#ffc0c6]" : "border-[#315c4b] bg-[#11271f] text-[#aff6d9]"}`} role={kind === "error" ? "alert" : "status"}><span className="mt-0.5">{kind === "error" ? <AlertTriangle size={16} /> : <Check size={16} />}</span><p className="min-w-0 flex-1 text-sm leading-5">{message}</p><button type="button" className="rounded p-0.5 opacity-75 hover:opacity-100" aria-label="Dismiss message" onClick={onClose}><X size={15} /></button></div>;
 }
 

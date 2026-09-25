@@ -14,7 +14,7 @@ const PlanRequirementsSchema = z.object({
       role: z.string(),
       goal: z.string(),
       benefit: z.string(),
-      acceptanceCriteria: z.array(z.string()),
+      acceptanceCriteria: z.array(z.object({ key: z.string(), text: z.string() })),
     }),
   ),
   nonGoals: z.array(z.string()),

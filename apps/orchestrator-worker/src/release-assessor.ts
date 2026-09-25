@@ -7,6 +7,7 @@ import {
   evidenceFromAcceptanceRun,
   evidenceFromValidationStep,
   fingerprintProjectSnapshot,
+  resolveCriterionIdsByScenario,
   type QualityEvidence,
   type QualityScope,
 } from "@atoms/quality";
@@ -24,12 +25,15 @@ export interface AssessReleaseInput {
 export interface ReleaseAssessorOptions {
   readonly repository: ReleaseAssessmentRepository;
   /**
-   * G3: which of Emma's acceptance criterion ids each acceptance-scenario
-   * name is evidence for (apps/orchestrator-worker/src/acceptance-manifest.ts).
-   * Defaults to an empty map, meaning no ACCEPTANCE evidence is ever built --
-   * the same state as before this option existed.
+   * G3: which of Emma's acceptance-criterion semantic keys each
+   * acceptance-scenario name is evidence for
+   * (apps/orchestrator-worker/src/acceptance-manifest.ts). Static across the
+   * assessor's lifetime -- resolved to this run's actual positional
+   * criterion ids inside assess(), since those ids are regenerated fresh
+   * every run. Defaults to an empty map, meaning no ACCEPTANCE evidence is
+   * ever built, the same state as before this option existed.
    */
-  readonly criterionIdsByScenario?: Readonly<Record<string, readonly string[]>>;
+  readonly criterionKeysByScenario?: Readonly<Record<string, readonly string[]>>;
   readonly now?: () => Date;
 }
 
@@ -58,12 +62,12 @@ export interface ReleaseAssessor {
  */
 export class DeterministicReleaseAssessor implements ReleaseAssessor {
   readonly #repository: ReleaseAssessmentRepository;
-  readonly #criterionIdsByScenario: Readonly<Record<string, readonly string[]>>;
+  readonly #criterionKeysByScenario: Readonly<Record<string, readonly string[]>>;
   readonly #now: () => Date;
 
   constructor(options: ReleaseAssessorOptions) {
     this.#repository = options.repository;
-    this.#criterionIdsByScenario = options.criterionIdsByScenario ?? {};
+    this.#criterionKeysByScenario = options.criterionKeysByScenario ?? {};
     this.#now = options.now ?? (() => new Date());
   }
 
@@ -80,7 +84,7 @@ export class DeterministicReleaseAssessor implements ReleaseAssessor {
 
     try {
       const { files, acceptanceTask, baselineCommands, acceptanceRun } =
-        await this.#repository.loadEvidenceInputs(input.run.id);
+        await this.#repository.loadEvidenceInputs(input.run.id, input.attempt);
       const snapshotSha256 = fingerprintProjectSnapshot(files);
       const qualityScope: QualityScope = { ...scope, snapshotSha256 };
 
@@ -110,20 +114,25 @@ export class DeterministicReleaseAssessor implements ReleaseAssessor {
         });
         if (item !== null) evidence.push(item);
       }
-      // G3: only produces evidence for scenarios this worker's operator has
-      // explicitly mapped to specific criterion ids (see
-      // acceptance-manifest.ts) -- today that map is empty, so this remains a
-      // no-op and evaluateRelease keeps reporting MISSING_CRITERION_EVIDENCE,
-      // same as before the acceptance runner existed. That is the honest
-      // state of automation, not a bug in this step.
+      // G3: only produces evidence for scenarios this project type's manifest
+      // maps to specific criterion semantic keys (see acceptance-manifest.ts)
+      // AND that this run's Emma output actually produced a criterion for --
+      // resolveCriterionIdsByScenario turns the static key map into this
+      // run's actual positional ids since those are regenerated every run.
+      // A key the manifest expects but this run never produced is reported
+      // back as unresolvedScenarios rather than silently behaving like an
+      // unmapped scenario.
+      let unresolvedScenarios: readonly { readonly scenario: string; readonly missingKeys: readonly string[] }[] = [];
       if (acceptance !== null && acceptanceRun !== null) {
+        const resolution = resolveCriterionIdsByScenario(acceptance, this.#criterionKeysByScenario);
+        unresolvedScenarios = resolution.unresolvedScenarios;
         evidence.push(...evidenceFromAcceptanceRun({
           scope: qualityScope,
           sourceArtifactId: acceptanceRun.id,
           acceptanceTaskId: acceptance.taskId,
           acceptanceTaskAttempt: acceptance.taskAttempt,
           completedAt: acceptanceRun.completedAt,
-          criterionIdsByScenario: this.#criterionIdsByScenario,
+          criterionIdsByScenario: resolution.criterionIdsByScenario,
           stdout: acceptanceRun.stdout,
         }));
       }
@@ -145,6 +154,7 @@ export class DeterministicReleaseAssessor implements ReleaseAssessor {
         assessment,
         evidence,
         now,
+        unresolvedScenarios,
       );
     } catch {
       // Deliberately swallow the error here rather than rethrow: this step is

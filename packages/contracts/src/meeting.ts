@@ -206,7 +206,10 @@ function hasRequiredSection(
   section: (typeof REQUIRED_MEETING_BRIEF_SECTIONS)[number],
 ): boolean {
   if (section === "Open Questions / Gates") {
-    return searchable.includes("open questions") || searchable.includes("open gates");
+    // Both halves of the heading must be substantiated -- matching only
+    // "open questions" (which is always true once the model reproduces the
+    // instructed heading text) let a brief pass with zero gate content.
+    return searchable.includes("open questions") && searchable.includes("gate");
   }
   return searchable.includes(section.toLowerCase());
 }

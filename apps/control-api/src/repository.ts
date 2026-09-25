@@ -448,6 +448,9 @@ export class PrismaControlRepository implements ControlRepository {
           ...(patch.error === undefined
             ? {}
             : { error: toPrismaNullableJson(patch.error) }),
+          ...(patch.reminderSentAt === undefined
+            ? {}
+            : { reminderSentAt: patch.reminderSentAt }),
         },
       });
       if (update.count !== 1) {

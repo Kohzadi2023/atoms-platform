@@ -9,6 +9,7 @@ import type {
   ReleaseAssessmentRepository,
   ReleaseAssessmentScope,
   ReleaseEvidenceInputs,
+  UnresolvedAcceptanceScenario,
 } from "./release-repository.js";
 
 const RUN: RunExecutionRecord = {
@@ -23,7 +24,7 @@ const RUN: RunExecutionRecord = {
 const EMMA_TASK_ID = "00000000-0000-4000-8000-000000000010";
 const NOW = new Date("2026-09-14T00:05:00.000Z");
 
-function emmaOutput(criteria: readonly string[]) {
+function emmaOutput(criteria: readonly { readonly key: string; readonly text: string }[]) {
   return {
     productName: "Portal",
     problemStatement: "Members need a workspace.",
@@ -62,13 +63,21 @@ class FakeRepository implements ReleaseAssessmentRepository {
     acceptanceTask: {
       taskId: EMMA_TASK_ID,
       attempt: 0,
-      output: emmaOutput(["Own workspace is accessible.", "Foreign workspace is inaccessible."]),
+      output: emmaOutput([
+        { key: "workspace.own_accessible", text: "Own workspace is accessible." },
+        { key: "workspace.foreign_inaccessible", text: "Foreign workspace is inaccessible." },
+      ]),
     },
     baselineCommands: baselineCommands(),
     acceptanceRun: null,
   };
   loadInputsError: Error | null = null;
-  persisted: { readonly scope: ReleaseAssessmentScope; readonly assessment: ReleaseAssessment; readonly evidence: readonly QualityEvidence[] }[] = [];
+  persisted: {
+    readonly scope: ReleaseAssessmentScope;
+    readonly assessment: ReleaseAssessment;
+    readonly evidence: readonly QualityEvidence[];
+    readonly unresolvedScenarios: readonly UnresolvedAcceptanceScenario[];
+  }[] = [];
   failures: { readonly scope: ReleaseAssessmentScope }[] = [];
 
   async loadEvidenceInputs(): Promise<ReleaseEvidenceInputs> {
@@ -81,8 +90,10 @@ class FakeRepository implements ReleaseAssessmentRepository {
     scope: ReleaseAssessmentScope,
     assessment: ReleaseAssessment,
     evidence: readonly QualityEvidence[],
+    _now: Date,
+    unresolvedScenarios: readonly UnresolvedAcceptanceScenario[],
   ): Promise<void> {
-    this.persisted.push({ scope, assessment, evidence });
+    this.persisted.push({ scope, assessment, evidence, unresolvedScenarios });
   }
 
   async persistEvaluatorFailure(
@@ -115,14 +126,15 @@ test("with no acceptance run recorded, a fully passing baseline still stays BLOC
 
 // G3 (docs/adr/production-execution-gate.md): the acceptance step exists and
 // its stdout is read, but only scenarios the operator has explicitly mapped
-// to a criterion id in criterionIdsByScenario ever become ACCEPTANCE evidence.
+// to a criterion semantic key in criterionKeysByScenario, and that this run's
+// Emma output actually produced that key for, ever become ACCEPTANCE evidence.
 test("G3: an acceptance run mapped to the run's only criterion clears MISSING_CRITERION_EVIDENCE", async () => {
   const repository = new FakeRepository();
   repository.inputs = {
     ...repository.inputs,
     acceptanceTask: {
       taskId: EMMA_TASK_ID, attempt: 0,
-      output: emmaOutput(["Own workspace is accessible."]),
+      output: emmaOutput([{ key: "workspace.own_accessible", text: "Own workspace is accessible." }]),
     },
     acceptanceRun: {
       id: "00000000-0000-4000-8000-000000000200",
@@ -132,12 +144,12 @@ test("G3: an acceptance run mapped to the run's only criterion clears MISSING_CR
   };
   const assessor = new DeterministicReleaseAssessor({
     repository, now: () => NOW,
-    criterionIdsByScenario: { "home-loads": ["US-001:1"] },
+    criterionKeysByScenario: { "home-loads": ["workspace.own_accessible"] },
   });
 
   await assessor.assess({ run: RUN, attempt: 2 });
 
-  const { assessment, evidence } = repository.persisted[0]!;
+  const { assessment, evidence, unresolvedScenarios } = repository.persisted[0]!;
   // Still BLOCKED: the standard policy also requires REGRESSION/E2E/ACCESSIBILITY/
   // PERFORMANCE/SECURITY checks, which nothing in this repository submits -- that
   // gap is unrelated to G3. What G3 closes is specifically the criterion trace.
@@ -148,6 +160,35 @@ test("G3: an acceptance run mapped to the run's only criterion clears MISSING_CR
   const trace = assessment.traceToAcceptance.find((item) => item.criterionId === "US-001:1");
   assert.equal(trace?.status, "PASSED");
   assert.equal(evidence.filter((item) => item.kind === "ACCEPTANCE").length, 1);
+  assert.deepEqual(unresolvedScenarios, []);
+});
+
+test("G3: a scenario mapped to a key this run's Emma output never produced is reported as unresolved, not silently blank", async () => {
+  const repository = new FakeRepository();
+  repository.inputs = {
+    ...repository.inputs,
+    acceptanceTask: {
+      taskId: EMMA_TASK_ID, attempt: 0,
+      output: emmaOutput([{ key: "workspace.own_accessible", text: "Own workspace is accessible." }]),
+    },
+    acceptanceRun: {
+      id: "00000000-0000-4000-8000-000000000200",
+      completedAt: "2026-09-14T00:00:20.000Z",
+      stdout: JSON.stringify({ ok: true, results: [{ scenario: "home-loads", status: "PASSED", durationMs: 120 }] }),
+    },
+  };
+  const assessor = new DeterministicReleaseAssessor({
+    repository, now: () => NOW,
+    criterionKeysByScenario: { "home-loads": ["workspace.never_produced"] },
+  });
+
+  await assessor.assess({ run: RUN, attempt: 2 });
+
+  const { evidence, unresolvedScenarios } = repository.persisted[0]!;
+  assert.equal(evidence.some((item) => item.kind === "ACCEPTANCE"), false);
+  assert.deepEqual(unresolvedScenarios, [
+    { scenario: "home-loads", missingKeys: ["workspace.never_produced"] },
+  ]);
 });
 
 test("G3: a scenario the operator has not mapped to any criterion produces no evidence and stays BLOCKED", async () => {
@@ -160,7 +201,7 @@ test("G3: a scenario the operator has not mapped to any criterion produces no ev
       stdout: JSON.stringify({ ok: true, results: [{ scenario: "home-loads", status: "PASSED", durationMs: 120 }] }),
     },
   };
-  // No criterionIdsByScenario supplied at all -- the default is an empty map.
+  // No criterionKeysByScenario supplied at all -- the default is an empty map.
   const assessor = new DeterministicReleaseAssessor({ repository, now: () => NOW });
 
   await assessor.assess({ run: RUN, attempt: 2 });
@@ -182,7 +223,7 @@ test("G3: malformed acceptance stdout is treated as no evidence, not an evaluato
   };
   const assessor = new DeterministicReleaseAssessor({
     repository, now: () => NOW,
-    criterionIdsByScenario: { "home-loads": ["US-001:1"] },
+    criterionKeysByScenario: { "home-loads": ["workspace.own_accessible"] },
   });
 
   await assessor.assess({ run: RUN, attempt: 2 });

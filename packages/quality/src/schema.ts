@@ -18,6 +18,14 @@ export const QualityScopeSchema = z.object({
 export type QualityScope = z.infer<typeof QualityScopeSchema>;
 
 const CriterionIdSchema = z.string().regex(/^US-[0-9]{3}:[1-9][0-9]?$/);
+// A stable, dot-namespaced semantic identifier (e.g. "auth.sign_in"), distinct
+// from the positional id above: the id is regenerated fresh every run, the
+// key names what the criterion is about and stays the same across runs for
+// the same conceptual requirement. G3's scenario map (apps/orchestrator-worker/
+// src/acceptance-manifest.ts) is keyed on this so it can survive Emma
+// renumbering her stories; resolveCriterionIdsByScenario below turns a key
+// into whichever id it has in one specific run.
+const CriterionKeySchema = z.string().regex(/^[a-z][a-z0-9_]*(\.[a-z][a-z0-9_]*)+$/);
 // AgentTask rows are retried in place: `AgentTask.attempt` increments on the same row id and its
 // `output` is overwritten, so the same Emma taskId can carry different acceptance-criteria text
 // across attempts within a single run attempt/controlVersion (Mike budgets each task up to three
@@ -33,6 +41,7 @@ export const AcceptanceSnapshotSchema = z.object({
   scope: QualityScopeSchema,
   criteria: z.array(z.object({
     id: CriterionIdSchema,
+    key: CriterionKeySchema,
     text: z.string().trim().min(1).max(4_000),
   }).strict()).min(1).max(1_000),
 }).strict().refine(

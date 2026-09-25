@@ -27,6 +27,11 @@ export const RunEventTypeSchema = z.enum([
   "release.assessment_started",
   "release.ready",
   "release.blocked",
+  // G3, issue #130: a project type's manifest maps a scenario to a criterion
+  // semantic key (packages/agents CLIENT_PORTAL_TESTABILITY_CONTRACT.criterionKeys)
+  // that this run's Emma output never produced, so that scenario contributed
+  // no ACCEPTANCE evidence. Observe-only, same as the other release.* events.
+  "release.criterion_key_unresolved",
   // G2 (docs/adr/production-execution-gate.md), issue #100. Neither ever
   // blocks or retries the run; both are additive lifecycle markers on a
   // PAUSED or already-CANCELLED run.
@@ -264,6 +269,19 @@ export type ReleaseBlockedEventPayloadV1 = z.infer<
   typeof ReleaseBlockedEventPayloadV1Schema
 >;
 
+export const ReleaseCriterionKeyUnresolvedEventPayloadV1Schema = z
+  .object({
+    version: z.literal("v1"),
+    assessmentId: z.string().uuid(),
+    scenario: z.string().min(1).max(120),
+    missingKeys: z.array(z.string().min(1).max(200)).min(1).max(50),
+  })
+  .strict();
+
+export type ReleaseCriterionKeyUnresolvedEventPayloadV1 = z.infer<
+  typeof ReleaseCriterionKeyUnresolvedEventPayloadV1Schema
+>;
+
 // G2: no delivery channel exists yet (no email/webhook integration anywhere
 // in this platform) -- this event is the full extent of "reminder" today. A
 // future notifier can watch for it; nothing here sends anything.
@@ -327,6 +345,9 @@ export function validateRunEventPayload(
   }
   if (eventType === "release.blocked") {
     return ReleaseBlockedEventPayloadV1Schema.parse(payload);
+  }
+  if (eventType === "release.criterion_key_unresolved") {
+    return ReleaseCriterionKeyUnresolvedEventPayloadV1Schema.parse(payload);
   }
   if (eventType === "run.approval_reminder_due") {
     return ApprovalReminderDueEventPayloadV1Schema.parse(payload);

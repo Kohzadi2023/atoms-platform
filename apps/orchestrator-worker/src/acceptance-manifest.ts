@@ -48,19 +48,29 @@ export const CLIENT_PORTAL_ACCEPTANCE_MANIFEST: AcceptanceManifest = {
 };
 
 /**
- * Which of Emma's acceptance criteria (US-xxx:n, see @atoms/quality) each
- * scenario above is evidence for. Deliberately empty: Emma's criterion ids
- * are freeform and positional, generated fresh per run, and cannot be known
- * ahead of time by a manifest written once for a project type. Until a
- * human reviews a given run's actual criteria and assigns specific ids here
- * (or a future change does that mapping automatically), this scenario set
- * produces no ACCEPTANCE evidence and `traceToAcceptance` stays exactly as
- * uncovered as it was before G3 shipped -- what G3 adds is the runner and
- * the adapter that would use this map once it is populated, not a shortcut
- * around per-criterion evidence. See evidenceFromAcceptanceRun in
- * @atoms/quality and its tests for the mechanism proven with a non-empty map.
+ * Which of Emma's acceptance criteria each scenario above is evidence for,
+ * keyed by the criterion's stable semantic key (CriterionKeySchema, e.g.
+ * "auth.sign_in") rather than its per-run positional id (US-xxx:n): the id
+ * is freeform and regenerated fresh every run, so a manifest written once
+ * for a project type cannot name it ahead of time, but the key is part of
+ * the same contract Emma's instructions already share with Bob/Alex/David
+ * (CLIENT_PORTAL_TESTABILITY_CONTRACT.criterionKeys in @atoms/agents), so it
+ * is stable across runs for the same conceptual requirement.
+ *
+ * `resolveCriterionIdsByScenario` (@atoms/quality) turns this into the
+ * per-run, id-keyed map `evidenceFromAcceptanceRun` needs, by matching each
+ * key against that run's actual Emma output; a key that run's Emma output
+ * never produced resolves to nothing for that scenario and is reported back
+ * as `unresolvedScenarios` rather than silently behaving like an unmapped
+ * scenario. Only the two scenarios with a real key mapping in
+ * CLIENT_PORTAL_TESTABILITY_CONTRACT are listed here -- see
+ * CLIENT_PORTAL_ACCEPTANCE_MANIFEST's own doc comment for the three
+ * acceptance-journey points intentionally left uncovered.
  */
-export const CLIENT_PORTAL_CRITERION_IDS_BY_SCENARIO: Readonly<Record<string, readonly string[]>> = {};
+export const CLIENT_PORTAL_CRITERION_KEYS_BY_SCENARIO: Readonly<Record<string, readonly string[]>> = {
+  "client-sign-in": [CLIENT_PORTAL_TESTABILITY_CONTRACT.criterionKeys.authSignIn],
+  "signed-out-visitor-blocked": [CLIENT_PORTAL_TESTABILITY_CONTRACT.criterionKeys.authUnauthenticatedRedirect],
+};
 
 const MANIFESTS_BY_PROJECT_TYPE: Readonly<Record<ProjectType, AcceptanceManifest | null>> = {
   GENERAL: null,

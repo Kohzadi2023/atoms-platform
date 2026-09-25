@@ -58,14 +58,23 @@ export interface ReleaseAssessmentScope {
   readonly attempt: number;
 }
 
+export interface UnresolvedAcceptanceScenario {
+  readonly scenario: string;
+  readonly missingKeys: readonly string[];
+}
+
 export interface ReleaseAssessmentRepository {
-  loadEvidenceInputs(runId: string): Promise<ReleaseEvidenceInputs>;
+  /** `attempt` scopes sandbox-command evidence (ACCEPTANCE row, baseline
+   *  commands) to the current worker-level retry attempt's own SandboxSession,
+   *  so a superseded attempt's stale rows are never read as if current. */
+  loadEvidenceInputs(runId: string, attempt: number): Promise<ReleaseEvidenceInputs>;
   persistAssessment(
     assessmentId: string,
     scope: ReleaseAssessmentScope,
     assessment: QualityReleaseAssessment,
     evidence: readonly QualityEvidence[],
     now: Date,
+    unresolvedScenarios: readonly UnresolvedAcceptanceScenario[],
   ): Promise<void>;
   persistEvaluatorFailure(
     assessmentId: string,
@@ -97,7 +106,7 @@ export class PrismaReleaseAssessmentRepository implements ReleaseAssessmentRepos
     this.#prisma = prisma;
   }
 
-  async loadEvidenceInputs(runId: string): Promise<ReleaseEvidenceInputs> {
+  async loadEvidenceInputs(runId: string, attempt: number): Promise<ReleaseEvidenceInputs> {
     const run = await this.#prisma.agentRun.findUniqueOrThrow({
       where: { id: runId },
       select: { projectId: true },
@@ -116,8 +125,11 @@ export class PrismaReleaseAssessmentRepository implements ReleaseAssessmentRepos
         orderBy: { ordinal: "asc" },
         select: { id: true, attempt: true, output: true, status: true },
       }),
+      // Scoped to this attempt's own SandboxSession: ordinal is unique only
+      // per session, so an unscoped query across every retry's sessions can
+      // return a superseded attempt's ACCEPTANCE/baseline rows.
       this.#prisma.sandboxCommand.findMany({
-        where: { sandboxSession: { runId } },
+        where: { sandboxSession: { runId, attempt } },
         orderBy: { ordinal: "asc" },
         select: {
           id: true,
@@ -171,6 +183,7 @@ export class PrismaReleaseAssessmentRepository implements ReleaseAssessmentRepos
     assessment: QualityReleaseAssessment,
     evidence: readonly QualityEvidence[],
     now: Date,
+    unresolvedScenarios: readonly UnresolvedAcceptanceScenario[],
   ): Promise<void> {
     await this.#prisma.$transaction(async (transaction) => {
       await transaction.releaseAssessment.upsert({
@@ -254,6 +267,19 @@ export class PrismaReleaseAssessmentRepository implements ReleaseAssessmentRepos
               issueCount: Math.max(assessment.issues.length, 1),
             },
       );
+      for (const unresolved of unresolvedScenarios) {
+        await appendReleaseEvent(
+          transaction,
+          scope.runId,
+          "release.criterion_key_unresolved",
+          {
+            version: "v1",
+            assessmentId,
+            scenario: unresolved.scenario,
+            missingKeys: [...unresolved.missingKeys],
+          },
+        );
+      }
     });
     void now;
   }

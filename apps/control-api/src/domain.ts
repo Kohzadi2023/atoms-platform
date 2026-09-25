@@ -74,6 +74,10 @@ export interface RunStatusPatch {
   readonly cancelledAt?: Date | null;
   readonly startedAt?: Date | null;
   readonly error?: JsonValue | null;
+  /** Reset to null on resume/approve so a run paused again at a later gate
+   *  is eligible for another reminder; the reminder sweeper's CAS filter
+   *  requires this to be null to fire. */
+  readonly reminderSentAt?: Date | null;
 }
 
 export function toProjectResponse(record: ProjectRecord): ProjectResponse {

@@ -23,7 +23,10 @@ const EMMA_OUTPUT = {
       role: "client",
       goal: "see my project status",
       benefit: "I stop emailing",
-      acceptanceCriteria: ["Status is listed", "Only my projects are visible"],
+      acceptanceCriteria: [
+        { key: "status.listed", text: "Status is listed" },
+        { key: "status.own_projects_only", text: "Only my projects are visible" },
+      ],
     },
   ],
   nonGoals: ["Invoicing"],

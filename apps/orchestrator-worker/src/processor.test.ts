@@ -463,7 +463,7 @@ function outputs(options: {
           role: "Customer",
           goal: "View my account",
           benefit: "I can self-serve",
-          acceptanceCriteria: ["The dashboard renders"],
+          acceptanceCriteria: [{ key: "dashboard.renders", text: "The dashboard renders" }],
         },
       ],
       nonGoals: ["Native mobile application"],

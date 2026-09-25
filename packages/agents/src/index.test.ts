@@ -179,7 +179,7 @@ const EMMA_OUTPUT = JSON.stringify({
       role: "customer",
       goal: "view invoices",
       benefit: "pay on time",
-      acceptanceCriteria: ["Invoices are listed"],
+      acceptanceCriteria: [{ key: "invoices.listed", text: "Invoices are listed" }],
     },
   ],
   nonGoals: [],

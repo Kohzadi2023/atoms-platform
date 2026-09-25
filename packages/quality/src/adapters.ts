@@ -17,7 +17,10 @@ import {
 const EmmaCriteriaSchema = z.object({
   userStories: z.array(z.object({
     id: z.string().regex(/^US-[0-9]{3}$/),
-    acceptanceCriteria: z.array(z.string().trim().min(1).max(4_000)).min(1).max(20),
+    acceptanceCriteria: z.array(z.object({
+      key: z.string().regex(/^[a-z][a-z0-9_]*(\.[a-z][a-z0-9_]*)+$/),
+      text: z.string().trim().min(1).max(4_000),
+    })).min(1).max(20),
   })).min(1).max(50),
 });
 
@@ -39,11 +42,63 @@ export function createAcceptanceSnapshot(input: {
     scope: input.scope,
     taskId: input.taskId,
     taskAttempt: input.taskAttempt,
-    criteria: output.userStories.flatMap((story) => story.acceptanceCriteria.map((text, index) => ({
+    criteria: output.userStories.flatMap((story) => story.acceptanceCriteria.map((criterion, index) => ({
       id: `${story.id}:${String(index + 1)}`,
-      text,
+      key: criterion.key,
+      text: criterion.text,
     }))),
   });
+}
+
+export interface CriterionIdResolution {
+  readonly criterionIdsByScenario: Readonly<Record<string, readonly string[]>>;
+  /** A scenario whose configured key(s) matched none of this run's actual
+   *  criteria -- Emma didn't produce (or renamed) the criterion the manifest
+   *  expects, so that key contributes no evidence this run. Surfaced
+   *  explicitly by the caller (e.g. as a run event) instead of silently
+   *  behaving exactly like an unmapped scenario. */
+  readonly unresolvedScenarios: ReadonlyArray<{
+    readonly scenario: string;
+    readonly missingKeys: readonly string[];
+  }>;
+}
+
+/**
+ * Turns a static, project-type scenario map -- keyed by a criterion's stable
+ * semantic key, e.g. "auth.sign_in" -- into the per-run map
+ * evidenceFromAcceptanceRun needs: scenario name -> this run's actual
+ * positional criterion ids. Emma's ids are regenerated every run and cannot
+ * be known ahead of time by a manifest written once per project type; her
+ * keys are stable across runs for the same conceptual requirement, so this
+ * is the resolution step a manifest author's key-based map goes through
+ * before it can be used as evidence input.
+ */
+export function resolveCriterionIdsByScenario(
+  snapshot: AcceptanceSnapshot,
+  criterionKeysByScenario: Readonly<Record<string, readonly string[]>>,
+): CriterionIdResolution {
+  const idsByKey = new Map<string, string[]>();
+  for (const criterion of snapshot.criteria) {
+    const existing = idsByKey.get(criterion.key);
+    if (existing === undefined) idsByKey.set(criterion.key, [criterion.id]);
+    else existing.push(criterion.id);
+  }
+
+  const criterionIdsByScenario: Record<string, readonly string[]> = {};
+  const unresolvedScenarios: Array<{ scenario: string; missingKeys: readonly string[] }> = [];
+  for (const [scenario, keys] of Object.entries(criterionKeysByScenario)) {
+    const ids: string[] = [];
+    const missingKeys: string[] = [];
+    for (const key of keys) {
+      const resolved = idsByKey.get(key);
+      if (resolved === undefined) missingKeys.push(key);
+      else ids.push(...resolved);
+    }
+    if (missingKeys.length > 0) unresolvedScenarios.push({ scenario, missingKeys });
+    if (ids.length > 0) criterionIdsByScenario[scenario] = ids;
+  }
+
+  return { criterionIdsByScenario, unresolvedScenarios };
 }
 
 const ValidationStepSchema = z.object({

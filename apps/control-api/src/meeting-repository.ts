@@ -85,31 +85,45 @@ export class PrismaMeetingControlRepository implements MeetingControlRepository 
       if (project === null) return { kind: "project_not_found" };
     }
 
-    const meeting = await this.#prisma.meeting.create({
-      data: {
-        workspaceId,
-        ...(input.projectId === undefined ? {} : { projectId: input.projectId }),
-        title: input.title,
-        objective: input.objective,
-        expectedOutcome: input.expectedOutcome,
-        decisionQuestion: input.decisionQuestion,
-        ...(input.relevantProjectContext === undefined
-          ? {}
-          : { relevantProjectContext: input.relevantProjectContext }),
-        knownOpenItems: input.knownOpenItems,
-        oliviaAction: {
-          create: {
-            kind: "PREPARE_MEETING_BRIEF",
-            status: "PENDING",
-            targetField: "meetingBrief",
-            prompt,
+    try {
+      const meeting = await this.#prisma.meeting.create({
+        data: {
+          workspaceId,
+          ...(input.projectId === undefined ? {} : { projectId: input.projectId }),
+          title: input.title,
+          objective: input.objective,
+          expectedOutcome: input.expectedOutcome,
+          decisionQuestion: input.decisionQuestion,
+          ...(input.relevantProjectContext === undefined
+            ? {}
+            : { relevantProjectContext: input.relevantProjectContext }),
+          knownOpenItems: input.knownOpenItems,
+          oliviaAction: {
+            create: {
+              kind: "PREPARE_MEETING_BRIEF",
+              status: "PENDING",
+              targetField: "meetingBrief",
+              prompt,
+            },
           },
         },
-      },
-      include: { oliviaAction: true },
-    });
+        include: { oliviaAction: true },
+      });
 
-    return { kind: "ok", meeting: toMeetingRecord(meeting) };
+      return { kind: "ok", meeting: toMeetingRecord(meeting) };
+    } catch (error) {
+      // A concurrent request can win the same (workspaceId, title) race; treat the
+      // conflict as success and hand back whichever row actually landed, instead of
+      // failing one of two legitimate simultaneous "prepare this meeting" callers.
+      if (prismaErrorCode(error) === "P2002") {
+        const existing = await this.#prisma.meeting.findUnique({
+          where: { workspaceId_title: { workspaceId, title: input.title } },
+          include: { oliviaAction: true },
+        });
+        if (existing !== null) return { kind: "ok", meeting: toMeetingRecord(existing) };
+      }
+      throw error;
+    }
   }
 
   async listMeetings(workspaceId: string): Promise<readonly MeetingRecord[]> {
@@ -157,14 +171,25 @@ export class PrismaMeetingControlRepository implements MeetingControlRepository 
         } as const;
       }
 
-      await tx.oliviaAssistedAction.update({
-        where: { meetingId },
+      // Compare-and-set on status: two concurrent completions raced past the read
+      // above would otherwise both pass and the second silently overwrite the
+      // first, despite the "already_completed" check just above intending to
+      // prevent exactly that.
+      const { count } = await tx.oliviaAssistedAction.updateMany({
+        where: { meetingId, status: { not: "COMPLETED" } },
         data: {
           response,
           status: "COMPLETED",
           completedAt: now,
         },
       });
+      if (count === 0) {
+        const raced = await tx.meeting.findUniqueOrThrow({
+          where: { id: meetingId },
+          include: { oliviaAction: true },
+        });
+        return { kind: "already_completed", meeting: toMeetingRecord(raced) } as const;
+      }
       const meeting = await tx.meeting.update({
         where: { id: meetingId },
         data: {
@@ -176,6 +201,18 @@ export class PrismaMeetingControlRepository implements MeetingControlRepository 
       return { kind: "ok", meeting: toMeetingRecord(meeting) } as const;
     });
   }
+}
+
+function prismaErrorCode(error: unknown): string | undefined {
+  if (
+    typeof error === "object" &&
+    error !== null &&
+    "code" in error &&
+    typeof error.code === "string"
+  ) {
+    return error.code;
+  }
+  return undefined;
 }
 
 function toMeetingRecord(record: PrismaMeetingWithAction): MeetingRecord {

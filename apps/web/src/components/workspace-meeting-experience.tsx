@@ -9,6 +9,7 @@ import {
   AlertTriangle,
   ArrowLeft,
   LoaderCircle,
+  LogOut,
   RefreshCcw,
   Sparkles,
 } from "lucide-react";
@@ -21,6 +22,7 @@ import {
 } from "../lib/control-api";
 import { OliviaMeetingBriefAction } from "./olivia-meeting-brief-action";
 import {
+  Feedback,
   WorkspaceShell,
   type WorkspaceShellProps,
 } from "./workspace-shell";
@@ -32,7 +34,7 @@ const DEVELOPMENT_ACCESS_TOKEN_PROVIDER = createDevelopmentAccessTokenProvider({
   configuredToken: process.env.NEXT_PUBLIC_CONTROL_API_ACCESS_TOKEN,
 });
 
-const GENESISCO_MEETING: CreateMeetingInput = {
+export const GENESISCO_MEETING: CreateMeetingInput = {
   title: "Genesisco production execution readiness",
   objective:
     "Determine the safe path from the current parked staging state to production-ready live execution for Genesisco.",
@@ -60,6 +62,14 @@ export function WorkspaceExperience(props: WorkspaceShellProps = {}) {
         {...(props.accessTokenProvider === undefined
           ? {}
           : { accessTokenProvider: props.accessTokenProvider })}
+        signingOut={props.signingOut ?? false}
+        {...(props.onSignOut === undefined ? {} : { onSignOut: props.onSignOut })}
+        {...(props.authenticationError === undefined
+          ? {}
+          : { authenticationError: props.authenticationError })}
+        {...(props.onDismissAuthenticationError === undefined
+          ? {}
+          : { onDismissAuthenticationError: props.onDismissAuthenticationError })}
         onBack={() => setView("workspace")}
       />
     );
@@ -82,11 +92,19 @@ export function WorkspaceExperience(props: WorkspaceShellProps = {}) {
   );
 }
 
-function WorkspaceMeetingPreparation({
+export function WorkspaceMeetingPreparation({
   accessTokenProvider = DEVELOPMENT_ACCESS_TOKEN_PROVIDER,
+  signingOut = false,
+  onSignOut,
+  authenticationError,
+  onDismissAuthenticationError,
   onBack,
 }: {
   readonly accessTokenProvider?: ControlApiAccessTokenProvider;
+  readonly signingOut?: boolean;
+  readonly onSignOut?: () => void;
+  readonly authenticationError?: string;
+  readonly onDismissAuthenticationError?: () => void;
   readonly onBack: () => void;
 }) {
   const api = useMemo(
@@ -182,23 +200,51 @@ function WorkspaceMeetingPreparation({
           </div>
         </div>
 
-        {workspaces.length > 1 ? (
-          <label className="flex shrink-0 items-center gap-2 text-xs text-[#8f9bad]">
-            <span className="hidden sm:inline">Workspace</span>
-            <select
-              className="max-w-56 rounded-lg border border-[#303846] bg-[#0d121a] px-2.5 py-2 text-xs text-[#d6dee8]"
-              value={workspaceId}
-              onChange={(event) => setWorkspaceId(event.target.value)}
+        <div className="flex shrink-0 items-center gap-2">
+          {workspaces.length > 1 ? (
+            <label className="flex items-center gap-2 text-xs text-[#8f9bad]">
+              <span className="hidden sm:inline">Workspace</span>
+              <select
+                className="max-w-56 rounded-lg border border-[#303846] bg-[#0d121a] px-2.5 py-2 text-xs text-[#d6dee8]"
+                value={workspaceId}
+                onChange={(event) => setWorkspaceId(event.target.value)}
+              >
+                {workspaces.map((workspace) => (
+                  <option key={workspace.id} value={workspace.id}>
+                    {workspace.name}
+                  </option>
+                ))}
+              </select>
+            </label>
+          ) : null}
+          {onSignOut !== undefined ? (
+            <button
+              className="inline-flex items-center gap-1.5 rounded-lg border border-[#39414d] bg-[#11161e] px-2.5 py-2 text-xs font-semibold text-[#c0cad8] hover:border-[#4a5565] hover:text-white disabled:cursor-not-allowed disabled:opacity-55"
+              type="button"
+              disabled={signingOut}
+              aria-label="Sign out of Atoms"
+              onClick={onSignOut}
             >
-              {workspaces.map((workspace) => (
-                <option key={workspace.id} value={workspace.id}>
-                  {workspace.name}
-                </option>
-              ))}
-            </select>
-          </label>
-        ) : null}
+              {signingOut ? (
+                <LoaderCircle className="animate-spin" size={13} />
+              ) : (
+                <LogOut size={13} />
+              )}
+              <span className="hidden sm:inline">
+                {signingOut ? "Signing out" : "Sign out"}
+              </span>
+            </button>
+          ) : null}
+        </div>
       </div>
+
+      {authenticationError !== undefined ? (
+        <Feedback
+          kind="error"
+          message={authenticationError}
+          onClose={onDismissAuthenticationError ?? (() => undefined)}
+        />
+      ) : null}
 
       {error !== undefined ? (
         <main className="grid min-h-[calc(100vh-4rem)] place-items-center px-4 py-10">
@@ -231,6 +277,7 @@ function WorkspaceMeetingPreparation({
         </main>
       ) : (
         <OliviaMeetingBriefAction
+          key={meeting.id}
           context={{
             title: meeting.title,
             objective: meeting.objective,

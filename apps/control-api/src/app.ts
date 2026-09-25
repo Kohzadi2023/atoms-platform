@@ -920,7 +920,7 @@ function resolveRunTransition(
     case "approve":
       if (currentStatus !== "PAUSED") invalid();
       return {
-        patch: { status: "PENDING", pausedAt: null },
+        patch: { status: "PENDING", pausedAt: null, reminderSentAt: null },
         enqueue: true,
       };
     case "cancel":

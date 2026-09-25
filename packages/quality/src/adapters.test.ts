@@ -6,6 +6,7 @@ import type { ValidationStepReport } from "@atoms/sandbox-provider";
 
 import {
   createAcceptanceSnapshot, evidenceFromAcceptanceRun, evidenceFromValidationStep, fingerprintProjectSnapshot,
+  resolveCriterionIdsByScenario,
   QualityInputError,
 } from "./index.js";
 import { scope, uuid } from "./test-fixtures.js";
@@ -15,7 +16,10 @@ const emma: EmmaOutput = {
   targetUsers: ["Members"], nonGoals: [], assumptions: [],
   userStories: [{
     id: "US-001", role: "member", goal: "view a workspace", benefit: "access my files",
-    acceptanceCriteria: ["Own workspace is accessible.", "Foreign workspace is inaccessible."],
+    acceptanceCriteria: [
+      { key: "workspace.own_accessible", text: "Own workspace is accessible." },
+      { key: "workspace.foreign_inaccessible", text: "Foreign workspace is inaccessible." },
+    ],
   }],
 };
 
@@ -30,8 +34,8 @@ function step(): ValidationStepReport {
 test("current EmmaOutput shape maps to stable story and one-based criterion references", () => {
   const snapshot = createAcceptanceSnapshot({ scope, taskId: uuid(4), taskAttempt: 0, output: emma });
   assert.deepEqual(snapshot.criteria, [
-    { id: "US-001:1", text: "Own workspace is accessible." },
-    { id: "US-001:2", text: "Foreign workspace is inaccessible." },
+    { id: "US-001:1", key: "workspace.own_accessible", text: "Own workspace is accessible." },
+    { id: "US-001:2", key: "workspace.foreign_inaccessible", text: "Foreign workspace is inaccessible." },
   ]);
   assert.equal(snapshot.taskId, uuid(4));
   assert.equal(snapshot.taskAttempt, 0);
@@ -47,7 +51,13 @@ test("a retried task keeps its id but a later attempt's snapshot is distinct fro
   const first = createAcceptanceSnapshot({ scope, taskId: uuid(4), taskAttempt: 0, output: emma });
   const revisedEmma: EmmaOutput = {
     ...emma,
-    userStories: [{ ...emma.userStories[0]!, acceptanceCriteria: ["Own workspace is accessible.", "Revised: an admin can archive the workspace."] }],
+    userStories: [{
+      ...emma.userStories[0]!,
+      acceptanceCriteria: [
+        { key: "workspace.own_accessible", text: "Own workspace is accessible." },
+        { key: "workspace.admin_can_archive", text: "Revised: an admin can archive the workspace." },
+      ],
+    }],
   };
   const second = createAcceptanceSnapshot({ scope, taskId: uuid(4), taskAttempt: 1, output: revisedEmma });
   // Same task id and the same positional criterion ids, but the second attempt's criterion text
@@ -162,6 +172,53 @@ test("G3: missing, malformed or schema-invalid stdout yields no evidence and nev
   ]) {
     assert.deepEqual(evidenceFromAcceptanceRun(acceptanceInput(stdout)), []);
   }
+});
+
+test("resolveCriterionIdsByScenario: a scenario's keys resolve to this run's actual ids", () => {
+  const snapshot = createAcceptanceSnapshot({ scope, taskId: uuid(4), taskAttempt: 0, output: emma });
+  const resolution = resolveCriterionIdsByScenario(snapshot, {
+    "home-loads": ["workspace.own_accessible"],
+  });
+  assert.deepEqual(resolution.criterionIdsByScenario, { "home-loads": ["US-001:1"] });
+  assert.deepEqual(resolution.unresolvedScenarios, []);
+});
+
+test("resolveCriterionIdsByScenario: ids are per-run even when Emma renumbers her stories", () => {
+  const reordered: EmmaOutput = {
+    ...emma,
+    userStories: [{
+      id: "US-002",
+      role: "member", goal: "view a workspace", benefit: "access my files",
+      acceptanceCriteria: [
+        { key: "workspace.foreign_inaccessible", text: "Foreign workspace is inaccessible." },
+        { key: "workspace.own_accessible", text: "Own workspace is accessible." },
+      ],
+    }],
+  };
+  const first = createAcceptanceSnapshot({ scope, taskId: uuid(4), taskAttempt: 0, output: emma });
+  const second = createAcceptanceSnapshot({ scope, taskId: uuid(4), taskAttempt: 0, output: reordered });
+  const keys = { "home-loads": ["workspace.own_accessible"] };
+  assert.deepEqual(resolveCriterionIdsByScenario(first, keys).criterionIdsByScenario, { "home-loads": ["US-001:1"] });
+  assert.deepEqual(resolveCriterionIdsByScenario(second, keys).criterionIdsByScenario, { "home-loads": ["US-002:2"] });
+});
+
+test("resolveCriterionIdsByScenario: a key this run's Emma output never produced is reported, not silently dropped", () => {
+  const snapshot = createAcceptanceSnapshot({ scope, taskId: uuid(4), taskAttempt: 0, output: emma });
+  const resolution = resolveCriterionIdsByScenario(snapshot, {
+    "home-loads": ["workspace.own_accessible"],
+    "signed-out-visitor-blocked": ["auth.unauthenticated_redirect"],
+  });
+  assert.deepEqual(resolution.criterionIdsByScenario, { "home-loads": ["US-001:1"] });
+  assert.deepEqual(resolution.unresolvedScenarios, [
+    { scenario: "signed-out-visitor-blocked", missingKeys: ["auth.unauthenticated_redirect"] },
+  ]);
+});
+
+test("resolveCriterionIdsByScenario: an empty scenario map resolves to nothing and flags nothing", () => {
+  const snapshot = createAcceptanceSnapshot({ scope, taskId: uuid(4), taskAttempt: 0, output: emma });
+  const resolution = resolveCriterionIdsByScenario(snapshot, {});
+  assert.deepEqual(resolution.criterionIdsByScenario, {});
+  assert.deepEqual(resolution.unresolvedScenarios, []);
 });
 
 test("snapshot fingerprint rejects duplicate paths, traversal, empty snapshots and missing versions", () => {

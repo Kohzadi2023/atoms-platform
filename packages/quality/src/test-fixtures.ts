@@ -10,8 +10,8 @@ export function fixture(): QualityEvaluationInput {
   const acceptance = {
     taskId: uuid(4), taskAttempt: 0, scope: { ...scope },
     criteria: [
-      { id: "US-001:1", text: "A member can view their workspace." },
-      { id: "US-001:2", text: "Foreign workspaces remain inaccessible." },
+      { id: "US-001:1", key: "workspace.member_can_view", text: "A member can view their workspace." },
+      { id: "US-001:2", key: "workspace.foreign_inaccessible", text: "Foreign workspaces remain inaccessible." },
     ],
   };
   const checks: QualityEvidence[] = STANDARD_RELEASE_POLICY.requiredChecks.map((kind, index) => ({

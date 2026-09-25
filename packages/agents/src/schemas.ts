@@ -18,6 +18,15 @@ export type ActiveMvpAgentName = ActiveAgentName;
 
 const BoundedTextSchema = z.string().trim().min(1).max(20_000);
 const ShortTextSchema = z.string().trim().min(1).max(2_000);
+/** A stable, dot-namespaced semantic identifier ("auth.sign_in") for an
+ *  acceptance criterion, distinct from its per-run positional id (US-001:1).
+ *  G3 (docs/adr/production-execution-gate.md) resolves a static, project-type
+ *  scenario map keyed on this string to whichever dynamic id Emma assigns it
+ *  in a given run -- see @atoms/quality's resolveCriterionIdsByScenario. */
+export const CriterionKeySchema = z
+  .string()
+  .trim()
+  .regex(/^[a-z][a-z0-9_]*(\.[a-z][a-z0-9_]*)+$/, "expected a dot-namespaced key such as \"auth.sign_in\"");
 const EvidenceStatusSchema = z.enum([
   "EVIDENCED",
   "ASSUMPTION",
@@ -197,7 +206,17 @@ export const EmmaOutputSchema = z
             role: ShortTextSchema,
             goal: ShortTextSchema,
             benefit: ShortTextSchema,
-            acceptanceCriteria: z.array(ShortTextSchema).min(1).max(20),
+            acceptanceCriteria: z
+              .array(
+                z
+                  .object({
+                    key: CriterionKeySchema,
+                    text: ShortTextSchema,
+                  })
+                  .strict(),
+              )
+              .min(1)
+              .max(20),
           })
           .strict(),
       )

@@ -80,19 +80,36 @@ export const CLIENT_PORTAL_TESTABILITY_CONTRACT = Object.freeze({
     }),
     password: "FixtureTest123!",
   }),
+  // Stable semantic keys (CriterionKeySchema) that Emma's acceptance criteria
+  // must use for the two G3 scenarios the acceptance manifest can already
+  // check for real (apps/orchestrator-worker/src/acceptance-manifest.ts):
+  // Emma's own per-run criterion ids are positional and regenerated every
+  // run, so the manifest's scenario map is keyed on these instead and a
+  // runtime resolver (@atoms/quality resolveCriterionIdsByScenario) turns a
+  // key into that run's actual id.
+  criterionKeys: Object.freeze({
+    authSignIn: "auth.sign_in",
+    authUnauthenticatedRedirect: "auth.unauthenticated_redirect",
+  }),
 } as const);
 
 const CLIENT_PORTAL_ROUTE_CONVENTION =
   `If the product is a multi-tenant client portal (clients sign in to see their own projects and deliverables), use exactly these routes: ` +
   `${CLIENT_PORTAL_TESTABILITY_CONTRACT.routes.login} for sign-in, ` +
   `${CLIENT_PORTAL_TESTABILITY_CONTRACT.routes.dashboard} for the signed-in client landing page, and ` +
-  `${CLIENT_PORTAL_TESTABILITY_CONTRACT.routes.staff} for the staff landing page.`;
+  `${CLIENT_PORTAL_TESTABILITY_CONTRACT.routes.staff} for the staff landing page. ` +
+  `${CLIENT_PORTAL_TESTABILITY_CONTRACT.routes.dashboard} and ${CLIENT_PORTAL_TESTABILITY_CONTRACT.routes.staff} must be gated: a visitor with no signed-in session who requests either one must be redirected to ` +
+  `${CLIENT_PORTAL_TESTABILITY_CONTRACT.routes.login}, not shown the page.`;
 
 const CLIENT_PORTAL_TESTID_CONVENTION =
   `For a client portal, give the sign-in email field, password field and submit control the data-testid attributes ` +
   `"${CLIENT_PORTAL_TESTABILITY_CONTRACT.testIds.loginEmail}", "${CLIENT_PORTAL_TESTABILITY_CONTRACT.testIds.loginPassword}", ` +
   `"${CLIENT_PORTAL_TESTABILITY_CONTRACT.testIds.loginSubmit}", and give the primary deliverable-approval control ` +
   `"${CLIENT_PORTAL_TESTABILITY_CONTRACT.testIds.approveDeliverable}". Add no other data-testid attributes.`;
+
+const CLIENT_PORTAL_CRITERION_KEY_CONVENTION =
+  `Give every acceptance criterion a short, stable, dot-namespaced key in addition to its text (lowercase words, "_" within a segment, "." between segments), e.g. "auth.sign_in" -- a key names what the criterion is about and must stay the same across runs for the same conceptual requirement, unlike the story/criterion numbering, which is positional. ` +
+  `If the product is a multi-tenant client portal: the criterion for a client successfully signing in must use the key "${CLIENT_PORTAL_TESTABILITY_CONTRACT.criterionKeys.authSignIn}", and the criterion for a signed-out visitor being redirected away from a protected page must use the key "${CLIENT_PORTAL_TESTABILITY_CONTRACT.criterionKeys.authUnauthenticatedRedirect}".`;
 
 const CLIENT_PORTAL_FIXTURE_SEED_CONVENTION =
   `If the product is a multi-tenant client portal, the seed file must create at least two tenants, each with one staff-role user and one client-role user, ` +
@@ -132,9 +149,9 @@ export const agentManifests: AgentManifestMap = {
     name: "Emma",
     version: "1.1.0",
     objective: "Turn the request into bounded product requirements and acceptance criteria.",
-    instructions: `${sharedRules} Resolve the supported PoC scope, make assumptions explicit, and use sequential story IDs such as US-001. Use Sophia's market/ICP findings to sharpen users, pains, scope, and value only where the evidence status supports it. ${REFERENCE_CONTRACT}`,
+    instructions: `${sharedRules} Resolve the supported PoC scope, make assumptions explicit, and use sequential story IDs such as US-001. Use Sophia's market/ICP findings to sharpen users, pains, scope, and value only where the evidence status supports it. ${CLIENT_PORTAL_CRITERION_KEY_CONVENTION} ${REFERENCE_CONTRACT}`,
     schemaHint:
-      '{"productName":string,"problemStatement":string,"targetUsers":string[],"userStories":[{"id":"US-001","role":string,"goal":string,"benefit":string,"acceptanceCriteria":string[]}],"nonGoals":string[],"assumptions":string[]}',
+      '{"productName":string,"problemStatement":string,"targetUsers":string[],"userStories":[{"id":"US-001","role":string,"goal":string,"benefit":string,"acceptanceCriteria":[{"key":"auth.sign_in","text":string}]}],"nonGoals":string[],"assumptions":string[]}',
     policy: "flagship",
     maxOutputTokens: 6_000,
     acceptsReferences: true,

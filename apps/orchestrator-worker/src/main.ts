@@ -63,7 +63,7 @@ import { WorkerReadinessPublisher } from "./readiness-publisher.js";
 import { createThrottledLogger } from "./throttled-log.js";
 import { QueueRedisModeSchema, createRedisClient } from "@atoms/queue-connection";
 import {
-  CLIENT_PORTAL_CRITERION_IDS_BY_SCENARIO,
+  CLIENT_PORTAL_CRITERION_KEYS_BY_SCENARIO,
   getAcceptanceManifest,
 } from "./acceptance-manifest.js";
 
@@ -380,7 +380,7 @@ async function main(): Promise<void> {
   });
   const releaseAssessor = new DeterministicReleaseAssessor({
     repository: new PrismaReleaseAssessmentRepository(prisma),
-    criterionIdsByScenario: CLIENT_PORTAL_CRITERION_IDS_BY_SCENARIO,
+    criterionKeysByScenario: CLIENT_PORTAL_CRITERION_KEYS_BY_SCENARIO,
   });
   const processor = new RunProcessor({
     repository,

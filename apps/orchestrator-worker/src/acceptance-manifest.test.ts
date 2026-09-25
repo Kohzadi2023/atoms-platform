@@ -6,7 +6,7 @@ import { AcceptanceManifestSchema } from "@atoms/sandbox-provider";
 
 import {
   CLIENT_PORTAL_ACCEPTANCE_MANIFEST,
-  CLIENT_PORTAL_CRITERION_IDS_BY_SCENARIO,
+  CLIENT_PORTAL_CRITERION_KEYS_BY_SCENARIO,
   getAcceptanceManifest,
 } from "./acceptance-manifest.js";
 
@@ -52,8 +52,24 @@ test("scenario names are unique (the manifest schema itself would reject a dupli
   assert.equal(new Set(names).size, names.length);
 });
 
-// Documents the known, deliberate gap rather than letting it be discovered by
-// a run silently staying BLOCKED with no explanation in this codebase.
-test("the criterion map stays empty until a human assigns real, per-run criterion ids", () => {
-  assert.deepEqual(CLIENT_PORTAL_CRITERION_IDS_BY_SCENARIO, {});
+// Every scenario name used as a key here must be a real scenario in the
+// manifest above, or the mapping would silently target nothing.
+test("every scenario in the criterion-key map is a real scenario in the manifest", () => {
+  const scenarioNames = new Set(CLIENT_PORTAL_ACCEPTANCE_MANIFEST.scenarios.map((scenario) => scenario.name));
+  for (const scenario of Object.keys(CLIENT_PORTAL_CRITERION_KEYS_BY_SCENARIO)) {
+    assert.ok(scenarioNames.has(scenario), `"${scenario}" is not a scenario in the manifest`);
+  }
+});
+
+// This file and Emma's live instructions (packages/agents/src/manifests.ts)
+// must quote the exact same semantic keys, the same drift concern as the
+// route/testid/fixture test above -- Emma's positional criterion ids are
+// regenerated every run, so the manifest can only ever target her stable
+// keys, and only if those keys match what her prompt actually asks for.
+test("every criterion key in the map comes from the shared testability contract", () => {
+  const keys = CLIENT_PORTAL_TESTABILITY_CONTRACT.criterionKeys;
+  assert.deepEqual(CLIENT_PORTAL_CRITERION_KEYS_BY_SCENARIO, {
+    "client-sign-in": [keys.authSignIn],
+    "signed-out-visitor-blocked": [keys.authUnauthenticatedRedirect],
+  });
 });

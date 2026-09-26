@@ -171,6 +171,7 @@ class MemoryRepository implements ControlRepository {
       eventSequence: 0,
       controlVersion: 0,
       error: null,
+      pendingApproval: null,
       createdAt: FIXED_NOW,
       updatedAt: FIXED_NOW,
       startedAt: null,

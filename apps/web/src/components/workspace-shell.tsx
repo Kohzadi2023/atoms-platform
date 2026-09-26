@@ -307,6 +307,19 @@ export function WorkspaceShell({
     return () => controller.abort();
   }, [api, refreshArtifacts, refreshFiles]);
 
+  // The run's own pendingApproval (derived server-side from its latest approval.required
+  // event) is a single-fetch source of truth for the Approve action, independent of
+  // whether this client has replayed that event over SSE yet -- a reconnect or a slow
+  // backfill must never leave the customer stuck looking at a plain Resume button.
+  useEffect(() => {
+    if (run === undefined) return;
+    setProjection((current) => ({
+      ...current,
+      approvalScope: run.pendingApproval?.scope,
+      approvalReason: run.pendingApproval?.reason,
+    }));
+  }, [run]);
+
   useEffect(() => {
     if (run === undefined) return;
     const controller = new AbortController();

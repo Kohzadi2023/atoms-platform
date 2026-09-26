@@ -71,9 +71,12 @@ export const PINNED_GEMINI_PRICING: Readonly<Record<string, ModelPricing>> = {
   },
 };
 
+// Google's published per-model output-token ceiling (ai.google.dev/gemini-api/docs/models),
+// not a pricing figure -- the 2.5 series raised this to 65,536; 2.0 Flash stayed at 8,192.
+// A run that requests more than this fails the pre-call budget check before any API call.
 export const PINNED_GEMINI_OUTPUT_LIMITS: Readonly<Record<string, number>> = {
-  "gemini-2.5-pro": 8_192,
-  "gemini-2.5-flash": 8_192,
+  "gemini-2.5-pro": 65_536,
+  "gemini-2.5-flash": 65_536,
   "gemini-2.0-flash": 8_192,
 };
 

@@ -3,6 +3,7 @@ import type {
   AgentRunStatus,
   FileContentResponse,
   JsonValue,
+  PendingApproval,
   ProjectFileSummary,
   ProjectResponse,
   ProjectType,
@@ -34,6 +35,8 @@ export interface RunRecord {
   readonly eventSequence: number;
   readonly controlVersion: number;
   readonly error: JsonValue | null;
+  /** Derived from the run's most recent approval.required event; see PrismaControlRepository.getRun. */
+  readonly pendingApproval: PendingApproval | null;
   readonly createdAt: Date;
   readonly updatedAt: Date;
   readonly startedAt: Date | null;
@@ -104,6 +107,7 @@ export function toRunResponse(record: RunRecord): RunResponse {
     eventSequence: record.eventSequence,
     controlVersion: record.controlVersion,
     error: record.error,
+    pendingApproval: record.pendingApproval,
     createdAt: record.createdAt.toISOString(),
     updatedAt: record.updatedAt.toISOString(),
     startedAt: record.startedAt?.toISOString() ?? null,

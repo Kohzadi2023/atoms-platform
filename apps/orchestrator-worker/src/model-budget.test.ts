@@ -10,6 +10,10 @@ import type {
 
 import {
   BudgetedModelGateway,
+  PINNED_GEMINI_MODELS,
+  PINNED_GEMINI_OUTPUT_LIMITS,
+  PINNED_GEMINI_PRICING,
+  PINNED_OPENAI_MODELS,
   PINNED_OPENAI_OUTPUT_LIMITS,
   PINNED_OPENAI_PRICING,
   ProviderBudgetError,
@@ -409,3 +413,19 @@ test("a failed actual-cost write does not fail or discard a paid provider respon
 
   assert.equal(response.status, "completed");
 });
+
+// Gemini pilot (2026-09-24): every model a policy can route to must have both
+// a pricing entry (or reservation throws PROVIDER_MODEL_NOT_BUDGETED, see
+// reserveConservativeCostUsdMicros) and an output-token limit, same invariant
+// PINNED_OPENAI_* already had to hold, now checked for both providers.
+for (const [label, models, pricing, outputLimits] of [
+  ["openai", PINNED_OPENAI_MODELS, PINNED_OPENAI_PRICING, PINNED_OPENAI_OUTPUT_LIMITS],
+  ["gemini", PINNED_GEMINI_MODELS, PINNED_GEMINI_PRICING, PINNED_GEMINI_OUTPUT_LIMITS],
+] as const) {
+  test(`every ${label} policy routes to a model with pinned pricing and an output limit`, () => {
+    for (const model of Object.values(models)) {
+      assert.ok(pricing[model], `${label}: ${model} has no pinned pricing`);
+      assert.ok(outputLimits[model], `${label}: ${model} has no pinned output limit`);
+    }
+  });
+}

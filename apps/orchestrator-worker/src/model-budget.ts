@@ -41,6 +41,45 @@ export const PINNED_OPENAI_OUTPUT_LIMITS: Readonly<Record<string, number>> = {
   "gpt-4o-mini-2024-07-18": 16_384,
 };
 
+export const PINNED_GEMINI_MODELS: Readonly<Record<ModelPolicy, string>> = {
+  flagship: "gemini-2.5-pro",
+  balanced: "gemini-2.5-flash",
+  fast: "gemini-2.5-flash",
+  fallback: "gemini-2.0-flash",
+};
+
+// Approximate, rounded UP from Google's published Gemini API pricing as of
+// 2026-09-24 -- deliberately conservative (this is the same table the
+// pre-call reservation in reserveConservativeCostUsdMicros uses, not only
+// response telemetry, so an underestimate here would under-reserve). Verify
+// the current rates at ai.google.dev/pricing before relying on this for real
+// spend beyond a small, capped pilot: RUN_PROVIDER_BUDGET_USD_MICROS and
+// WORKSPACE_PROVIDER_BUDGET_USD_MICROS_PER_DAY are the actual hard ceilings
+// regardless of how accurate this table is.
+export const PINNED_GEMINI_PRICING: Readonly<Record<string, ModelPricing>> = {
+  "gemini-2.5-pro": {
+    inputUsdPerMillionTokens: 2.5,
+    outputUsdPerMillionTokens: 15,
+  },
+  "gemini-2.5-flash": {
+    inputUsdPerMillionTokens: 0.5,
+    outputUsdPerMillionTokens: 3.5,
+  },
+  "gemini-2.0-flash": {
+    inputUsdPerMillionTokens: 0.15,
+    outputUsdPerMillionTokens: 0.6,
+  },
+};
+
+// Google's published per-model output-token ceiling (ai.google.dev/gemini-api/docs/models),
+// not a pricing figure -- the 2.5 series raised this to 65,536; 2.0 Flash stayed at 8,192.
+// A run that requests more than this fails the pre-call budget check before any API call.
+export const PINNED_GEMINI_OUTPUT_LIMITS: Readonly<Record<string, number>> = {
+  "gemini-2.5-pro": 65_536,
+  "gemini-2.5-flash": 65_536,
+  "gemini-2.0-flash": 8_192,
+};
+
 export class ProviderBudgetError extends Error {
   override readonly name = "ProviderBudgetError";
   readonly retryable = false;

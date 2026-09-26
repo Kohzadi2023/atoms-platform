@@ -112,7 +112,7 @@ export const agentManifests: AgentManifestMap = {
     schemaHint:
       '{"summary":string,"marketDefinition":{"targetCustomer":string,"geography":string[],"segments":string[],"jobsToBeDone":string[]},"icp":{"primarySegment":string,"firmographics":string[],"painPoints":string[],"buyingTriggers":string[],"objections":string[]},"competitors":[{"name":string,"category":"DIRECT|ADJACENT|SUBSTITUTE","positioning":string,"strengths":string[],"weaknesses":string[],"evidenceStatus":"EVIDENCED|ASSUMPTION|RESEARCH_REQUIRED","source":string|null}],"marketSizing":{"tam":{"estimate":string|null,"basis":string,"evidenceStatus":"EVIDENCED|ASSUMPTION|RESEARCH_REQUIRED"},"sam":{"estimate":string|null,"basis":string,"evidenceStatus":"EVIDENCED|ASSUMPTION|RESEARCH_REQUIRED"},"som":{"estimate":string|null,"basis":string,"evidenceStatus":"EVIDENCED|ASSUMPTION|RESEARCH_REQUIRED"}},"pricing":{"observedBenchmarks":string[],"hypotheses":string[]},"positioning":{"category":string,"wedge":string,"differentiators":string[],"alternatives":string[]},"risks":[{"risk":string,"impact":"LOW|MEDIUM|HIGH","mitigation":string}],"claims":[{"claim":string,"evidenceStatus":"EVIDENCED|ASSUMPTION|RESEARCH_REQUIRED","source":string|null}],"researchRequests":[{"question":string,"priority":"LOW|MEDIUM|HIGH","reason":string}]}',
     policy: "flagship",
-    maxOutputTokens: 12_000,
+    maxOutputTokens: 16_000,
     acceptsReferences: true,
     outputSchema: AgentOutputSchemas.Sophia,
   },
@@ -124,7 +124,7 @@ export const agentManifests: AgentManifestMap = {
     schemaHint:
       '{"summary":string,"taskGraph":[{"key":kebab-case,"agent":"Sophia|Mike|Emma|Bob|Alex|David|Sarah|Adrian","description":string,"dependsOn":string[],"acceptanceCriteria":string[],"maxAttempts":1|2|3}],"assumptions":string[],"requiresApproval":boolean}',
     policy: "balanced",
-    maxOutputTokens: 4_000,
+    maxOutputTokens: 16_000,
     acceptsReferences: false,
     outputSchema: AgentOutputSchemas.Mike,
   },
@@ -136,7 +136,7 @@ export const agentManifests: AgentManifestMap = {
     schemaHint:
       '{"productName":string,"problemStatement":string,"targetUsers":string[],"userStories":[{"id":"US-001","role":string,"goal":string,"benefit":string,"acceptanceCriteria":string[]}],"nonGoals":string[],"assumptions":string[]}',
     policy: "flagship",
-    maxOutputTokens: 6_000,
+    maxOutputTokens: 16_000,
     acceptsReferences: true,
     outputSchema: AgentOutputSchemas.Emma,
   },
@@ -148,7 +148,7 @@ export const agentManifests: AgentManifestMap = {
     schemaHint:
       '{"architectureSummary":string,"routes":[{"method":"GET|POST|PUT|PATCH|DELETE","path":string,"purpose":string}],"components":string[],"dataModels":string[],"schemaPrisma":string,"decisions":string[]}',
     policy: "flagship",
-    maxOutputTokens: 10_000,
+    maxOutputTokens: 16_000,
     acceptsReferences: false,
     outputSchema: AgentOutputSchemas.Bob,
   },
@@ -186,7 +186,7 @@ export const agentManifests: AgentManifestMap = {
     schemaHint:
       '{"summary":string,"seoPackage":{"version":"v1","sitemapXml":string,"robotsTxt":string,"routeMetadata":[{"routePath":string,"title":string,"description":string,"canonicalUrl":string|null}],"findings":[{"severity":"INFO|WARNING|BLOCKING","subject":string,"recommendation":string}]}}',
     policy: "balanced",
-    maxOutputTokens: 8_000,
+    maxOutputTokens: 16_000,
     acceptsReferences: false,
     outputSchema: AgentOutputSchemas.Sarah,
   },
@@ -199,7 +199,7 @@ export const agentManifests: AgentManifestMap = {
     schemaHint:
       '{"summary":string,"contentPackage":{"version":"v1","audience":string,"valuePropositions":string[],"ctaVariants":[{"id":string,"headline":string,"body":string,"ctaLabel":string}],"adVariants":[{"channel":"SEARCH|SOCIAL|DISPLAY|EMAIL","headline":string,"body":string,"ctaLabel":string|null}],"claimsRequiringEvidence":[{"claim":string,"evidenceStatus":"REQUIRED|PROVIDED","notes":string|null}]}}',
     policy: "balanced",
-    maxOutputTokens: 8_000,
+    maxOutputTokens: 16_000,
     acceptsReferences: false,
     outputSchema: AgentOutputSchemas.Adrian,
   },
@@ -212,7 +212,7 @@ export const agentManifests: AgentManifestMap = {
     schemaHint:
       '{"summary":string,"customerSuccessPackage":{"version":"v1","onboardingMilestones":[{"id":string,"name":string,"description":string,"owner":"CUSTOMER|CUSTOMER_SUCCESS|SHARED","status":"NOT_STARTED|IN_PROGRESS|COMPLETED|BLOCKED","targetDate":string|null}],"activationMilestones":[{"id":string,"milestoneName":string,"definitionOfFirstValue":string,"achieved":boolean,"achievedAt":string|null,"evidenceStatus":"EVIDENCED|ASSUMPTION|RESEARCH_REQUIRED"}],"healthSignals":[{"id":string,"signal":string,"severity":"HEALTHY|AT_RISK|CRITICAL","observedEvidence":string,"recommendation":string}],"churnRisk":{"riskLevel":"LOW|MEDIUM|HIGH","primaryDrivers":string[],"mitigationPlan":string[]},"retentionProposals":[{"id":string,"type":"RENEWAL|EXPANSION|WIN_BACK","rationale":string,"proposedAction":string,"requiresApproval":true,"approvalReason":"DISCOUNT|CONTRACT_CHANGE|BILLING_CHANGE|EXTERNAL_COMMUNICATION|ACCOUNT_CHANGE"}]}}',
     policy: "balanced",
-    maxOutputTokens: 8_000,
+    maxOutputTokens: 16_000,
     acceptsReferences: false,
     outputSchema: AgentOutputSchemas.CustomerSuccess,
   },

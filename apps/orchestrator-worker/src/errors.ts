@@ -113,6 +113,29 @@ export function classifyRunFailure(error: unknown): RunFailureReason {
   return providerSeen ? "FAILED_PROVIDER" : "FAILED_INTERNAL";
 }
 
+/**
+ * The persisted run.error stays a small, stable shape (code/name/message/retryable/
+ * reason) -- it is returned to API clients, so it must never carry a full Zod issue
+ * list. That list is exactly what's needed to fix a real INVALID_AGENT_OUTPUT failure
+ * though, so log it to console (picked up by Log Analytics) instead of dropping it.
+ */
+function logAgentOutputValidationIssues(error: unknown): void {
+  let current = error;
+  const seen = new Set<unknown>();
+  for (let depth = 0; depth < 10 && current !== undefined; depth += 1) {
+    if (typeof current !== "object" || current === null || seen.has(current)) return;
+    seen.add(current);
+    if (current instanceof ZodError) {
+      console.error(
+        "Agent output failed schema validation",
+        JSON.stringify(current.issues),
+      );
+      return;
+    }
+    current = "cause" in current ? current.cause : undefined;
+  }
+}
+
 export function toWorkerError(error: unknown): JsonValue {
   const stopped = findRunStoppedError(error);
   const effective = stopped ?? error;
@@ -126,6 +149,8 @@ export function toWorkerError(error: unknown): JsonValue {
     typeof effective.code === "string"
       ? effective.code
       : name;
+
+  if (code === "INVALID_AGENT_OUTPUT") logAgentOutputValidationIssues(error);
 
   return {
     code,

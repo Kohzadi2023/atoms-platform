@@ -30,6 +30,7 @@ const RUN_ID = "00000000-0000-4000-8000-000000000001";
 class FakeGateway implements RoutedModelGateway {
   generateCalls = 0;
   streamCalls = 0;
+  lastRequest: ModelRequest | undefined;
 
   resolveModel(_policy: ModelPolicy): string {
     return MODEL;
@@ -37,6 +38,7 @@ class FakeGateway implements RoutedModelGateway {
 
   async generate(request: ModelRequest): Promise<ModelResponse> {
     this.generateCalls += 1;
+    this.lastRequest = request;
     return {
       id: "response-1",
       provider: "openai",
@@ -291,13 +293,26 @@ test("rejects malformed or non-UTF-8 text references", () => {
   }
 });
 
-test("rejects a model output request above the pinned provider limit", () => {
-  assert.throws(
-    () => estimate(request({ maxOutputTokens: 16_385 })),
-    (error: unknown) =>
-      error instanceof ProviderBudgetError &&
-      error.code === "PROVIDER_OUTPUT_LIMIT_EXCEEDED",
-  );
+test("a request above the pinned provider limit is priced at the clamped amount, not rejected", () => {
+  const atLimit = estimate(request({ maxOutputTokens: 16_384 }));
+  const aboveLimit = estimate(request({ maxOutputTokens: 16_385 }));
+  assert.equal(aboveLimit, atLimit);
+});
+
+test("the outgoing request to the provider carries the clamped maxOutputTokens, not the manifest's raw value", async () => {
+  const gateway = new FakeGateway();
+  const store = new FakeBudgetStore();
+  const budgeted = new BudgetedModelGateway({
+    gateway,
+    budgetStore: store,
+    totalBudgetUsdMicros: 2_000_000,
+    pricing: PINNED_OPENAI_PRICING,
+    outputTokenLimits: PINNED_OPENAI_OUTPUT_LIMITS,
+  });
+
+  await budgeted.generate(request({ maxOutputTokens: 32_000 }));
+
+  assert.equal(gateway.lastRequest?.maxOutputTokens, 16_384);
 });
 
 test("reserves the stream budget before the first provider stream event", async () => {

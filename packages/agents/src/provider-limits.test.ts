@@ -3,13 +3,22 @@ import test from "node:test";
 
 import { agentManifests } from "./manifests.js";
 
-const PINNED_TEXT_OUTPUT_LIMIT = 16_384;
+// A manifest's maxOutputTokens is a shared, provider-agnostic request: the
+// orchestrator-worker's BudgetedModelGateway clamps it down to whichever active
+// model's real ceiling is lower (e.g. GPT-4o's 16,384) before the call goes out,
+// so this only needs to guard against an unreasonable value, not any one
+// provider's specific limit.
+const SANITY_UPPER_BOUND = 100_000;
 
-test("all agent max output requests fit the pinned OpenAI text model limit", () => {
+test("every agent requests a positive, sane maxOutputTokens", () => {
   for (const [name, manifest] of Object.entries(agentManifests)) {
     assert.ok(
-      manifest.maxOutputTokens <= PINNED_TEXT_OUTPUT_LIMIT,
-      `${name} requests ${String(manifest.maxOutputTokens)} tokens, above ${String(PINNED_TEXT_OUTPUT_LIMIT)}`,
+      Number.isInteger(manifest.maxOutputTokens) && manifest.maxOutputTokens > 0,
+      `${name} must request a positive integer maxOutputTokens`,
+    );
+    assert.ok(
+      manifest.maxOutputTokens <= SANITY_UPPER_BOUND,
+      `${name} requests ${String(manifest.maxOutputTokens)} tokens, above the ${String(SANITY_UPPER_BOUND)} sanity bound`,
     );
   }
 });

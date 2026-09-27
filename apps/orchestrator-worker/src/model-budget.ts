@@ -179,15 +179,15 @@ export class BudgetedModelGateway implements ModelGateway {
   }
 
   async generate(request: ModelRequest): Promise<ModelResponse> {
-    const runId = await this.#reserve(request);
-    const response = await this.#gateway.generate(request);
+    const { runId, request: outgoing } = await this.#reserve(request);
+    const response = await this.#gateway.generate(outgoing);
     await this.#recordActual(runId, response);
     return response;
   }
 
   async *stream(request: ModelRequest): AsyncIterable<ModelStreamEvent> {
-    const runId = await this.#reserve(request);
-    for await (const event of this.#gateway.stream(request)) {
+    const { runId, request: outgoing } = await this.#reserve(request);
+    for await (const event of this.#gateway.stream(outgoing)) {
       if (event.type === "completed") {
         await this.#recordActual(runId, event.response);
       }
@@ -208,7 +208,9 @@ export class BudgetedModelGateway implements ModelGateway {
     }
   }
 
-  async #reserve(request: ModelRequest): Promise<string> {
+  async #reserve(
+    request: ModelRequest,
+  ): Promise<{ readonly runId: string; readonly request: ModelRequest }> {
     if (this.#totalBudgetUsdMicros === 0) {
       throw new ProviderBudgetError(
         "PROVIDER_BUDGET_DISABLED",
@@ -224,9 +226,20 @@ export class BudgetedModelGateway implements ModelGateway {
       );
     }
 
+    const model = this.#gateway.resolveModel(request.policy);
+    const maxOutputTokens = resolveMaxOutputTokens({
+      requested: request.maxOutputTokens,
+      model,
+      outputTokenLimits: this.#outputTokenLimits,
+    });
+    const clamped: ModelRequest =
+      maxOutputTokens === request.maxOutputTokens
+        ? request
+        : { ...request, maxOutputTokens };
+
     const reservationUsdMicros = estimateTextRequestReservationUsdMicros({
-      request,
-      model: this.#gateway.resolveModel(request.policy),
+      request: clamped,
+      model,
       pricing: this.#pricing,
       outputTokenLimits: this.#outputTokenLimits,
       safetyMultiplier: this.#safetyMultiplier,
@@ -253,8 +266,41 @@ export class BudgetedModelGateway implements ModelGateway {
         `Provider request reservation ${String(reservationUsdMicros)} micro-USD exceeds remaining run budget ${String(reservation.remainingUsdMicros)} micro-USD`,
       );
     }
-    return runId;
+    return { runId, request: clamped };
   }
+}
+
+/**
+ * Manifests (packages/agents) express one maxOutputTokens per agent shared across
+ * every provider, but each pinned model's real ceiling differs (Gemini 2.5 is far
+ * above GPT-4o's 16,384). Clamping here -- instead of rejecting a request above the
+ * active model's limit -- lets a manifest ask for what a heavy agent (e.g. David's
+ * migrations+seed+files) actually needs on a generous provider without that same
+ * number failing closed on a stricter one.
+ */
+export function resolveMaxOutputTokens(input: {
+  readonly requested: number | undefined;
+  readonly model: string;
+  readonly outputTokenLimits: Readonly<Record<string, number>>;
+}): number {
+  if (
+    input.requested === undefined ||
+    !Number.isInteger(input.requested) ||
+    input.requested < 1
+  ) {
+    throw new ProviderBudgetError(
+      "PROVIDER_BUDGET_OUTPUT_LIMIT_REQUIRED",
+      "Budgeted provider calls require an explicit positive maxOutputTokens value",
+    );
+  }
+  const outputLimit = input.outputTokenLimits[input.model];
+  if (outputLimit === undefined) {
+    throw new ProviderBudgetError(
+      "PROVIDER_MODEL_NOT_BUDGETED",
+      `Model ${input.model} has no approved output-token limit`,
+    );
+  }
+  return Math.min(input.requested, outputLimit);
 }
 
 export function estimateTextRequestReservationUsdMicros(input: {
@@ -264,31 +310,11 @@ export function estimateTextRequestReservationUsdMicros(input: {
   readonly outputTokenLimits: Readonly<Record<string, number>>;
   readonly safetyMultiplier: number;
 }): number {
-  const maxOutputTokens = input.request.maxOutputTokens;
-  if (
-    maxOutputTokens === undefined ||
-    !Number.isInteger(maxOutputTokens) ||
-    maxOutputTokens < 1
-  ) {
-    throw new ProviderBudgetError(
-      "PROVIDER_BUDGET_OUTPUT_LIMIT_REQUIRED",
-      "Budgeted provider calls require an explicit positive maxOutputTokens value",
-    );
-  }
-
-  const outputLimit = input.outputTokenLimits[input.model];
-  if (outputLimit === undefined) {
-    throw new ProviderBudgetError(
-      "PROVIDER_MODEL_NOT_BUDGETED",
-      `Model ${input.model} has no approved output-token limit`,
-    );
-  }
-  if (maxOutputTokens > outputLimit) {
-    throw new ProviderBudgetError(
-      "PROVIDER_OUTPUT_LIMIT_EXCEEDED",
-      `Requested maxOutputTokens ${String(maxOutputTokens)} exceeds approved model limit ${String(outputLimit)} for ${input.model}`,
-    );
-  }
+  const clampedMaxOutputTokens = resolveMaxOutputTokens({
+    requested: input.request.maxOutputTokens,
+    model: input.model,
+    outputTokenLimits: input.outputTokenLimits,
+  });
 
   const pricing = input.pricing[input.model];
   if (pricing === undefined) {
@@ -317,7 +343,7 @@ export function estimateTextRequestReservationUsdMicros(input: {
   const rawUsdMicros = calculateCostUsdMicros(
     inputTokenUpperBound,
     0,
-    maxOutputTokens,
+    clampedMaxOutputTokens,
     pricing,
   );
 

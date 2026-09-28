@@ -66,14 +66,17 @@ const ValidationInputSchema = z
       }
       paths.add(file.path);
     });
-    for (const required of ["package.json", "pnpm-lock.yaml"] as const) {
-      if (!paths.has(required)) {
-        context.addIssue({
-          code: "custom",
-          path: ["files"],
-          message: `project snapshot must contain ${required}`,
-        });
-      }
+    // pnpm-lock.yaml is deliberately not required here: it is a package
+    // manager's derived, content-hashed output, not something a model can
+    // write correctly by hand. Requiring one made the very first live-model
+    // run to reach this step fail install outright, every time. install uses
+    // --no-frozen-lockfile below so pnpm generates it from package.json.
+    if (!paths.has("package.json")) {
+      context.addIssue({
+        code: "custom",
+        path: ["files"],
+        message: "project snapshot must contain package.json",
+      });
     }
   });
 
@@ -191,7 +194,7 @@ const validationCommands: ReadonlyArray<{
 }> = [
   {
     name: "install",
-    command: "pnpm install --frozen-lockfile",
+    command: "pnpm install --no-frozen-lockfile",
     timeoutMs: 600_000,
   },
   {

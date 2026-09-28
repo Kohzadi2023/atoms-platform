@@ -133,7 +133,7 @@ test("runner restores a locked revision and executes the fixed validation pipeli
   assert.deepEqual(
     provider.calls.slice(2, 8),
     [
-      "pnpm install --frozen-lockfile",
+      "pnpm install --no-frozen-lockfile",
       "pnpm exec prisma validate",
       "pnpm lint",
       "pnpm typecheck",
@@ -186,17 +186,28 @@ test("runner records a deterministic command failure and always terminates the s
   assert.equal(provider.calls.includes("pnpm test"), false);
 });
 
-test("runner rejects snapshots without pnpm-lock.yaml before provisioning", async () => {
+test("runner rejects snapshots without package.json before provisioning", async () => {
   const provider = new FakeSandboxProvider();
   const runner = new ProjectValidationRunner({ provider });
 
   await assert.rejects(
     runner.validate({
-      files: [{ path: "package.json", content: "{}" }],
+      files: [{ path: "pnpm-lock.yaml", content: "lockfileVersion: '9.0'" }],
       metadata: {},
     }),
   );
   assert.deepEqual(provider.calls, []);
+});
+
+test("a snapshot with package.json but no pnpm-lock.yaml is accepted -- pnpm generates one", async () => {
+  const provider = new FakeSandboxProvider();
+  const runner = new ProjectValidationRunner({ provider });
+
+  await runner.validate({
+    files: [{ path: "package.json", content: "{}" }],
+    metadata: {},
+  });
+  assert.ok(provider.calls.includes("pnpm install --no-frozen-lockfile"));
 });
 
 test("generated files and metadata cannot alter the sandbox network policy", async () => {

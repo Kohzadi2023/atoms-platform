@@ -257,6 +257,7 @@ export class ControlApiClient {
     readonly signal: AbortSignal;
     readonly onEvent: (event: RunEventEnvelope) => void;
     readonly onConnectionChange?: (connected: boolean) => void;
+    readonly onRunUpdate?: (run: RunResponse) => void;
   }): Promise<void> {
     let cursor = input.afterSequence;
     while (!input.signal.aborted) {
@@ -288,7 +289,13 @@ export class ControlApiClient {
       }
 
       if (input.signal.aborted) return;
+      // The run itself (status, pendingApproval) is the source of truth, refreshed
+      // here on every backfill cycle regardless of whether the SSE connection above
+      // actually delivered the event that caused the change -- a client that missed
+      // or fell behind on live events must never show stale controls (e.g. no Retry
+      // button on a run the server has long since marked FAILED).
       const run = await this.getRun(input.runId, input.signal);
+      input.onRunUpdate?.(run);
       if (["COMPLETED", "FAILED", "CANCELLED"].includes(run.status)) return;
       await abortableDelay(750, input.signal);
     }

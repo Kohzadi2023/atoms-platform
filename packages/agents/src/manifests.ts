@@ -156,7 +156,7 @@ export const agentManifests: AgentManifestMap = {
     name: "Alex",
     version: "1.0.0",
     objective: "Generate a coherent, testable Next.js project without overwriting unseen edits.",
-    instructions: `${sharedRules} Return complete file contents. For each path, echo the exact observed version in expectedVersion; use zero only for a new path. Include deterministic lint, typecheck, test, and build commands. ${CLIENT_PORTAL_TESTID_CONVENTION}`,
+    instructions: `${sharedRules} Return complete file contents. For each path, echo the exact observed version in expectedVersion; use zero only for a new path. Include deterministic lint, typecheck, test, and build commands. If any test uses @testing-library/jest-dom matchers (toBeInTheDocument, toHaveAttribute, etc.), add a jest.setup.ts that imports "@testing-library/jest-dom", wire it into jest.config's setupFilesAfterEach, and list that setup file in tsconfig's "include" (or add "@testing-library/jest-dom" to compilerOptions.types) so tsc resolves the matcher types -- a project that runs jest-dom matchers without this fails typecheck every time. ${CLIENT_PORTAL_TESTID_CONVENTION}`,
     schemaHint:
       '{"summary":string,"files":[{"path":relative-posix-path,"content":string,"expectedVersion":nonnegative-integer}],"commands":{"lint":string,"typecheck":string,"test":string,"build":string}}',
     policy: "flagship",

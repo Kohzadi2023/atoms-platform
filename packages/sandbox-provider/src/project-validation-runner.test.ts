@@ -133,7 +133,7 @@ test("runner restores a locked revision and executes the fixed validation pipeli
   assert.deepEqual(
     provider.calls.slice(2, 8),
     [
-      "pnpm install --no-frozen-lockfile",
+      "pnpm install --no-frozen-lockfile --dangerously-allow-all-builds",
       "pnpm exec prisma validate",
       "pnpm lint",
       "pnpm typecheck",
@@ -207,7 +207,9 @@ test("a snapshot with package.json but no pnpm-lock.yaml is accepted -- pnpm gen
     files: [{ path: "package.json", content: "{}" }],
     metadata: {},
   });
-  assert.ok(provider.calls.includes("pnpm install --no-frozen-lockfile"));
+  assert.ok(
+    provider.calls.includes("pnpm install --no-frozen-lockfile --dangerously-allow-all-builds"),
+  );
 });
 
 test("generated files and metadata cannot alter the sandbox network policy", async () => {

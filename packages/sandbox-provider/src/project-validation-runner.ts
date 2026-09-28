@@ -194,7 +194,14 @@ const validationCommands: ReadonlyArray<{
 }> = [
   {
     name: "install",
-    command: "pnpm install --no-frozen-lockfile",
+    // A generated project's dependencies (Prisma in particular) commonly need their
+    // postinstall script to run to be usable at all. pnpm's default security policy
+    // blocks every dependency's build scripts unless explicitly approved, which
+    // cannot be predicted ahead of time for an arbitrary generated package.json.
+    // The sandbox is single-run, network-restricted to package registries, and torn
+    // down immediately after -- not a developer's own machine -- so allowing all
+    // builds here is the deliberate trade-off, not an oversight.
+    command: "pnpm install --no-frozen-lockfile --dangerously-allow-all-builds",
     timeoutMs: 600_000,
   },
   {

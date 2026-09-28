@@ -61,8 +61,11 @@ class FakeSandboxProvider implements SandboxProvider {
     this.written.push(...files);
   }
 
+  readonly execCommands: ExecCommand[] = [];
+
   async exec(_id: string, command: ExecCommand): Promise<ExecResult> {
     this.calls.push(command.command);
+    this.execCommands.push(command);
     const failed = command.command === this.failCommand;
     return {
       exitCode: failed ? 2 : 0,
@@ -153,6 +156,19 @@ test("runner restores a locked revision and executes the fixed validation pipeli
   assert.equal(result.previewProcessId, 73);
   assert.equal(result.preview.requestHeaders?.["E2B-Traffic-Access-Token"], "provider-secret");
   assert.equal(provider.terminated, false);
+});
+
+test("prisma-validate gets a placeholder DATABASE_URL -- it parses the schema but never connects", async () => {
+  const provider = new FakeSandboxProvider();
+  const runner = new ProjectValidationRunner({ provider });
+
+  await runner.validate({ files, metadata: {} });
+
+  const prismaValidateCall = provider.execCommands.find(
+    (command) => command.command === "pnpm exec prisma validate",
+  );
+  assert.equal(typeof prismaValidateCall?.envs?.DATABASE_URL, "string");
+  assert.ok((prismaValidateCall?.envs?.DATABASE_URL ?? "").length > 0);
 });
 
 test("runner records a deterministic command failure and always terminates the sandbox", async () => {

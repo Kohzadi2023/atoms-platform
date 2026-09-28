@@ -187,10 +187,20 @@ export class SandboxValidationError extends Error {
   }
 }
 
+// prisma validate only parses and type-checks the schema -- it never opens a
+// connection -- but Prisma's config loader still requires every env() the schema
+// references to resolve to *some* string, or it fails before validation even
+// starts. The real DATABASE_URL isn't provisioned this early (only db-migrate,
+// db-seed and a database-backed preview-start get one); this placeholder is
+// syntactically valid and exists solely to satisfy that resolution.
+const PRISMA_VALIDATE_PLACEHOLDER_DATABASE_URL =
+  "postgresql://user:password@localhost:5432/placeholder";
+
 const validationCommands: ReadonlyArray<{
   readonly name: Exclude<ValidationStepName, "preview-start" | "preview-health">;
   readonly command: string;
   readonly timeoutMs: number;
+  readonly envs?: Record<string, string>;
 }> = [
   {
     name: "install",
@@ -208,6 +218,7 @@ const validationCommands: ReadonlyArray<{
     name: "prisma-validate",
     command: "pnpm exec prisma validate",
     timeoutMs: 300_000,
+    envs: { DATABASE_URL: PRISMA_VALIDATE_PLACEHOLDER_DATABASE_URL },
   },
   { name: "lint", command: "pnpm lint", timeoutMs: 300_000 },
   { name: "typecheck", command: "pnpm typecheck", timeoutMs: 300_000 },
@@ -304,6 +315,7 @@ export class ProjectValidationRunner {
           definition.name,
           definition.command,
           definition.timeoutMs,
+          definition.envs,
         );
         steps.push(step);
         await input.hooks?.onStep?.(sandbox, step);

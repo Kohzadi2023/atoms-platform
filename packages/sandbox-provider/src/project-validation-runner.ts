@@ -179,12 +179,30 @@ export class SandboxValidationError extends Error {
   readonly retryable = false;
   readonly step: ValidationStepName;
   readonly exitCode: number;
+  /**
+   * The tail of the failed step's combined stdout/stderr. Never part of the
+   * persisted run error (toWorkerError keeps that to a small stable shape); it
+   * exists so an automatic repair can show the model what actually failed.
+   */
+  readonly output: string;
 
-  constructor(step: ValidationStepName, exitCode: number) {
+  constructor(step: ValidationStepName, exitCode: number, output = "") {
     super(`Sandbox validation step ${step} exited with code ${String(exitCode)}`);
     this.step = step;
     this.exitCode = exitCode;
+    this.output = output;
   }
+}
+
+const VALIDATION_FAILURE_OUTPUT_LIMIT = 8_000;
+
+function tailOfStepOutput(result: ExecResult): string {
+  const combined = [result.stdout, result.stderr]
+    .filter((part) => part.length > 0)
+    .join("\n");
+  return combined.length <= VALIDATION_FAILURE_OUTPUT_LIMIT
+    ? combined
+    : combined.slice(-VALIDATION_FAILURE_OUTPUT_LIMIT);
 }
 
 // prisma validate only parses and type-checks the schema -- it never opens a
@@ -550,7 +568,11 @@ export class ProjectValidationRunner {
 
   #assertSuccessful(step: ValidationStepReport): void {
     if (step.result.exitCode !== 0) {
-      throw new SandboxValidationError(step.name, step.result.exitCode);
+      throw new SandboxValidationError(
+        step.name,
+        step.result.exitCode,
+        tailOfStepOutput(step.result),
+      );
     }
   }
 }

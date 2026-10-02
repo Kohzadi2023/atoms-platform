@@ -416,7 +416,7 @@ class DeterministicSeoValidationError extends Error {
   }
 }
 
-function parseUpstreamOutputs(
+export function parseUpstreamOutputs(
   outputs: Readonly<Record<string, JsonValue>>,
 ): AgentUpstreamOutputs {
   return {

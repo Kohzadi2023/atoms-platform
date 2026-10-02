@@ -148,6 +148,9 @@ export function WorkspaceShell({
   const [mobilePane, setMobilePane] = useState<MobilePane>("agents");
   const [activeTab, setActiveTab] = useState<WorkspaceTab>("preview");
   const [workspaces, setWorkspaces] = useState<readonly WorkspaceSummary[]>([]);
+  const [workspacesLoaded, setWorkspacesLoaded] = useState(false);
+  const [restoreError, setRestoreError] = useState<string | undefined>();
+  const [restoreVersion, setRestoreVersion] = useState(0);
   const [workspaceId, setWorkspaceId] = useState("");
   const [adminOverview, setAdminOverview] = useState<
     WorkspaceAdminOverviewResponse | undefined
@@ -201,6 +204,7 @@ export function WorkspaceShell({
       .then((response) => {
         if (!active) return;
         setWorkspaces(response.items);
+        setWorkspacesLoaded(true);
         setWorkspaceId((current) =>
           response.items.some((workspace) => workspace.id === current)
             ? current
@@ -306,11 +310,54 @@ export function WorkspaceShell({
       })
       .catch((caught: unknown) => {
         if (controller.signal.aborted) return;
-        globalThis.localStorage.removeItem(ACTIVE_RUN_STORAGE_KEY);
-        setError(`Could not restore the saved run: ${toMessage(caught)}`);
+        // Only a definitive "this run/project is gone or not yours" answer may
+        // discard the saved pointer. A transient failure (cold start, a database
+        // restart, a network blip) must keep it, otherwise one bad moment makes a
+        // live, paused run unreachable from the UI for good.
+        const definitive =
+          (caught instanceof ControlApiError &&
+            (caught.status === 403 || caught.status === 404)) ||
+          (caught instanceof Error &&
+            caught.message === "Saved project and run identifiers do not match.");
+        if (definitive) {
+          globalThis.localStorage.removeItem(ACTIVE_RUN_STORAGE_KEY);
+          setError(`Could not restore the saved run: ${toMessage(caught)}`);
+        } else {
+          setRestoreError(toMessage(caught));
+        }
       });
     return () => controller.abort();
-  }, [api, refreshArtifacts, refreshFiles]);
+  }, [api, refreshArtifacts, refreshFiles, restoreVersion]);
+
+  function startNewProject() {
+    if (
+      run !== undefined &&
+      !terminal &&
+      !globalThis.confirm(
+        "This run is still in progress. It keeps running on the server, but this page will stop showing it. Start a new project anyway?",
+      )
+    ) {
+      return;
+    }
+    globalThis.localStorage.removeItem(ACTIVE_RUN_STORAGE_KEY);
+    lastSequenceRef.current = 0;
+    runRequestRef.current = undefined;
+    setRun(undefined);
+    setProject(undefined);
+    setProjection(createWorkspaceProjection());
+    setFiles([]);
+    setArtifacts([]);
+    setSelectedFile(undefined);
+    setPreviousContent(undefined);
+    setAttachments([]);
+    setAttachmentRecords([]);
+    setProviderConfirmation("");
+    setRequirementsConfirmed(false);
+    setRestoreError(undefined);
+    setError(undefined);
+    setNotice(undefined);
+    setMobilePane("agents");
+  }
 
   // The run's own pendingApproval (derived server-side from its latest approval.required
   // event) is a single-fetch source of truth for the Approve action, independent of
@@ -735,6 +782,15 @@ export function WorkspaceShell({
             />
             {connected ? "SSE live" : "SSE idle"}
           </span>
+          {project !== undefined || run !== undefined ? (
+            <button
+              className="inline-flex items-center gap-1.5 rounded-lg border border-[#2f6654] bg-[#10271f] px-2.5 py-1 font-semibold text-[#8af0c9] hover:border-[#3f8a70]"
+              type="button"
+              onClick={startNewProject}
+            >
+              New project
+            </button>
+          ) : null}
           <span className="hidden rounded-full border border-[#2b3442] px-2.5 py-1 text-[#98a5b7] sm:inline-flex">
             CAD 4 build target
           </span>
@@ -805,6 +861,29 @@ export function WorkspaceShell({
             }
           />
 
+          {restoreError !== undefined && run === undefined ? (
+            <div
+              className="mt-4 rounded-2xl border border-[#67333a] bg-[#1c1014] p-4 text-sm text-[#ffb3bb]"
+              role="alert"
+            >
+              <p className="font-semibold">Your saved run could not be loaded right now.</p>
+              <p className="mt-1 text-xs text-[#d6aeb3]">{restoreError}</p>
+              <p className="mt-1 text-xs text-[#d6aeb3]">
+                The run is safe on the server — this is a temporary connection problem.
+              </p>
+              <button
+                className="mt-3 rounded-lg border border-[#5b4d52] bg-[#24171b] px-3 py-1.5 text-xs font-semibold text-[#ffc1c7]"
+                type="button"
+                onClick={() => {
+                  setRestoreError(undefined);
+                  setRestoreVersion((version) => version + 1);
+                }}
+              >
+                Retry loading my run
+              </button>
+            </div>
+          ) : null}
+
           {run === undefined ? (
             <form
               className="mt-4 space-y-4 rounded-2xl border border-[#252d3a] bg-[#0d121a] p-4 shadow-2xl shadow-black/20"
@@ -819,7 +898,9 @@ export function WorkspaceShell({
                   disabled={workspaces.length === 0 || project !== undefined}
                 >
                   {workspaces.length === 0 ? (
-                    <option value="">No authorized workspaces</option>
+                    <option value="">
+                      {workspacesLoaded ? "No authorized workspaces" : "Loading workspaces…"}
+                    </option>
                   ) : (
                     workspaces.map((workspace) => (
                       <option key={workspace.id} value={workspace.id}>

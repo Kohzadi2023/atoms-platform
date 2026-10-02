@@ -66,14 +66,17 @@ const ValidationInputSchema = z
       }
       paths.add(file.path);
     });
-    for (const required of ["package.json", "pnpm-lock.yaml"] as const) {
-      if (!paths.has(required)) {
-        context.addIssue({
-          code: "custom",
-          path: ["files"],
-          message: `project snapshot must contain ${required}`,
-        });
-      }
+    // pnpm-lock.yaml is deliberately not required here: it is a package
+    // manager's derived, content-hashed output, not something a model can
+    // write correctly by hand. Requiring one made the very first live-model
+    // run to reach this step fail install outright, every time. install uses
+    // --no-frozen-lockfile below so pnpm generates it from package.json.
+    if (!paths.has("package.json")) {
+      context.addIssue({
+        code: "custom",
+        path: ["files"],
+        message: "project snapshot must contain package.json",
+      });
     }
   });
 
@@ -184,20 +187,38 @@ export class SandboxValidationError extends Error {
   }
 }
 
+// prisma validate only parses and type-checks the schema -- it never opens a
+// connection -- but Prisma's config loader still requires every env() the schema
+// references to resolve to *some* string, or it fails before validation even
+// starts. The real DATABASE_URL isn't provisioned this early (only db-migrate,
+// db-seed and a database-backed preview-start get one); this placeholder is
+// syntactically valid and exists solely to satisfy that resolution.
+const PRISMA_VALIDATE_PLACEHOLDER_DATABASE_URL =
+  "postgresql://user:password@localhost:5432/placeholder";
+
 const validationCommands: ReadonlyArray<{
   readonly name: Exclude<ValidationStepName, "preview-start" | "preview-health">;
   readonly command: string;
   readonly timeoutMs: number;
+  readonly envs?: Record<string, string>;
 }> = [
   {
     name: "install",
-    command: "pnpm install --frozen-lockfile",
+    // A generated project's dependencies (Prisma in particular) commonly need their
+    // postinstall script to run to be usable at all. pnpm's default security policy
+    // blocks every dependency's build scripts unless explicitly approved, which
+    // cannot be predicted ahead of time for an arbitrary generated package.json.
+    // The sandbox is single-run, network-restricted to package registries, and torn
+    // down immediately after -- not a developer's own machine -- so allowing all
+    // builds here is the deliberate trade-off, not an oversight.
+    command: "pnpm install --no-frozen-lockfile --dangerously-allow-all-builds",
     timeoutMs: 600_000,
   },
   {
     name: "prisma-validate",
     command: "pnpm exec prisma validate",
     timeoutMs: 300_000,
+    envs: { DATABASE_URL: PRISMA_VALIDATE_PLACEHOLDER_DATABASE_URL },
   },
   { name: "lint", command: "pnpm lint", timeoutMs: 300_000 },
   { name: "typecheck", command: "pnpm typecheck", timeoutMs: 300_000 },
@@ -294,6 +315,7 @@ export class ProjectValidationRunner {
           definition.name,
           definition.command,
           definition.timeoutMs,
+          definition.envs,
         );
         steps.push(step);
         await input.hooks?.onStep?.(sandbox, step);

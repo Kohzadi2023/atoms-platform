@@ -133,6 +133,7 @@ function runResponse(
     eventSequence: 3,
     controlVersion: 4,
     error: null,
+    pendingApproval: null,
     createdAt: NOW,
     updatedAt: NOW,
     startedAt: NOW,

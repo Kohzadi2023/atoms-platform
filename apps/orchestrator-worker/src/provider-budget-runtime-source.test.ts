@@ -41,3 +41,23 @@ test("worker runtime refuses a per-run budget without a workspace ceiling and pa
     /workspaceDailyBudgetUsdMicros:\s*environment\.WORKSPACE_PROVIDER_BUDGET_USD_MICROS_PER_DAY/u,
   );
 });
+
+// Gemini pilot (2026-09-24): MODEL_PROVIDER selects the gateway; both branches
+// must be wired to their own pinned pricing/output-limit tables, never fall
+// through to the other provider's, and OPENAI_API_KEY must have moved off
+// "required" now that it is not the only provider.
+test("MODEL_PROVIDER selects the gateway and its own pinned pricing, defaulting to openai", async () => {
+  const source = await readFile(resolve(process.cwd(), "src/main.ts"), "utf8");
+
+  assert.match(source, /MODEL_PROVIDER: z\.enum\(\["openai", "google"\]\)\.default\("openai"\)/u);
+  assert.match(source, /OPENAI_API_KEY: z\.string\(\)\.min\(1\)\.optional\(\)/u);
+  assert.match(source, /GOOGLE_API_KEY: z\.string\(\)\.min\(1\)\.optional\(\)/u);
+  assert.match(
+    source,
+    /environment\.MODEL_PROVIDER === "google"\s*\n\s*\? new GeminiModelGateway\(\{[\s\S]*?models: PINNED_GEMINI_MODELS,\s*\n\s*pricing: PINNED_GEMINI_PRICING,/u,
+  );
+  assert.match(
+    source,
+    /\? \[PINNED_GEMINI_PRICING, PINNED_GEMINI_OUTPUT_LIMITS\]\s*\n\s*: \[PINNED_OPENAI_PRICING, PINNED_OPENAI_OUTPUT_LIMITS\]/u,
+  );
+});

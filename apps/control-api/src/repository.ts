@@ -9,6 +9,7 @@ import type {
 import {
   JsonValueSchema,
   RunEventTypeSchema,
+  normalizeApprovalRequiredEventPayload,
   normalizeArtifactCreatedEventPayload,
 } from "@atoms/contracts";
 import { Prisma, type AgentRun, type PrismaClient, type RunEvent } from "@atoms/db";
@@ -397,7 +398,28 @@ export class PrismaControlRepository implements ControlRepository {
         },
       },
     });
-    return run === null ? null : toRunRecord(run);
+    if (run === null) return null;
+    const record = toRunRecord(run);
+    if (record.status !== "PAUSED") return record;
+    return { ...record, pendingApproval: await this.#loadPendingApproval(runId) };
+  }
+
+  /**
+   * A PAUSED run is waiting on something specific to resume it. Only an
+   * approval.required event names what that is (scope + reason) -- a manual
+   * "pause" action leaves no such event, so this correctly reads as no
+   * pending approval for that case. Read as the run's very last event: a
+   * later resume attempt that re-hits the same gate appends a fresh
+   * approval.required event, which must supersede the one this replaced.
+   */
+  async #loadPendingApproval(runId: string): Promise<RunRecord["pendingApproval"]> {
+    const latest = await this.#prisma.runEvent.findFirst({
+      where: { runId },
+      orderBy: { sequence: "desc" },
+    });
+    if (latest === null || latest.eventType !== "approval.required") return null;
+    const approval = normalizeApprovalRequiredEventPayload(latest.payload);
+    return { scope: approval.scope, reason: approval.reason };
   }
 
   async transitionRun(
@@ -692,6 +714,7 @@ function toRunRecord(record: AgentRun): RunRecord {
     eventSequence: record.eventSequence,
     controlVersion: record.controlVersion,
     error: record.error === null ? null : JsonValueSchema.parse(record.error),
+    pendingApproval: null,
     createdAt: record.createdAt,
     updatedAt: record.updatedAt,
     startedAt: record.startedAt,

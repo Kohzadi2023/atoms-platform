@@ -248,7 +248,12 @@ export function WorkspaceShell({
     };
   }, [api, workspaceId]);
 
-  const effectiveStatus = projection.inferredRunStatus ?? run?.status;
+  // run.status is now refreshed every SSE backfill cycle (see onRunUpdate above)
+  // regardless of whether this client ever received the event that caused the
+  // change, so it is at least as fresh as the event-derived projection and must
+  // win -- otherwise a missed run.failed/run.completed event leaves the UI
+  // showing stale controls for a run the server already finished.
+  const effectiveStatus = run?.status ?? projection.inferredRunStatus;
   const terminal =
     effectiveStatus !== undefined &&
     ["COMPLETED", "FAILED", "CANCELLED"].includes(effectiveStatus);
@@ -307,6 +312,19 @@ export function WorkspaceShell({
     return () => controller.abort();
   }, [api, refreshArtifacts, refreshFiles]);
 
+  // The run's own pendingApproval (derived server-side from its latest approval.required
+  // event) is a single-fetch source of truth for the Approve action, independent of
+  // whether this client has replayed that event over SSE yet -- a reconnect or a slow
+  // backfill must never leave the customer stuck looking at a plain Resume button.
+  useEffect(() => {
+    if (run === undefined) return;
+    setProjection((current) => ({
+      ...current,
+      approvalScope: run.pendingApproval?.scope,
+      approvalReason: run.pendingApproval?.reason,
+    }));
+  }, [run]);
+
   useEffect(() => {
     if (run === undefined) return;
     const controller = new AbortController();
@@ -316,6 +334,7 @@ export function WorkspaceShell({
         afterSequence: lastSequenceRef.current,
         signal: controller.signal,
         onConnectionChange: setConnected,
+        onRunUpdate: setRun,
         onEvent: (event) => {
           lastSequenceRef.current = Math.max(
             lastSequenceRef.current,

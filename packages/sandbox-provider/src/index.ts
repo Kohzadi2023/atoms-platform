@@ -1,4 +1,5 @@
 export * from "./acceptance-script.js";
+export * from "./base-template.js";
 export * from "./e2b-sandbox-adapter.js";
 export * from "./errors.js";
 export * from "./local-database-template.js";

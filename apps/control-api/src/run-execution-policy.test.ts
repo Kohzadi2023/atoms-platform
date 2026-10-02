@@ -20,6 +20,7 @@ function createRun(status: RunRecord["status"], controlVersion = 1): RunRecord {
     eventSequence: 0,
     controlVersion,
     error: null,
+    pendingApproval: null,
     createdAt: NOW,
     updatedAt: NOW,
     startedAt: status === "RUNNING" ? NOW : null,

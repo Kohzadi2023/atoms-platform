@@ -190,6 +190,22 @@ export const AgentRunStatusSchema = z.enum([
 
 export type AgentRunStatus = z.infer<typeof AgentRunStatusSchema>;
 
+export const ApprovalScopeSchema = z.enum(["plan", "content"]);
+
+export type ApprovalScope = z.infer<typeof ApprovalScopeSchema>;
+
+// Derived server-side from the run's most recent approval.required event, so a client
+// can render the correct Approve action from a single REST fetch of the run -- without
+// depending on having replayed the run's full event history first.
+export const PendingApprovalSchema = z
+  .object({
+    scope: ApprovalScopeSchema,
+    reason: z.string(),
+  })
+  .strict();
+
+export type PendingApproval = z.infer<typeof PendingApprovalSchema>;
+
 export const RunResponseSchema = z
   .object({
     id: z.string().uuid(),
@@ -200,6 +216,7 @@ export const RunResponseSchema = z
     eventSequence: z.number().int().nonnegative(),
     controlVersion: z.number().int().nonnegative(),
     error: JsonValueSchema.nullable(),
+    pendingApproval: PendingApprovalSchema.nullable(),
     createdAt: IsoTimestampSchema,
     updatedAt: IsoTimestampSchema,
     startedAt: IsoTimestampSchema.nullable(),
@@ -220,10 +237,6 @@ export const RunActionSchema = z.enum([
 ]);
 
 export type RunAction = z.infer<typeof RunActionSchema>;
-
-export const ApprovalScopeSchema = z.enum(["plan", "content"]);
-
-export type ApprovalScope = z.infer<typeof ApprovalScopeSchema>;
 
 export const RunJobCommandSchema = z.enum([
   "start",

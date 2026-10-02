@@ -165,6 +165,9 @@ async function main(): Promise<void> {
   const databaseQueue = new BullMqDatabaseOperationQueue({
     redisUrl: environment.REDIS_URL,
     redisMode: environment.QUEUE_REDIS_MODE,
+    ...(environment.RUN_QUEUE_PREFIX === undefined
+      ? {}
+      : { prefix: environment.RUN_QUEUE_PREFIX }),
   });
   const app = await buildControlApi({
     repository,

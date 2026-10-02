@@ -10,6 +10,10 @@ import type {
 
 import {
   BudgetedModelGateway,
+  PINNED_GEMINI_MODELS,
+  PINNED_GEMINI_OUTPUT_LIMITS,
+  PINNED_GEMINI_PRICING,
+  PINNED_OPENAI_MODELS,
   PINNED_OPENAI_OUTPUT_LIMITS,
   PINNED_OPENAI_PRICING,
   ProviderBudgetError,
@@ -26,6 +30,7 @@ const RUN_ID = "00000000-0000-4000-8000-000000000001";
 class FakeGateway implements RoutedModelGateway {
   generateCalls = 0;
   streamCalls = 0;
+  lastRequest: ModelRequest | undefined;
 
   resolveModel(_policy: ModelPolicy): string {
     return MODEL;
@@ -33,6 +38,7 @@ class FakeGateway implements RoutedModelGateway {
 
   async generate(request: ModelRequest): Promise<ModelResponse> {
     this.generateCalls += 1;
+    this.lastRequest = request;
     return {
       id: "response-1",
       provider: "openai",
@@ -287,13 +293,26 @@ test("rejects malformed or non-UTF-8 text references", () => {
   }
 });
 
-test("rejects a model output request above the pinned provider limit", () => {
-  assert.throws(
-    () => estimate(request({ maxOutputTokens: 16_385 })),
-    (error: unknown) =>
-      error instanceof ProviderBudgetError &&
-      error.code === "PROVIDER_OUTPUT_LIMIT_EXCEEDED",
-  );
+test("a request above the pinned provider limit is priced at the clamped amount, not rejected", () => {
+  const atLimit = estimate(request({ maxOutputTokens: 16_384 }));
+  const aboveLimit = estimate(request({ maxOutputTokens: 16_385 }));
+  assert.equal(aboveLimit, atLimit);
+});
+
+test("the outgoing request to the provider carries the clamped maxOutputTokens, not the manifest's raw value", async () => {
+  const gateway = new FakeGateway();
+  const store = new FakeBudgetStore();
+  const budgeted = new BudgetedModelGateway({
+    gateway,
+    budgetStore: store,
+    totalBudgetUsdMicros: 2_000_000,
+    pricing: PINNED_OPENAI_PRICING,
+    outputTokenLimits: PINNED_OPENAI_OUTPUT_LIMITS,
+  });
+
+  await budgeted.generate(request({ maxOutputTokens: 32_000 }));
+
+  assert.equal(gateway.lastRequest?.maxOutputTokens, 16_384);
 });
 
 test("reserves the stream budget before the first provider stream event", async () => {
@@ -409,3 +428,19 @@ test("a failed actual-cost write does not fail or discard a paid provider respon
 
   assert.equal(response.status, "completed");
 });
+
+// Gemini pilot (2026-09-24): every model a policy can route to must have both
+// a pricing entry (or reservation throws PROVIDER_MODEL_NOT_BUDGETED, see
+// reserveConservativeCostUsdMicros) and an output-token limit, same invariant
+// PINNED_OPENAI_* already had to hold, now checked for both providers.
+for (const [label, models, pricing, outputLimits] of [
+  ["openai", PINNED_OPENAI_MODELS, PINNED_OPENAI_PRICING, PINNED_OPENAI_OUTPUT_LIMITS],
+  ["gemini", PINNED_GEMINI_MODELS, PINNED_GEMINI_PRICING, PINNED_GEMINI_OUTPUT_LIMITS],
+] as const) {
+  test(`every ${label} policy routes to a model with pinned pricing and an output limit`, () => {
+    for (const model of Object.values(models)) {
+      assert.ok(pricing[model], `${label}: ${model} has no pinned pricing`);
+      assert.ok(outputLimits[model], `${label}: ${model} has no pinned output limit`);
+    }
+  });
+}

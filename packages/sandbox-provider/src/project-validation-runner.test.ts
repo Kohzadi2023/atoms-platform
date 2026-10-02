@@ -61,8 +61,11 @@ class FakeSandboxProvider implements SandboxProvider {
     this.written.push(...files);
   }
 
+  readonly execCommands: ExecCommand[] = [];
+
   async exec(_id: string, command: ExecCommand): Promise<ExecResult> {
     this.calls.push(command.command);
+    this.execCommands.push(command);
     const failed = command.command === this.failCommand;
     return {
       exitCode: failed ? 2 : 0,
@@ -133,7 +136,7 @@ test("runner restores a locked revision and executes the fixed validation pipeli
   assert.deepEqual(
     provider.calls.slice(2, 8),
     [
-      "pnpm install --frozen-lockfile",
+      "pnpm install --no-frozen-lockfile --dangerously-allow-all-builds",
       "pnpm exec prisma validate",
       "pnpm lint",
       "pnpm typecheck",
@@ -153,6 +156,19 @@ test("runner restores a locked revision and executes the fixed validation pipeli
   assert.equal(result.previewProcessId, 73);
   assert.equal(result.preview.requestHeaders?.["E2B-Traffic-Access-Token"], "provider-secret");
   assert.equal(provider.terminated, false);
+});
+
+test("prisma-validate gets a placeholder DATABASE_URL -- it parses the schema but never connects", async () => {
+  const provider = new FakeSandboxProvider();
+  const runner = new ProjectValidationRunner({ provider });
+
+  await runner.validate({ files, metadata: {} });
+
+  const prismaValidateCall = provider.execCommands.find(
+    (command) => command.command === "pnpm exec prisma validate",
+  );
+  assert.equal(typeof prismaValidateCall?.envs?.DATABASE_URL, "string");
+  assert.ok((prismaValidateCall?.envs?.DATABASE_URL ?? "").length > 0);
 });
 
 test("runner records a deterministic command failure and always terminates the sandbox", async () => {
@@ -186,17 +202,30 @@ test("runner records a deterministic command failure and always terminates the s
   assert.equal(provider.calls.includes("pnpm test"), false);
 });
 
-test("runner rejects snapshots without pnpm-lock.yaml before provisioning", async () => {
+test("runner rejects snapshots without package.json before provisioning", async () => {
   const provider = new FakeSandboxProvider();
   const runner = new ProjectValidationRunner({ provider });
 
   await assert.rejects(
     runner.validate({
-      files: [{ path: "package.json", content: "{}" }],
+      files: [{ path: "pnpm-lock.yaml", content: "lockfileVersion: '9.0'" }],
       metadata: {},
     }),
   );
   assert.deepEqual(provider.calls, []);
+});
+
+test("a snapshot with package.json but no pnpm-lock.yaml is accepted -- pnpm generates one", async () => {
+  const provider = new FakeSandboxProvider();
+  const runner = new ProjectValidationRunner({ provider });
+
+  await runner.validate({
+    files: [{ path: "package.json", content: "{}" }],
+    metadata: {},
+  });
+  assert.ok(
+    provider.calls.includes("pnpm install --no-frozen-lockfile --dangerously-allow-all-builds"),
+  );
 });
 
 test("generated files and metadata cannot alter the sandbox network policy", async () => {

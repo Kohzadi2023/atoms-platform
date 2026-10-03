@@ -194,15 +194,21 @@ export class SandboxValidationError extends Error {
   }
 }
 
-const VALIDATION_FAILURE_OUTPUT_LIMIT = 8_000;
+const VALIDATION_FAILURE_OUTPUT_HEAD = 3_500;
+const VALIDATION_FAILURE_OUTPUT_TAIL = 4_500;
 
+/**
+ * Test runners print the first failing assertion at the top and a summary at
+ * the bottom, so a long output keeps both ends instead of only the tail.
+ */
 function tailOfStepOutput(result: ExecResult): string {
   const combined = [result.stdout, result.stderr]
     .filter((part) => part.length > 0)
     .join("\n");
-  return combined.length <= VALIDATION_FAILURE_OUTPUT_LIMIT
-    ? combined
-    : combined.slice(-VALIDATION_FAILURE_OUTPUT_LIMIT);
+  if (combined.length <= VALIDATION_FAILURE_OUTPUT_HEAD + VALIDATION_FAILURE_OUTPUT_TAIL) {
+    return combined;
+  }
+  return `${combined.slice(0, VALIDATION_FAILURE_OUTPUT_HEAD)}\n...[output truncated]...\n${combined.slice(-VALIDATION_FAILURE_OUTPUT_TAIL)}`;
 }
 
 // prisma validate only parses and type-checks the schema -- it never opens a

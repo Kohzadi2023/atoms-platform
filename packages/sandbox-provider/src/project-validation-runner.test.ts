@@ -202,6 +202,37 @@ test("runner records a deterministic command failure and always terminates the s
   assert.equal(provider.calls.includes("pnpm test"), false);
 });
 
+test("a failed step's error carries its output, and a long output keeps both its first failure and its summary", async () => {
+  const provider = new FakeSandboxProvider();
+  provider.failCommand = "pnpm typecheck";
+  const runner = new ProjectValidationRunner({ provider });
+
+  await assert.rejects(
+    runner.validate({ files, metadata: {} }),
+    (error: unknown) =>
+      error instanceof SandboxValidationError && error.output === "deterministic failure",
+  );
+
+  const long = new FakeSandboxProvider();
+  long.failCommand = "pnpm typecheck";
+  const originalExec = long.exec.bind(long);
+  long.exec = async (sandboxId, request) => {
+    const result = await originalExec(sandboxId, request);
+    return request.command === "pnpm typecheck"
+      ? { ...result, stderr: `FIRST-FAILURE${"x".repeat(20_000)}FINAL-SUMMARY` }
+      : result;
+  };
+  await assert.rejects(
+    new ProjectValidationRunner({ provider: long }).validate({ files, metadata: {} }),
+    (error: unknown) =>
+      error instanceof SandboxValidationError &&
+      error.output.startsWith("FIRST-FAILURE") &&
+      error.output.endsWith("FINAL-SUMMARY") &&
+      error.output.includes("[output truncated]") &&
+      error.output.length < 9_000,
+  );
+});
+
 test("runner rejects snapshots without package.json before provisioning", async () => {
   const provider = new FakeSandboxProvider();
   const runner = new ProjectValidationRunner({ provider });

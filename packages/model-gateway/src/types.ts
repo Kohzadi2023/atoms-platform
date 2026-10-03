@@ -28,6 +28,12 @@ export interface ModelRequest {
   readonly references?: readonly ModelReference[];
   readonly instructions?: string;
   readonly maxOutputTokens?: number;
+  /**
+   * "json" asks the provider to return a single syntactically valid JSON object
+   * (a gateway that cannot enforce it ignores the flag). Free-form text output
+   * routinely breaks on unescaped newlines inside long strings such as SQL.
+   */
+  readonly responseFormat?: "json";
   readonly metadata?: Readonly<Record<string, string>>;
 }
 

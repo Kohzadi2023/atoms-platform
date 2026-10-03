@@ -198,6 +198,9 @@ export class GeminiModelGateway implements ModelGateway {
       ...(request.maxOutputTokens === undefined
         ? {}
         : { max_tokens: request.maxOutputTokens }),
+      ...(request.responseFormat === "json"
+        ? { response_format: { type: "json_object" as const } }
+        : {}),
     };
   }
 

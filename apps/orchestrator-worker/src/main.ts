@@ -45,6 +45,7 @@ import {
   PostgresRunProviderBudgetStore,
 } from "./model-budget.js";
 import { RunProcessor } from "./processor.js";
+import { AlexRunRepairer } from "./repair.js";
 import { DeterministicReleaseAssessor } from "./release-assessor.js";
 import { PrismaReleaseAssessmentRepository } from "./release-repository.js";
 import { PrismaWorkerRepository } from "./repository.js";
@@ -112,6 +113,10 @@ const EnvironmentSchema = z
       .min(1)
       .max(10)
       .default(1.5),
+    // How many times a failed sandbox validation (install, lint, typecheck, test or build)
+    // is handed back to Alex with the failing output before the run is failed. Each repair
+    // costs one Alex call plus one sandbox validation; 0 turns the loop off.
+    RUN_MAX_REPAIR_ATTEMPTS: z.coerce.number().int().min(0).max(3).default(2),
     // Per-workspace, per-UTC-day ceiling on reserved provider spend (micro-USD).
     // Must be set whenever a per-run budget is set; see the refinement below.
     // Set by an operator after the live egress probe passes (docs/adr/production-execution-gate.md, G5).
@@ -422,6 +427,8 @@ async function main(): Promise<void> {
     validator,
     assessor: releaseAssessor,
     attachmentLoader: new PrismaRunAttachmentLoader(prisma, attachmentStorage),
+    repairer: new AlexRunRepairer({ repository, agents }),
+    maxRepairAttempts: environment.RUN_MAX_REPAIR_ATTEMPTS,
   });
   const worker = new BullMqOrchestratorWorker({
     redisUrl: environment.REDIS_URL,

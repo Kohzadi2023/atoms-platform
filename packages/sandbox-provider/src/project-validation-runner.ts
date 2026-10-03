@@ -179,12 +179,36 @@ export class SandboxValidationError extends Error {
   readonly retryable = false;
   readonly step: ValidationStepName;
   readonly exitCode: number;
+  /**
+   * The tail of the failed step's combined stdout/stderr. Never part of the
+   * persisted run error (toWorkerError keeps that to a small stable shape); it
+   * exists so an automatic repair can show the model what actually failed.
+   */
+  readonly output: string;
 
-  constructor(step: ValidationStepName, exitCode: number) {
+  constructor(step: ValidationStepName, exitCode: number, output = "") {
     super(`Sandbox validation step ${step} exited with code ${String(exitCode)}`);
     this.step = step;
     this.exitCode = exitCode;
+    this.output = output;
   }
+}
+
+const VALIDATION_FAILURE_OUTPUT_HEAD = 3_500;
+const VALIDATION_FAILURE_OUTPUT_TAIL = 4_500;
+
+/**
+ * Test runners print the first failing assertion at the top and a summary at
+ * the bottom, so a long output keeps both ends instead of only the tail.
+ */
+function tailOfStepOutput(result: ExecResult): string {
+  const combined = [result.stdout, result.stderr]
+    .filter((part) => part.length > 0)
+    .join("\n");
+  if (combined.length <= VALIDATION_FAILURE_OUTPUT_HEAD + VALIDATION_FAILURE_OUTPUT_TAIL) {
+    return combined;
+  }
+  return `${combined.slice(0, VALIDATION_FAILURE_OUTPUT_HEAD)}\n...[output truncated]...\n${combined.slice(-VALIDATION_FAILURE_OUTPUT_TAIL)}`;
 }
 
 // prisma validate only parses and type-checks the schema -- it never opens a
@@ -550,7 +574,11 @@ export class ProjectValidationRunner {
 
   #assertSuccessful(step: ValidationStepReport): void {
     if (step.result.exitCode !== 0) {
-      throw new SandboxValidationError(step.name, step.result.exitCode);
+      throw new SandboxValidationError(
+        step.name,
+        step.result.exitCode,
+        tailOfStepOutput(step.result),
+      );
     }
   }
 }

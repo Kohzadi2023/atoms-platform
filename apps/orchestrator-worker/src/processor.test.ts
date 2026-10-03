@@ -31,6 +31,7 @@ import type {
   WorkerTaskStatus,
 } from "./domain.js";
 import { RunProcessor } from "./processor.js";
+import type { RunRepairInput, RunRepairer } from "./repair.js";
 import type { AssessReleaseInput, ReleaseAssessor } from "./release-assessor.js";
 import type { RunValidationInput, RunValidator } from "./validation.js";
 
@@ -1394,4 +1395,172 @@ test("a conflict in a multi-file patch prevents every generated file from being 
     repository.latestFileForTest("app/page.tsx")?.content,
     "export default function Page() { return <main>Manual edit</main>; }",
   );
+});
+// ---- automatic repair of a failed sandbox validation ----
+
+class ScriptedValidationError extends Error {
+  override readonly name = "SandboxValidationError";
+  readonly code = "SANDBOX_VALIDATION_FAILED";
+  readonly retryable = false;
+
+  constructor(
+    readonly step: string,
+    readonly exitCode: number,
+    readonly output: string,
+  ) {
+    super(`Sandbox validation step ${step} exited with code ${String(exitCode)}`);
+  }
+}
+
+async function runToCompletion(runProcessor: RunProcessor, repository: MemoryRepository) {
+  assert.deepEqual(
+    await runProcessor.process(startJob(), { attempt: 1, maxAttempts: 3 }),
+    { outcome: "stopped", status: "PAUSED" },
+  );
+  const approvedVersion = repository.approve();
+  return runProcessor.process(approveJob(approvedVersion, "content"), {
+    attempt: 1,
+    maxAttempts: 3,
+  });
+}
+
+test("a failed validation is repaired once and the run then completes", async () => {
+  const repository = new MemoryRepository();
+  const attempts: number[] = [];
+  const validator: RunValidator = {
+    validate: async (input) => {
+      attempts.push(input.attempt);
+      if (attempts.length === 1) {
+        throw new ScriptedValidationError("typecheck", 2, "Cannot find module 'zod'");
+      }
+    },
+  };
+  const repairs: RunRepairInput[] = [];
+  const repairer: RunRepairer = {
+    repair: async (input) => {
+      repairs.push(input);
+      return true;
+    },
+  };
+  const runProcessor = new RunProcessor({
+    repository,
+    agents: new ScriptedAgentRuntime(outputs()),
+    checkpointer: new MemorySaver(),
+    validator,
+    repairer,
+    maxRepairAttempts: 2,
+    now: () => FIXED_NOW,
+  });
+
+  assert.deepEqual(await runToCompletion(runProcessor, repository), { outcome: "completed" });
+  assert.deepEqual(attempts, [1, 101]);
+  assert.equal(repairs.length, 1);
+  assert.equal(repairs[0]?.repairAttempt, 1);
+  assert.equal(repairs[0]?.failure.step, "typecheck");
+  assert.equal(repairs[0]?.failure.output, "Cannot find module 'zod'");
+  assert.ok(repairs[0]?.upstreamOutputs.Bob !== undefined);
+});
+
+test("repairs stop at the configured limit and the run fails with the validation error", async () => {
+  const repository = new MemoryRepository();
+  let validations = 0;
+  const validator: RunValidator = {
+    validate: async () => {
+      validations += 1;
+      throw new ScriptedValidationError("lint", 1, "bad");
+    },
+  };
+  let repairCalls = 0;
+  const repairer: RunRepairer = {
+    repair: async () => {
+      repairCalls += 1;
+      return true;
+    },
+  };
+  const runProcessor = new RunProcessor({
+    repository,
+    agents: new ScriptedAgentRuntime(outputs()),
+    checkpointer: new MemorySaver(),
+    validator,
+    repairer,
+    maxRepairAttempts: 2,
+    now: () => FIXED_NOW,
+  });
+
+  assert.deepEqual(await runToCompletion(runProcessor, repository), { outcome: "failed" });
+  assert.equal(repairCalls, 2);
+  assert.equal(validations, 3);
+  assert.equal(
+    (repository.run.error as { code?: string } | null | undefined)?.code,
+    "SANDBOX_VALIDATION_FAILED",
+  );
+});
+
+test("no repair runs when none is configured, or for a step a model cannot fix", async () => {
+  for (const configured of [false, true]) {
+    const repository = new MemoryRepository();
+    let repairCalls = 0;
+    const runProcessor = new RunProcessor({
+      repository,
+      agents: new ScriptedAgentRuntime(outputs()),
+      checkpointer: new MemorySaver(),
+      validator: {
+        validate: async () => {
+          throw new ScriptedValidationError(
+            configured ? "preview-health" : "typecheck",
+            1,
+            "x",
+          );
+        },
+      },
+      ...(configured
+        ? {
+            repairer: {
+              repair: async () => {
+                repairCalls += 1;
+                return true;
+              },
+            },
+            maxRepairAttempts: 2,
+          }
+        : {}),
+      now: () => FIXED_NOW,
+    });
+
+    assert.deepEqual(await runToCompletion(runProcessor, repository), { outcome: "failed" });
+    assert.equal(repairCalls, 0);
+  }
+});
+
+test("a repair that changes nothing, or throws, fails the run with the original validation error", async () => {
+  for (const mode of ["unchanged", "throws"] as const) {
+    const repository = new MemoryRepository();
+    let validations = 0;
+    const runProcessor = new RunProcessor({
+      repository,
+      agents: new ScriptedAgentRuntime(outputs()),
+      checkpointer: new MemorySaver(),
+      validator: {
+        validate: async () => {
+          validations += 1;
+          throw new ScriptedValidationError("build", 1, "boom");
+        },
+      },
+      repairer: {
+        repair: async () => {
+          if (mode === "throws") throw new Error("model unavailable");
+          return false;
+        },
+      },
+      maxRepairAttempts: 2,
+      now: () => FIXED_NOW,
+    });
+
+    assert.deepEqual(await runToCompletion(runProcessor, repository), { outcome: "failed" });
+    assert.equal(validations, 1);
+    assert.equal(
+      (repository.run.error as { code?: string } | null | undefined)?.code,
+      "SANDBOX_VALIDATION_FAILED",
+    );
+  }
 });

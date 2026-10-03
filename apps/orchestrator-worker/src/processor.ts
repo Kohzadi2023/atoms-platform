@@ -8,7 +8,12 @@ import {
   isRetryableError,
   toWorkerError,
 } from "./errors.js";
-import { buildRunGraph } from "./graph.js";
+import { buildRunGraph, parseUpstreamOutputs } from "./graph.js";
+import {
+  findValidationFailure,
+  isRepairableValidationStep,
+  type RunRepairer,
+} from "./repair.js";
 import type { RunValidationLease, RunValidator } from "./validation.js";
 import type { RunAttachmentLoader } from "./attachment-loader.js";
 import type { ReleaseAssessor } from "./release-assessor.js";
@@ -35,8 +40,17 @@ export interface RunProcessorOptions {
    *  omitting `validator` already behaves. */
   readonly assessor?: ReleaseAssessor;
   readonly attachmentLoader?: RunAttachmentLoader;
+  /** When validation fails on a repairable step, asks the model to fix the code and validates again. */
+  readonly repairer?: RunRepairer;
+  /** How many automatic repairs one run may spend (default 0: none). */
+  readonly maxRepairAttempts?: number;
   readonly now?: () => Date;
 }
+
+// A repaired validation is recorded as its own sandbox session, and sandbox
+// sessions are unique per (run, attempt). Offsetting by repair keeps the
+// worker's real attempt number readable while never colliding with it.
+const REPAIR_ATTEMPT_STRIDE = 100;
 
 export class RunProcessor {
   readonly #repository: WorkerRepository;
@@ -44,6 +58,8 @@ export class RunProcessor {
   readonly #graph: ReturnType<typeof buildRunGraph>;
   readonly #validator: RunValidator | undefined;
   readonly #assessor: ReleaseAssessor | undefined;
+  readonly #repairer: RunRepairer | undefined;
+  readonly #maxRepairAttempts: number;
 
   constructor(options: RunProcessorOptions) {
     this.#repository = options.repository;
@@ -51,6 +67,8 @@ export class RunProcessor {
     this.#graph = buildRunGraph(options);
     this.#validator = options.validator;
     this.#assessor = options.assessor;
+    this.#repairer = options.repairer;
+    this.#maxRepairAttempts = options.maxRepairAttempts ?? 0;
   }
 
   async process(
@@ -77,7 +95,7 @@ export class RunProcessor {
 
     let validationLease: RunValidationLease | void = undefined;
     try {
-      await this.#graph.invoke(
+      const finalState = await this.#graph.invoke(
         {
           runId: claim.run.id,
           workspaceId: claim.run.workspaceId,
@@ -97,10 +115,43 @@ export class RunProcessor {
         },
       );
 
-      validationLease = await this.#validator?.validate({
-        run: claim.run,
-        attempt: attempt.attempt,
-      });
+      for (let repairsUsed = 0; ; repairsUsed += 1) {
+        try {
+          validationLease = await this.#validator?.validate({
+            run: claim.run,
+            attempt: attempt.attempt + repairsUsed * REPAIR_ATTEMPT_STRIDE,
+          });
+          break;
+        } catch (validationError) {
+          const failure = findValidationFailure(validationError);
+          if (
+            this.#repairer === undefined ||
+            failure === undefined ||
+            repairsUsed >= this.#maxRepairAttempts ||
+            !isRepairableValidationStep(failure.step)
+          ) {
+            throw validationError;
+          }
+          let repaired = false;
+          try {
+            repaired = await this.#repairer.repair({
+              run: claim.run,
+              failure,
+              upstreamOutputs: parseUpstreamOutputs(finalState.outputs),
+              repairAttempt: repairsUsed + 1,
+            });
+          } catch (repairError) {
+            if (findRunStoppedError(repairError) !== null) throw repairError;
+            // A repair that itself fails must not hide why the run failed:
+            // report the original validation failure, and log the repair's.
+            console.error(
+              `Automatic repair ${String(repairsUsed + 1)} failed for run ${claim.run.id}:`,
+              repairError instanceof Error ? repairError.message : repairError,
+            );
+          }
+          if (!repaired) throw validationError;
+        }
+      }
 
       // Observe-only: its result is not consulted here, and a defensive
       // catch here (on top of ReleaseAssessor's own internal fail-closed

@@ -19,12 +19,15 @@ import {
 } from "@atoms/db";
 
 import type {
+  ApplyGeneratedFilesInput,
+  ApplyGeneratedFilesResult,
   CompleteTaskInput,
   CompleteTaskResult,
   FailTaskInput,
   PrepareTaskInput,
   RunClaimResult,
   RunExecutionRecord,
+  RunRepairRepository,
   TaskMutationResult,
   WorkerRepository,
   WorkerTaskRecord,
@@ -38,7 +41,7 @@ import type {
 } from "./validation.js";
 
 export class PrismaWorkerRepository
-  implements WorkerRepository, Phase2ValidationRepository
+  implements WorkerRepository, Phase2ValidationRepository, RunRepairRepository
 {
   readonly #prisma: PrismaClient;
 
@@ -443,6 +446,80 @@ export class PrismaWorkerRepository
           });
         }
         return { kind: "ok", task: toWorkerTaskRecord(task) };
+      },
+      { isolationLevel: "Serializable" },
+    );
+  }
+
+  applyGeneratedFiles(
+    input: ApplyGeneratedFilesInput,
+  ): Promise<ApplyGeneratedFilesResult> {
+    return this.#prisma.$transaction(
+      async (transaction): Promise<ApplyGeneratedFilesResult> => {
+        if (
+          !(await touchActiveRun(
+            transaction,
+            input.runId,
+            input.expectedControlVersion,
+            input.now,
+          ))
+        ) {
+          return { kind: "stopped" };
+        }
+        const run = await transaction.agentRun.findUniqueOrThrow({
+          where: { id: input.runId },
+          select: { projectId: true },
+        });
+
+        // Same compare-and-swap discipline as completeTask: every file is checked
+        // before any revision is written, so a repair lands as one atomic unit.
+        const plans: Array<{
+          readonly path: string;
+          readonly content: string;
+          readonly actualVersion: number;
+          readonly shouldWrite: boolean;
+        }> = [];
+        for (const file of input.generatedFiles) {
+          const latest = await transaction.projectFile.findFirst({
+            where: { projectId: run.projectId, filePath: file.path },
+            orderBy: { version: "desc" },
+          });
+          const actualVersion = latest?.version ?? 0;
+          if (actualVersion !== file.expectedVersion) {
+            return {
+              kind: "file_conflict",
+              path: file.path,
+              expectedVersion: file.expectedVersion,
+              actualVersion,
+            };
+          }
+          plans.push({
+            path: file.path,
+            content: file.content,
+            actualVersion,
+            shouldWrite: latest?.content !== file.content,
+          });
+        }
+
+        const writtenPaths: string[] = [];
+        for (const plan of plans) {
+          if (!plan.shouldWrite) continue;
+          await transaction.projectFile.create({
+            data: {
+              projectId: run.projectId,
+              filePath: plan.path,
+              content: plan.content,
+              version: plan.actualVersion + 1,
+            },
+          });
+          writtenPaths.push(plan.path);
+        }
+        await appendEvent(transaction, input.runId, "code_generated", {
+          repair: true,
+          paths: writtenPaths,
+          fileCount: writtenPaths.length,
+        });
+        return { kind: "ok", writtenPaths };
       },
       { isolationLevel: "Serializable" },
     );

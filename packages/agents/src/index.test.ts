@@ -328,3 +328,103 @@ test("referenceContractIntact holds for the shipped manifests and fails if the c
   };
   assert.equal(referenceContractIntact(extraAccepting), false);
 });
+
+class SequencedGateway implements ModelGateway {
+  readonly requests: ModelRequest[] = [];
+
+  constructor(private readonly outputs: readonly string[]) {}
+
+  async generate(request: ModelRequest): Promise<ModelResponse> {
+    const outputText = this.outputs[this.requests.length] ?? this.outputs.at(-1) ?? "";
+    this.requests.push(request);
+    return {
+      id: `resp_${String(this.requests.length)}`,
+      status: "completed",
+      outputText,
+      model: "test-model",
+    } as ModelResponse;
+  }
+
+  async *stream(): AsyncIterable<never> {
+    yield* [];
+  }
+}
+
+const VALID_ALEX_OUTPUT = JSON.stringify({
+  summary: "Implemented the supported project.",
+  files: [
+    { path: "app/page.tsx", content: "export default function Page() { return null; }", expectedVersion: 0 },
+  ],
+  commands: { lint: "pnpm lint", typecheck: "pnpm typecheck", test: "pnpm test", build: "pnpm build" },
+});
+
+const ALEX_REQUEST = {
+  agentName: "Alex",
+  runId: RUN_ID,
+  prompt: "Build a customer portal",
+  upstreamOutputs: {},
+  currentFiles: [],
+} as const;
+
+test("a schema failure gets one correction pass carrying the precise issues", async () => {
+  const gateway = new SequencedGateway([JSON.stringify({ summary: "only a summary" }), VALID_ALEX_OUTPUT]);
+  const runtime = new ModelBackedAgentRuntime(gateway);
+
+  const output = await runtime.execute(ALEX_REQUEST);
+
+  assert.deepEqual(output, AlexOutputSchema.parse(JSON.parse(VALID_ALEX_OUTPUT)));
+  assert.equal(gateway.requests.length, 2);
+  assert.equal(gateway.requests[0]?.metadata?.correction, undefined);
+  assert.equal(gateway.requests[1]?.metadata?.correction, "1");
+  const retryInput = JSON.parse(gateway.requests[1]?.input ?? "{}") as {
+    previousResponseFailedValidation?: string[];
+    correctionInstruction?: string;
+    userPrompt?: string;
+  };
+  assert.equal(retryInput.userPrompt, "Build a customer portal");
+  assert.ok((retryInput.previousResponseFailedValidation ?? []).some((issue) => issue.startsWith("files")));
+  assert.match(retryInput.correctionInstruction ?? "", /complete corrected JSON/);
+  // The first attempt carries no correction fields at all.
+  assert.equal(
+    "previousResponseFailedValidation" in JSON.parse(gateway.requests[0]?.input ?? "{}"),
+    false,
+  );
+});
+
+test("a second schema failure still fails the agent", async () => {
+  const bad = JSON.stringify({ summary: "only a summary" });
+  const twice = new SequencedGateway([bad, bad]);
+  await assert.rejects(
+    new ModelBackedAgentRuntime(twice).execute(ALEX_REQUEST),
+    (error: unknown) =>
+      error instanceof AgentRuntimeError && error.code === "INVALID_AGENT_OUTPUT",
+  );
+  assert.equal(twice.requests.length, 2);
+});
+
+test("invalid JSON gets one correction pass too, and fails the agent if it repeats", async () => {
+  const recovers = new SequencedGateway(["this is not json", VALID_ALEX_OUTPUT]);
+  const output = await new ModelBackedAgentRuntime(recovers).execute(ALEX_REQUEST);
+  assert.deepEqual(output, AlexOutputSchema.parse(JSON.parse(VALID_ALEX_OUTPUT)));
+  assert.equal(recovers.requests.length, 2);
+  const retryInput = JSON.parse(recovers.requests[1]?.input ?? "{}") as {
+    previousResponseFailedValidation?: string[];
+  };
+  assert.match(retryInput.previousResponseFailedValidation?.[0] ?? "", /not a valid JSON object/);
+
+  const stuck = new SequencedGateway(["this is not json", "still not json"]);
+  await assert.rejects(
+    new ModelBackedAgentRuntime(stuck).execute(ALEX_REQUEST),
+    (error: unknown) =>
+      error instanceof AgentRuntimeError &&
+      error.code === "INVALID_AGENT_OUTPUT" &&
+      /invalid JSON/.test(error.message),
+  );
+  assert.equal(stuck.requests.length, 2);
+});
+
+test("every agent request asks the provider for JSON output", async () => {
+  const gateway = new SequencedGateway([VALID_ALEX_OUTPUT]);
+  await new ModelBackedAgentRuntime(gateway).execute(ALEX_REQUEST);
+  assert.equal(gateway.requests[0]?.responseFormat, "json");
+});

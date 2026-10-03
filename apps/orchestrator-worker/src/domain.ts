@@ -88,6 +88,31 @@ export type CompleteTaskResult =
       readonly actualVersion: number;
     };
 
+export interface ApplyGeneratedFilesInput {
+  readonly runId: string;
+  readonly expectedControlVersion: number;
+  readonly generatedFiles: readonly AgentGeneratedFile[];
+  readonly now: Date;
+}
+
+export type ApplyGeneratedFilesResult =
+  | { readonly kind: "ok"; readonly writtenPaths: readonly string[] }
+  | { readonly kind: "stopped" }
+  | {
+      readonly kind: "file_conflict";
+      readonly path: string;
+      readonly expectedVersion: number;
+      readonly actualVersion: number;
+    };
+
+/** What an automatic repair needs: read the project, and write corrected files with no task row. */
+export interface RunRepairRepository {
+  listProjectFiles(projectId: string): Promise<readonly AgentProjectFile[]>;
+  applyGeneratedFiles(
+    input: ApplyGeneratedFilesInput,
+  ): Promise<ApplyGeneratedFilesResult>;
+}
+
 export interface FailTaskInput {
   readonly runId: string;
   readonly expectedControlVersion: number;

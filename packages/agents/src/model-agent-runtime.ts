@@ -74,6 +74,7 @@ export class ModelBackedAgentRuntime implements AgentRuntime {
               ),
             }),
         maxOutputTokens: manifest.maxOutputTokens,
+        responseFormat: "json",
         metadata: {
           run_id: request.runId,
           agent: request.agentName,
@@ -97,14 +98,28 @@ export class ModelBackedAgentRuntime implements AgentRuntime {
       try {
         value = JSON.parse(extractJsonObject(response.outputText));
       } catch (error) {
-        throw new AgentRuntimeError(
-          `Agent ${request.agentName} returned invalid JSON`,
-          {
-            code: "INVALID_AGENT_OUTPUT",
-            retryable: false,
-            cause: error,
-          },
-        );
+        // A completed (not truncated) response that is not valid JSON is a
+        // formatting slip, typically an unescaped newline inside a long string.
+        // It gets the same single correction pass as a schema failure.
+        if (correction >= MAX_SCHEMA_CORRECTIONS) {
+          throw new AgentRuntimeError(
+            `Agent ${request.agentName} returned invalid JSON`,
+            {
+              code: "INVALID_AGENT_OUTPUT",
+              retryable: false,
+              cause: error,
+            },
+          );
+        }
+        correctionIssues = [
+          `The response was not a valid JSON object: ${
+            error instanceof Error ? error.message : "parse failure"
+          }. Return exactly one JSON object with every string correctly escaped (newlines as \\n, quotes as \\").`.slice(
+            0,
+            MAX_ISSUE_LENGTH,
+          ),
+        ];
+        continue;
       }
 
       const parsed = manifest.outputSchema.safeParse(value);

@@ -254,3 +254,24 @@ test("cost calculation clamps invalid cached-token counts, same arithmetic as th
     30,
   );
 });
+
+test("responseFormat json asks Gemini for a single valid JSON object, and is absent otherwise", async () => {
+  const requests: Array<Record<string, unknown>> = [];
+  const client = {
+    chat: {
+      completions: {
+        create: async (request: Record<string, unknown>) => {
+          requests.push(request);
+          return completionFixture("gemini-2.5-pro");
+        },
+      },
+    },
+  } as unknown as GeminiClient;
+  const gateway = new GeminiModelGateway({ client, pricing: {} });
+
+  await gateway.generate({ policy: "flagship", input: "x", responseFormat: "json" });
+  await gateway.generate({ policy: "flagship", input: "x" });
+
+  assert.deepEqual(requests[0]?.response_format, { type: "json_object" });
+  assert.equal("response_format" in (requests[1] ?? {}), false);
+});

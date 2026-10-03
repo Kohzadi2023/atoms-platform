@@ -1,6 +1,7 @@
 "use client";
 
 import {
+  BrowserAuthError,
   InteractionRequiredAuthError,
   PublicClientApplication,
   type AccountInfo,
@@ -59,6 +60,22 @@ export function EntraAuthGate() {
   }
 
   return <EntraSessionBoundary configuration={authenticationMode.configuration} />;
+}
+
+// A silent renewal that times out (blocked or stale hidden iframe, an expired
+// Microsoft session) cannot recover on its own; like interaction_required, it
+// needs a visible sign-in redirect rather than a permanently broken page.
+const SILENT_RENEWAL_TIMEOUT_CODES: ReadonlySet<string> = new Set([
+  "timed_out",
+  "monitor_window_timeout",
+]);
+
+function requiresVisibleSignIn(error: unknown): boolean {
+  if (error instanceof InteractionRequiredAuthError) return true;
+  if (error instanceof BrowserAuthError) {
+    return SILENT_RENEWAL_TIMEOUT_CODES.has(error.errorCode);
+  }
+  return false;
 }
 
 function EntraSessionBoundary({
@@ -136,7 +153,7 @@ function EntraSessionBoundary({
       try {
         return await silentProvider();
       } catch (error) {
-        if (error instanceof InteractionRequiredAuthError) {
+        if (requiresVisibleSignIn(error)) {
           await client.acquireTokenRedirect({
             account,
             scopes: [configuration.apiScope],

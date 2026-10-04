@@ -1,14 +1,15 @@
 import type { AgentRuntime } from "@atoms/agents";
-import { RunJobSchema, type RunJob } from "@atoms/contracts";
+import { RunJobSchema, type JsonValue, type RunJob } from "@atoms/contracts";
 import type { BaseCheckpointSaver } from "@langchain/langgraph";
 
-import type { WorkerRepository } from "./domain.js";
+import type { RunExecutionRecord, WorkerRepository } from "./domain.js";
 import {
   findRunStoppedError,
   isRetryableError,
   toWorkerError,
 } from "./errors.js";
 import { buildRunGraph, parseUpstreamOutputs } from "./graph.js";
+import { describeMissingRoutes, findMissingRoutes, ROUTE_COVERAGE_STEP } from "./route-coverage.js";
 import {
   findValidationFailure,
   isRepairableValidationStep,
@@ -71,6 +72,48 @@ export class RunProcessor {
     this.#maxRepairAttempts = options.maxRepairAttempts ?? 0;
   }
 
+  /**
+   * Bob's planned routes against the files Alex actually wrote. A missing route
+   * (a login handler that was never generated, say) ships a preview that opens
+   * on a 404, so it gets one repair before any sandbox is paid for. Advisory
+   * only: a failed or empty repair never fails the run, validation still runs.
+   * Returns how many repairs this spent (0 or 1).
+   */
+  async #repairMissingRoutes(
+    run: RunExecutionRecord,
+    outputs: Readonly<Record<string, JsonValue>>,
+  ): Promise<number> {
+    if (this.#repairer === undefined || this.#maxRepairAttempts < 1) return 0;
+    try {
+      const upstream = parseUpstreamOutputs(outputs);
+      if (upstream.Bob === undefined) return 0;
+      const files = await this.#repository.listProjectFiles(run.projectId);
+      const missing = findMissingRoutes(
+        upstream.Bob.routes,
+        files.map((file) => file.path),
+      );
+      if (missing.length === 0) return 0;
+      const repaired = await this.#repairer.repair({
+        run,
+        failure: {
+          step: ROUTE_COVERAGE_STEP,
+          exitCode: 1,
+          output: describeMissingRoutes(missing),
+        },
+        upstreamOutputs: upstream,
+        repairAttempt: 1,
+      });
+      return repaired ? 1 : 0;
+    } catch (error) {
+      if (findRunStoppedError(error) !== null) throw error;
+      console.error(
+        `Route-coverage repair failed for run ${run.id}:`,
+        error instanceof Error ? error.message : error,
+      );
+      return 0;
+    }
+  }
+
   async process(
     untrustedJob: RunJob,
     attempt: RunAttempt,
@@ -119,7 +162,8 @@ export class RunProcessor {
       // under attempt + repairs * stride, and the release assessor must read the
       // evidence of that session, not of the failed first one.
       let validatedAttempt = attempt.attempt;
-      for (let repairsUsed = 0; ; repairsUsed += 1) {
+      let repairsUsed = await this.#repairMissingRoutes(claim.run, finalState.outputs);
+      for (; ; repairsUsed += 1) {
         try {
           validatedAttempt = attempt.attempt + repairsUsed * REPAIR_ATTEMPT_STRIDE;
           validationLease = await this.#validator?.validate({

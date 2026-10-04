@@ -1594,3 +1594,110 @@ test("after a repair the release assessor reads the sandbox attempt that passed,
   assert.deepEqual(await runToCompletion(runProcessor, repository), { outcome: "completed" });
   assert.deepEqual(assessed, [101]);
 });
+
+// ---- planned routes versus generated files ----
+
+const ROUTE_FILES = [
+  { path: "app/page.tsx", content: "export default function Page() { return null; }", expectedVersion: 0 },
+] as const;
+
+// FREE skips Sarah and Adrian, whose own route and approval checks are not what these tests are about.
+function routeCoverageProcessor(options: {
+  readonly repository: MemoryRepository;
+  readonly repairResult: boolean;
+  readonly repairs: RunRepairInput[];
+  readonly validationAttempts: number[];
+  readonly bobPaths: readonly string[];
+}): RunProcessor {
+  options.repository.workspacePlan = "FREE";
+  return new RunProcessor({
+    repository: options.repository,
+    agents: new ScriptedAgentRuntime(
+      outputs({
+        alexFiles: [...ROUTE_FILES],
+        bobRoutes: options.bobPaths.map((path) => ({
+          method: "GET" as const,
+          path,
+          purpose: "A planned route",
+        })),
+      }),
+    ),
+    checkpointer: new MemorySaver(),
+    validator: {
+      validate: async (input) => {
+        options.validationAttempts.push(input.attempt);
+      },
+    },
+    repairer: {
+      repair: async (input) => {
+        options.repairs.push(input);
+        return options.repairResult;
+      },
+    },
+    maxRepairAttempts: 2,
+    now: () => FIXED_NOW,
+  });
+}
+
+test("a planned route with no file gets one route-coverage repair before the first validation", async () => {
+  const repository = new MemoryRepository();
+  const repairs: RunRepairInput[] = [];
+  const attempts: number[] = [];
+  const runProcessor = routeCoverageProcessor({
+    repository,
+    repairResult: true,
+    repairs,
+    validationAttempts: attempts,
+    bobPaths: ["/", "/api/auth/[...nextauth]"],
+  });
+
+  assert.deepEqual(
+    await runProcessor.process(startJob(), { attempt: 1, maxAttempts: 3 }),
+    { outcome: "completed" },
+  );
+  assert.equal(repairs.length, 1);
+  assert.equal(repairs[0]?.failure.step, "route-coverage");
+  assert.equal(repairs[0]?.failure.output, "GET /api/auth/[...nextauth]");
+  // The repair spent one of the run's repairs, so validation is recorded as attempt 101.
+  assert.deepEqual(attempts, [101]);
+});
+
+test("route coverage never fails the run: a repair that changes nothing leaves validation at attempt 1", async () => {
+  const repository = new MemoryRepository();
+  const repairs: RunRepairInput[] = [];
+  const attempts: number[] = [];
+  const runProcessor = routeCoverageProcessor({
+    repository,
+    repairResult: false,
+    repairs,
+    validationAttempts: attempts,
+    bobPaths: ["/", "/missing"],
+  });
+
+  assert.deepEqual(
+    await runProcessor.process(startJob(), { attempt: 1, maxAttempts: 3 }),
+    { outcome: "completed" },
+  );
+  assert.equal(repairs.length, 1);
+  assert.deepEqual(attempts, [1]);
+});
+
+test("when every planned route has a file no route-coverage repair runs", async () => {
+  const repository = new MemoryRepository();
+  const repairs: RunRepairInput[] = [];
+  const attempts: number[] = [];
+  const runProcessor = routeCoverageProcessor({
+    repository,
+    repairResult: true,
+    repairs,
+    validationAttempts: attempts,
+    bobPaths: ["/"],
+  });
+
+  assert.deepEqual(
+    await runProcessor.process(startJob(), { attempt: 1, maxAttempts: 3 }),
+    { outcome: "completed" },
+  );
+  assert.equal(repairs.length, 0);
+  assert.deepEqual(attempts, [1]);
+});

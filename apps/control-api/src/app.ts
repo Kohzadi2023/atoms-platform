@@ -559,8 +559,17 @@ export async function buildControlApi(
       let lastWriteAt = connectedAt;
       let disconnected = false;
 
+      // hijack() hands the raw socket over, so Fastify no longer writes the headers
+      // already set on the reply -- including the CORS ones from @fastify/cors. Carry
+      // them over explicitly, or the browser rejects this cross-origin stream and the
+      // workspace never receives a single event.
+      const inheritedHeaders: Record<string, number | string | string[]> = {};
+      for (const [name, value] of Object.entries(reply.getHeaders())) {
+        if (value !== undefined) inheritedHeaders[name] = value;
+      }
       reply.hijack();
       reply.raw.writeHead(200, {
+        ...inheritedHeaders,
         "Cache-Control": "no-cache, no-transform",
         Connection: "keep-alive",
         "Content-Type": "text/event-stream; charset=utf-8",

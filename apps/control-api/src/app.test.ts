@@ -1091,3 +1091,31 @@ function event(
 function uuid(value: number): string {
   return `00000000-0000-4000-8000-${String(value).padStart(12, "0")}`;
 }
+
+test("the SSE events response carries the CORS headers, so the browser accepts it", async () => {
+  const { app, repository } = await fixture(["http://localhost:3000"]);
+  try {
+    await createProjectAndRun(repository);
+    repository.events.push(event(1, "task_started"));
+    repository.setRunStatus(RUN_ID, "COMPLETED");
+
+    const allowed = await app.inject({
+      method: "GET",
+      url: `/v1/runs/${RUN_ID}/events`,
+      headers: { origin: "http://localhost:3000" },
+    });
+    assert.equal(allowed.statusCode, 200);
+    assert.match(allowed.headers["content-type"] ?? "", /^text\/event-stream/);
+    assert.equal(allowed.headers["access-control-allow-origin"], "http://localhost:3000");
+    assert.match(String(allowed.headers.vary ?? ""), /origin/i);
+
+    const denied = await app.inject({
+      method: "GET",
+      url: `/v1/runs/${RUN_ID}/events`,
+      headers: { origin: "https://untrusted.example" },
+    });
+    assert.equal(denied.headers["access-control-allow-origin"], undefined);
+  } finally {
+    await app.close();
+  }
+});

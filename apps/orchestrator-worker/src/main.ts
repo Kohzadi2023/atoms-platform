@@ -115,8 +115,10 @@ const EnvironmentSchema = z
       .default(1.5),
     // How many times a failed sandbox validation (install, lint, typecheck, test or build)
     // is handed back to Alex with the failing output before the run is failed. Each repair
-    // costs one Alex call plus one sandbox validation; 0 turns the loop off.
-    RUN_MAX_REPAIR_ATTEMPTS: z.coerce.number().int().min(0).max(3).default(2),
+    // costs one Alex call plus one sandbox validation; 0 turns the loop off. Live runs
+    // showed each repair fixing one step and exposing the next (typecheck, then test,
+    // then build), so two repairs were one short; three is the ceiling the schema allows.
+    RUN_MAX_REPAIR_ATTEMPTS: z.coerce.number().int().min(0).max(3).default(3),
     // Per-workspace, per-UTC-day ceiling on reserved provider spend (micro-USD).
     // Must be set whenever a per-run budget is set; see the refinement below.
     // Set by an operator after the live egress probe passes (docs/adr/production-execution-gate.md, G5).

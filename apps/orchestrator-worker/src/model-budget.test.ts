@@ -17,7 +17,9 @@ import {
   PINNED_OPENAI_OUTPUT_LIMITS,
   PINNED_OPENAI_PRICING,
   ProviderBudgetError,
+  SETTLED_COST_MARGIN,
   estimateTextRequestReservationUsdMicros,
+  reservationToRelease,
   type BudgetExhaustionScope,
   type BudgetReservationResult,
   type RoutedModelGateway,
@@ -80,6 +82,20 @@ class FakeBudgetStore implements RunProviderBudgetStore {
   exhausted: BudgetExhaustionScope | undefined;
   remainingUsdMicros = 1_000_000;
   failRecordActual = false;
+  releases: Array<{
+    readonly runId: string;
+    readonly releaseUsdMicros: number;
+    readonly windowDate?: string;
+  }> = [];
+  windowDate: string | undefined;
+
+  async release(input: {
+    readonly runId: string;
+    readonly releaseUsdMicros: number;
+    readonly windowDate?: string;
+  }): Promise<void> {
+    this.releases.push(input);
+  }
 
   async reserve(input: {
     readonly runId: string;
@@ -94,6 +110,7 @@ class FakeBudgetStore implements RunProviderBudgetStore {
       ...(this.accepted || this.exhausted === undefined
         ? {}
         : { exhausted: this.exhausted }),
+      ...(this.windowDate === undefined ? {} : { windowDate: this.windowDate }),
     };
   }
 
@@ -444,3 +461,60 @@ for (const [label, models, pricing, outputLimits] of [
     }
   });
 }
+
+test("a finished call gives back the part of its reservation its real cost did not use", async () => {
+  const store = new FakeBudgetStore();
+  store.windowDate = "2026-10-04";
+  const budgeted = new BudgetedModelGateway({
+    gateway: new PricedFakeGateway(),
+    budgetStore: store,
+    totalBudgetUsdMicros: 2_000_000,
+    workspaceDailyBudgetUsdMicros: 5_000_000,
+    pricing: PINNED_OPENAI_PRICING,
+    outputTokenLimits: PINNED_OPENAI_OUTPUT_LIMITS,
+  });
+
+  await budgeted.generate(request());
+
+  const reserved = store.calls[0]?.reservationUsdMicros ?? 0;
+  assert.equal(store.releases.length, 1);
+  assert.equal(store.releases[0]?.runId, RUN_ID);
+  assert.equal(store.releases[0]?.windowDate, "2026-10-04");
+  assert.equal(
+    store.releases[0]?.releaseUsdMicros,
+    reserved - Math.ceil(4_321 * SETTLED_COST_MARGIN),
+  );
+});
+
+test("nothing is given back when the real cost is unknown or the reservation was already tight", async () => {
+  const unpriced = new FakeBudgetStore();
+  await new BudgetedModelGateway({
+    gateway: new FakeGateway(),
+    budgetStore: unpriced,
+    totalBudgetUsdMicros: 2_000_000,
+    pricing: PINNED_OPENAI_PRICING,
+    outputTokenLimits: PINNED_OPENAI_OUTPUT_LIMITS,
+  }).generate(request());
+  assert.deepEqual(unpriced.releases, []);
+
+  assert.equal(reservationToRelease({ reservationUsdMicros: 1_000, actualUsdMicros: undefined }), 0);
+  assert.equal(reservationToRelease({ reservationUsdMicros: 1_000, actualUsdMicros: -1 }), 0);
+  assert.equal(reservationToRelease({ reservationUsdMicros: 1_000, actualUsdMicros: 900 }), 0);
+  assert.equal(reservationToRelease({ reservationUsdMicros: 1_000, actualUsdMicros: 100 }), 1_000 - 125);
+});
+
+test("a ledger failure while recording or releasing never discards a paid response", async () => {
+  const store = new FakeBudgetStore();
+  store.failRecordActual = true;
+  const budgeted = new BudgetedModelGateway({
+    gateway: new PricedFakeGateway(),
+    budgetStore: store,
+    totalBudgetUsdMicros: 2_000_000,
+    pricing: PINNED_OPENAI_PRICING,
+    outputTokenLimits: PINNED_OPENAI_OUTPUT_LIMITS,
+  });
+
+  const response = await budgeted.generate(request());
+  assert.equal(response.status, "completed");
+  assert.deepEqual(store.releases, []);
+});

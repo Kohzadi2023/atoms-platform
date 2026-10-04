@@ -99,6 +99,8 @@ export interface BudgetReservationResult {
   readonly remainingUsdMicros: number;
   /** Present only when `accepted` is false. */
   readonly exhausted?: BudgetExhaustionScope;
+  /** UTC day of the workspace window the reservation was charged to, when one applied. */
+  readonly windowDate?: string;
 }
 
 export interface RunProviderBudgetStore {
@@ -119,6 +121,36 @@ export interface RunProviderBudgetStore {
     readonly runId: string;
     readonly actualUsdMicros: number;
   }): Promise<void>;
+
+  /**
+   * Gives back the part of a finished call's reservation that its real cost did
+   * not use, from the run's ledger and from the workspace window it was charged
+   * to. Optional: a store without it simply keeps the full pre-call reservation,
+   * which is the original, strictly conservative behaviour.
+   */
+  release?(input: {
+    readonly runId: string;
+    readonly releaseUsdMicros: number;
+    readonly windowDate?: string;
+  }): Promise<void>;
+}
+
+/**
+ * A pre-call reservation is a worst-case bound (every output token, times the
+ * safety multiplier). Once a call has finished its real cost is known, so the
+ * ledger keeps the actual cost with this margin for pricing drift instead of the
+ * bound, and the ceilings then limit real spend rather than the number of calls.
+ * A call still in flight keeps its full reservation.
+ */
+export const SETTLED_COST_MARGIN = 1.25;
+
+export function reservationToRelease(input: {
+  readonly reservationUsdMicros: number;
+  readonly actualUsdMicros: number | undefined;
+}): number {
+  if (input.actualUsdMicros === undefined || input.actualUsdMicros < 0) return 0;
+  const settled = Math.ceil(input.actualUsdMicros * SETTLED_COST_MARGIN);
+  return Math.max(0, input.reservationUsdMicros - settled);
 }
 
 export interface RoutedModelGateway extends ModelGateway {
@@ -179,27 +211,44 @@ export class BudgetedModelGateway implements ModelGateway {
   }
 
   async generate(request: ModelRequest): Promise<ModelResponse> {
-    const { runId, request: outgoing } = await this.#reserve(request);
-    const response = await this.#gateway.generate(outgoing);
-    await this.#recordActual(runId, response);
+    const reserved = await this.#reserve(request);
+    const response = await this.#gateway.generate(reserved.request);
+    await this.#recordActual(reserved, response);
     return response;
   }
 
   async *stream(request: ModelRequest): AsyncIterable<ModelStreamEvent> {
-    const { runId, request: outgoing } = await this.#reserve(request);
-    for await (const event of this.#gateway.stream(outgoing)) {
+    const reserved = await this.#reserve(request);
+    for await (const event of this.#gateway.stream(reserved.request)) {
       if (event.type === "completed") {
-        await this.#recordActual(runId, event.response);
+        await this.#recordActual(reserved, event.response);
       }
       yield event;
     }
   }
 
-  async #recordActual(runId: string, response: ModelResponse): Promise<void> {
+  async #recordActual(
+    reserved: ReservedCall,
+    response: ModelResponse,
+  ): Promise<void> {
+    const { runId } = reserved;
     const actualUsdMicros = response.usage.estimatedCostUsdMicros;
     if (actualUsdMicros === undefined || actualUsdMicros < 0) return;
     try {
       await this.#budgetStore.recordActual({ runId, actualUsdMicros });
+      const releaseUsdMicros = reservationToRelease({
+        reservationUsdMicros: reserved.reservationUsdMicros,
+        actualUsdMicros,
+      });
+      if (releaseUsdMicros > 0) {
+        await this.#budgetStore.release?.({
+          runId,
+          releaseUsdMicros,
+          ...(reserved.windowDate === undefined
+            ? {}
+            : { windowDate: reserved.windowDate }),
+        });
+      }
     } catch {
       // The provider call already happened and was paid for. Failing it here
       // would discard the response and trigger a retry that pays again. The
@@ -208,9 +257,7 @@ export class BudgetedModelGateway implements ModelGateway {
     }
   }
 
-  async #reserve(
-    request: ModelRequest,
-  ): Promise<{ readonly runId: string; readonly request: ModelRequest }> {
+  async #reserve(request: ModelRequest): Promise<ReservedCall> {
     if (this.#totalBudgetUsdMicros === 0) {
       throw new ProviderBudgetError(
         "PROVIDER_BUDGET_DISABLED",
@@ -266,8 +313,22 @@ export class BudgetedModelGateway implements ModelGateway {
         `Provider request reservation ${String(reservationUsdMicros)} micro-USD exceeds remaining run budget ${String(reservation.remainingUsdMicros)} micro-USD`,
       );
     }
-    return { runId, request: clamped };
+    return {
+      runId,
+      request: clamped,
+      reservationUsdMicros,
+      ...(reservation.windowDate === undefined
+        ? {}
+        : { windowDate: reservation.windowDate }),
+    };
   }
+}
+
+interface ReservedCall {
+  readonly runId: string;
+  readonly request: ModelRequest;
+  readonly reservationUsdMicros: number;
+  readonly windowDate?: string;
 }
 
 /**
@@ -466,6 +527,7 @@ export class PostgresRunProviderBudgetStore implements RunProviderBudgetStore {
         return { accepted: false, remainingUsdMicros, exhausted: "run" as const };
       }
 
+      let chargedWindowDate: string | undefined;
       if (workspaceCap !== undefined) {
         await transaction.$executeRaw`
           INSERT INTO atoms_runtime.workspace_provider_budget_windows (
@@ -513,6 +575,7 @@ export class PostgresRunProviderBudgetStore implements RunProviderBudgetStore {
           WHERE workspace_id = ${window.workspaceId}::uuid
             AND window_date = ${window.windowDate}::date
         `;
+        chargedWindowDate = window.windowDate;
       }
 
       await transaction.$executeRaw`
@@ -526,7 +589,42 @@ export class PostgresRunProviderBudgetStore implements RunProviderBudgetStore {
       return {
         accepted: true,
         remainingUsdMicros: remainingUsdMicros - input.reservationUsdMicros,
+        ...(chargedWindowDate === undefined
+          ? {}
+          : { windowDate: chargedWindowDate }),
       };
+    });
+  }
+
+  async release(input: {
+    readonly runId: string;
+    readonly releaseUsdMicros: number;
+    readonly windowDate?: string;
+  }): Promise<void> {
+    if (!Number.isInteger(input.releaseUsdMicros) || input.releaseUsdMicros <= 0) {
+      throw new RangeError("releaseUsdMicros must be a positive integer");
+    }
+    await this.#prisma.$transaction(async (transaction) => {
+      // Same lock order as reserve(): the run row first, then the window row.
+      await transaction.$executeRaw`
+        UPDATE atoms_runtime.run_provider_budgets
+        SET
+          reserved_usd_micros = GREATEST(0, reserved_usd_micros - ${input.releaseUsdMicros}),
+          updated_at = CURRENT_TIMESTAMP
+        WHERE run_id = ${input.runId}::uuid
+      `;
+      if (input.windowDate !== undefined) {
+        await transaction.$executeRaw`
+          UPDATE atoms_runtime.workspace_provider_budget_windows AS window_row
+          SET
+            reserved_usd_micros = GREATEST(0, window_row.reserved_usd_micros - ${input.releaseUsdMicros}),
+            updated_at = CURRENT_TIMESTAMP
+          FROM public.agent_runs AS run
+          WHERE run.id = ${input.runId}::uuid
+            AND window_row.workspace_id = run.workspace_id
+            AND window_row.window_date = ${input.windowDate}::date
+        `;
+      }
     });
   }
 

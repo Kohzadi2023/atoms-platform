@@ -204,19 +204,20 @@ test(
       // Another run of the same workspace still fits inside what is left.
       const acceptedRun = raced[0]?.accepted ? runA : runB;
       const otherRunOfWorkspace = acceptedRun === runA ? runB : runA;
-      assert.deepEqual(await reserve(otherRunOfWorkspace, 300_000), {
-        accepted: true,
-        remainingUsdMicros: 700_000,
-      });
+      const fitted = await reserve(otherRunOfWorkspace, 300_000);
+      assert.equal(fitted.accepted, true);
+      assert.equal(fitted.remainingUsdMicros, 700_000);
+      // The reservation reports the UTC day of the window it was charged to.
+      assert.match(fitted.windowDate ?? "", /^\d{4}-\d{2}-\d{2}$/u);
       const overflow = await reserve(acceptedRun, 200_000);
       assert.equal(overflow.accepted, false);
       assert.equal(overflow.exhausted, "workspace");
 
       // A different workspace has its own window and is unaffected.
-      assert.deepEqual(await reserve(runOther, 900_000), {
-        accepted: true,
-        remainingUsdMicros: 100_000,
-      });
+      const otherWorkspace = await reserve(runOther, 900_000);
+      assert.equal(otherWorkspace.accepted, true);
+      assert.equal(otherWorkspace.remainingUsdMicros, 100_000);
+      assert.equal(otherWorkspace.windowDate, fitted.windowDate);
 
       const windows = await client.$queryRaw<
         Array<{ workspaceId: string; reservedUsdMicros: number }>
@@ -250,6 +251,39 @@ test(
         WHERE run_id = ${runOther}::uuid
       `;
       assert.deepEqual(ledger, [{ reservedUsdMicros: 900_000, actualUsdMicros: 2_468 }]);
+
+      // Settling gives the unused part of a reservation back to both the run's
+      // ledger and the workspace window it was charged to, and never below zero.
+      const reservedNow = async () => {
+        const [runRow] = await client.$queryRaw<Array<{ reservedUsdMicros: number }>>`
+          SELECT reserved_usd_micros AS "reservedUsdMicros"
+          FROM atoms_runtime.run_provider_budgets
+          WHERE run_id = ${runOther}::uuid
+        `;
+        const [windowRow] = await client.$queryRaw<Array<{ reservedUsdMicros: number }>>`
+          SELECT reserved_usd_micros AS "reservedUsdMicros"
+          FROM atoms_runtime.workspace_provider_budget_windows
+          WHERE workspace_id = ${workspaceIds[1]}::uuid
+            AND window_date = ${otherWorkspace.windowDate as string}::date
+        `;
+        return [runRow?.reservedUsdMicros, windowRow?.reservedUsdMicros];
+      };
+      await store.release({
+        runId: runOther,
+        releaseUsdMicros: 400_000,
+        ...(otherWorkspace.windowDate === undefined
+          ? {}
+          : { windowDate: otherWorkspace.windowDate }),
+      });
+      assert.deepEqual(await reservedNow(), [500_000, 500_000]);
+      await store.release({
+        runId: runOther,
+        releaseUsdMicros: 10_000_000,
+        ...(otherWorkspace.windowDate === undefined
+          ? {}
+          : { windowDate: otherWorkspace.windowDate }),
+      });
+      assert.deepEqual(await reservedNow(), [0, 0]);
     } finally {
       for (const workspaceId of workspaceIds) {
         await client.workspace.delete({ where: { id: workspaceId } });

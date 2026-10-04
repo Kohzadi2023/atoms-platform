@@ -53,12 +53,25 @@ export interface GeminiModelGatewayOptions {
   readonly pricing?: Readonly<Record<string, ModelPricing>>;
   readonly maxRetries?: number;
   readonly timeoutMs?: number;
+  /**
+   * Waits between attempts after a 429. Gemini's rate limits are per minute, while the
+   * SDK's own retry and the run queue's backoff both give up within seconds, so a short
+   * burst of calls used to fail whole runs. A 429 consumes no tokens, so waiting and
+   * asking again costs nothing. Pass an empty list to turn this off.
+   */
+  readonly rateLimitRetryDelaysMs?: readonly number[];
+  /** Replaceable so tests do not actually wait. */
+  readonly sleep?: (milliseconds: number) => Promise<void>;
 }
+
+const DEFAULT_RATE_LIMIT_RETRY_DELAYS_MS: readonly number[] = [10_000, 25_000, 45_000];
 
 export class GeminiModelGateway implements ModelGateway {
   readonly #client: GeminiClient;
   readonly #models: Readonly<Record<ModelPolicy, string>>;
   readonly #pricing: Readonly<Record<string, ModelPricing>>;
+  readonly #rateLimitRetryDelaysMs: readonly number[];
+  readonly #sleep: (milliseconds: number) => Promise<void>;
 
   constructor(options: GeminiModelGatewayOptions = {}) {
     this.#client =
@@ -75,6 +88,11 @@ export class GeminiModelGateway implements ModelGateway {
       });
     this.#models = { ...DEFAULT_MODEL_ROUTES, ...options.models };
     this.#pricing = options.pricing ?? {};
+    this.#rateLimitRetryDelaysMs =
+      options.rateLimitRetryDelaysMs ?? DEFAULT_RATE_LIMIT_RETRY_DELAYS_MS;
+    this.#sleep =
+      options.sleep ??
+      ((milliseconds) => new Promise((resolve) => setTimeout(resolve, milliseconds)));
   }
 
   resolveModel(policy: ModelPolicy): string {
@@ -85,18 +103,25 @@ export class GeminiModelGateway implements ModelGateway {
     const model = this.resolveModel(request.policy);
     const startedAt = performance.now();
 
-    try {
-      const response = await this.#client.chat.completions.create(
-        this.#createParams(request, model),
-      );
-      return this.#mapResponse(
-        response,
-        request.policy,
-        model,
-        performance.now() - startedAt,
-      );
-    } catch (error) {
-      throw normalizeOpenAIError(error);
+    for (let attempt = 0; ; attempt += 1) {
+      try {
+        const response = await this.#client.chat.completions.create(
+          this.#createParams(request, model),
+        );
+        return this.#mapResponse(
+          response,
+          request.policy,
+          model,
+          performance.now() - startedAt,
+        );
+      } catch (error) {
+        const normalized = normalizeOpenAIError(error);
+        const delay = this.#rateLimitRetryDelaysMs[attempt];
+        if (normalized.code !== "RATE_LIMITED" || delay === undefined) {
+          throw normalized;
+        }
+        await this.#sleep(delay);
+      }
     }
   }
 

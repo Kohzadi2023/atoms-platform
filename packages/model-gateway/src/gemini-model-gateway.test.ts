@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 
+import { APIError } from "openai";
 import type { ChatCompletion } from "openai/resources/chat/completions";
 
 import {
@@ -274,4 +275,64 @@ test("responseFormat json asks Gemini for a single valid JSON object, and is abs
 
   assert.deepEqual(requests[0]?.response_format, { type: "json_object" });
   assert.equal("response_format" in (requests[1] ?? {}), false);
+});
+
+function rateLimitedError(): Error {
+  return new APIError(429, undefined, "429 status code (no body)", new Headers());
+}
+
+function gatewayFailingThenSucceeding(failures: number, error: () => Error) {
+  let calls = 0;
+  const waits: number[] = [];
+  const client = {
+    chat: {
+      completions: {
+        create: async () => {
+          calls += 1;
+          if (calls <= failures) throw error();
+          return completionFixture("gemini-2.5-pro");
+        },
+      },
+    },
+  } as unknown as GeminiClient;
+  const gateway = new GeminiModelGateway({
+    client,
+    pricing: {},
+    rateLimitRetryDelaysMs: [10, 20, 30],
+    sleep: async (milliseconds) => {
+      waits.push(milliseconds);
+    },
+  });
+  return { gateway, waits, calls: () => calls };
+}
+
+test("a 429 is retried after the configured waits and the call then succeeds", async () => {
+  const { gateway, waits, calls } = gatewayFailingThenSucceeding(2, rateLimitedError);
+
+  const response = await gateway.generate({ policy: "flagship", input: "x" });
+
+  assert.equal(response.status, "completed");
+  assert.equal(calls(), 3);
+  assert.deepEqual(waits, [10, 20]);
+});
+
+test("a 429 that never clears gives up after the last wait with a RATE_LIMITED error", async () => {
+  const { gateway, waits, calls } = gatewayFailingThenSucceeding(99, rateLimitedError);
+
+  await assert.rejects(
+    gateway.generate({ policy: "flagship", input: "x" }),
+    (error: unknown) => error instanceof ModelGatewayError && error.code === "RATE_LIMITED",
+  );
+  assert.equal(calls(), 4);
+  assert.deepEqual(waits, [10, 20, 30]);
+});
+
+test("an error other than a 429 is thrown at once, without waiting", async () => {
+  const { gateway, waits, calls } = gatewayFailingThenSucceeding(99, () =>
+    new APIError(400, undefined, "bad request", new Headers()),
+  );
+
+  await assert.rejects(gateway.generate({ policy: "flagship", input: "x" }));
+  assert.equal(calls(), 1);
+  assert.deepEqual(waits, []);
 });

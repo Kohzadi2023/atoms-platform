@@ -115,11 +115,16 @@ export class RunProcessor {
         },
       );
 
+      // The sandbox attempt that actually passed: a repaired validation is recorded
+      // under attempt + repairs * stride, and the release assessor must read the
+      // evidence of that session, not of the failed first one.
+      let validatedAttempt = attempt.attempt;
       for (let repairsUsed = 0; ; repairsUsed += 1) {
         try {
+          validatedAttempt = attempt.attempt + repairsUsed * REPAIR_ATTEMPT_STRIDE;
           validationLease = await this.#validator?.validate({
             run: claim.run,
-            attempt: attempt.attempt + repairsUsed * REPAIR_ATTEMPT_STRIDE,
+            attempt: validatedAttempt,
           });
           break;
         } catch (validationError) {
@@ -160,7 +165,7 @@ export class RunProcessor {
       // implementation does not uphold that contract itself.
       await this.#assessor?.assess({
         run: claim.run,
-        attempt: attempt.attempt,
+        attempt: validatedAttempt,
       }).catch(() => undefined);
 
       const completed = await this.#repository.completeRun(

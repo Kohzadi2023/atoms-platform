@@ -1564,3 +1564,33 @@ test("a repair that changes nothing, or throws, fails the run with the original 
     );
   }
 });
+
+test("after a repair the release assessor reads the sandbox attempt that passed, not the failed first one", async () => {
+  const repository = new MemoryRepository();
+  let validations = 0;
+  const assessed: number[] = [];
+  const runProcessor = new RunProcessor({
+    repository,
+    agents: new ScriptedAgentRuntime(outputs()),
+    checkpointer: new MemorySaver(),
+    validator: {
+      validate: async () => {
+        validations += 1;
+        if (validations === 1) {
+          throw new ScriptedValidationError("typecheck", 2, "TS2307");
+        }
+      },
+    },
+    repairer: { repair: async () => true },
+    maxRepairAttempts: 2,
+    assessor: {
+      assess: async (input) => {
+        assessed.push(input.attempt);
+      },
+    },
+    now: () => FIXED_NOW,
+  });
+
+  assert.deepEqual(await runToCompletion(runProcessor, repository), { outcome: "completed" });
+  assert.deepEqual(assessed, [101]);
+});

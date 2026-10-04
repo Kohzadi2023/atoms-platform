@@ -208,7 +208,7 @@ test(
       assert.equal(fitted.accepted, true);
       assert.equal(fitted.remainingUsdMicros, 700_000);
       // The reservation reports the UTC day of the window it was charged to.
-      assert.match(fitted.windowDate ?? "", /^d{4}-d{2}-d{2}$/u);
+      assert.match(fitted.windowDate ?? "", /^\d{4}-\d{2}-\d{2}$/u);
       const overflow = await reserve(acceptedRun, 200_000);
       assert.equal(overflow.accepted, false);
       assert.equal(overflow.exhausted, "workspace");

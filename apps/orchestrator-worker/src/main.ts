@@ -143,6 +143,11 @@ const EnvironmentSchema = z
     // after a passing preview-health. Needs the same Playwright/Chromium template as
     // PREVIEW_BROWSER_VIABILITY. Evidence only; never blocks the run or withholds the preview.
     ACCEPTANCE_CHECK: z.enum(["off", "required"]).default("off"),
+    // "required" starts a local PostgreSQL in each run's sandbox (migrate and seed first) and
+    // hands its DATABASE_URL to the preview, so a generated app with sign-in or saved data is
+    // usable in its preview. It needs E2B_TEMPLATE to be a template built by
+    // scripts/build-local-database-template.mjs, and is independent of ACCEPTANCE_CHECK.
+    PREVIEW_LOCAL_DATABASE: z.enum(["off", "required"]).default("off"),
     ACCEPTANCE_CHECK_PLAYWRIGHT_ENTRY: z.string().trim().min(1).optional(),
     WORKSPACE_PROVIDER_BUDGET_USD_MICROS_PER_DAY: z.coerce
       .number()
@@ -374,11 +379,14 @@ async function main(): Promise<void> {
             environment.ACCEPTANCE_CHECK_PLAYWRIGHT_ENTRY === undefined
               ? {}
               : { playwrightEntry: environment.ACCEPTANCE_CHECK_PLAYWRIGHT_ENTRY },
-          // The local database (packages/sandbox-provider/src/local-database-template.ts)
-          // exists only to give acceptance scenarios something real to sign in and read
-          // against, so it is gated on the same flag rather than a separate one.
-          provisionLocalDatabase: true,
         }
+      : {}),
+    // The local database (packages/sandbox-provider/src/local-database-template.ts) gives
+    // acceptance scenarios, and now the delivered preview, something real to sign in and
+    // read against; either flag turns it on.
+    ...(environment.ACCEPTANCE_CHECK === "required" ||
+    environment.PREVIEW_LOCAL_DATABASE === "required"
+      ? { provisionLocalDatabase: true }
       : {}),
     sandboxTimeoutMs: environment.SANDBOX_IDLE_TIMEOUT_MS,
   });

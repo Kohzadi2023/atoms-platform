@@ -1701,3 +1701,45 @@ test("when every planned route has a file no route-coverage repair runs", async 
   assert.equal(repairs.length, 0);
   assert.deepEqual(attempts, [1]);
 });
+
+test("the entry route / is required even when Bob never planned it", async () => {
+  const repository = new MemoryRepository();
+  const repairs: RunRepairInput[] = [];
+  const attempts: number[] = [];
+  repository.workspacePlan = "FREE";
+  const runProcessor = new RunProcessor({
+    repository,
+    agents: new ScriptedAgentRuntime(
+      outputs({
+        // Only a login page exists and only /login was planned: "/" would 404 in the preview.
+        alexFiles: [
+          { path: "app/login/page.tsx", content: "export default function Login() { return null; }", expectedVersion: 0 },
+        ],
+        bobRoutes: [{ method: "GET" as const, path: "/login", purpose: "Sign in" }],
+      }),
+    ),
+    checkpointer: new MemorySaver(),
+    validator: {
+      validate: async (input) => {
+        attempts.push(input.attempt);
+      },
+    },
+    repairer: {
+      repair: async (input) => {
+        repairs.push(input);
+        return true;
+      },
+    },
+    maxRepairAttempts: 2,
+    now: () => FIXED_NOW,
+  });
+
+  assert.deepEqual(
+    await runProcessor.process(startJob(), { attempt: 1, maxAttempts: 3 }),
+    { outcome: "completed" },
+  );
+  assert.equal(repairs.length, 1);
+  assert.equal(repairs[0]?.failure.step, "route-coverage");
+  assert.equal(repairs[0]?.failure.output, "GET /");
+  assert.deepEqual(attempts, [101]);
+});

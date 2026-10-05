@@ -109,6 +109,7 @@ class MemoryPreviewStore implements PreviewSessionStore {
 class SuccessfulRunner {
   terminated = false;
   receivedAcceptanceManifest: AcceptanceManifest | null | undefined;
+  previewEnvironment: Readonly<Record<string, string>> | undefined;
 
   async validate(input: ProjectValidationInput): Promise<ProjectValidationResult> {
     this.receivedAcceptanceManifest = input.acceptanceManifest;
@@ -136,6 +137,10 @@ class SuccessfulRunner {
     );
     await input.hooks?.onFilesRestored?.(sandbox);
     await input.hooks?.onStep?.(sandbox, step);
+    this.previewEnvironment = await input.hooks?.previewEnvironment?.(
+      sandbox,
+      "2026-08-01T12:15:00.000Z",
+    );
     return {
       sandbox,
       expiresAt: "2026-08-01T12:15:00.000Z",
@@ -271,4 +276,31 @@ test("published preview lease is revocable when run completion loses its control
   assert.equal(store.deleteCount, 1);
   assert.equal(runner.terminated, true);
   assert.equal(repository.stoppedCount, 1);
+});
+
+test("the preview's own address and a per-run session secret are handed to the runner before the preview starts", async () => {
+  const repository = new MemoryValidationRepository();
+  const runner = new SuccessfulRunner();
+  const validator = new Phase2RunValidator({
+    repository,
+    runner,
+    previewStore: new MemoryPreviewStore(),
+    previewSigner: signer(),
+    now: () => NOW,
+  });
+
+  await validator.validate({ run: RUN, attempt: 1 });
+  const first = runner.previewEnvironment;
+  await validator.validate({ run: RUN, attempt: 2 });
+  const second = runner.previewEnvironment;
+
+  // NEXTAUTH_URL is the published gateway URL without its trailing slash.
+  assert.equal(
+    `${first?.NEXTAUTH_URL ?? ""}/`,
+    repository.preview?.gatewayUrl,
+  );
+  assert.ok((first?.NEXTAUTH_SECRET ?? "").length >= 32);
+  assert.equal(first?.AUTH_SECRET, first?.NEXTAUTH_SECRET);
+  // The secret is random per validation, never reused across runs or attempts.
+  assert.notEqual(first?.NEXTAUTH_SECRET, second?.NEXTAUTH_SECRET);
 });

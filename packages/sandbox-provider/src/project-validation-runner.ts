@@ -107,6 +107,15 @@ export interface ProjectValidationHooks {
   onSandboxCreated?(sandbox: SandboxHandle, expiresAt: string): Promise<void>;
   onFilesRestored?(sandbox: SandboxHandle): Promise<void>;
   onStep?(sandbox: SandboxHandle, step: ValidationStepReport): Promise<void>;
+  /**
+   * Environment variables for the preview process only (never for install, lint, test
+   * or build). A generated app that signs users in needs a session secret and its own
+   * public URL to start at all; neither can be known to the generated code.
+   */
+  previewEnvironment?(
+    sandbox: SandboxHandle,
+    expiresAt: string,
+  ): Promise<Readonly<Record<string, string>>> | Readonly<Record<string, string>>;
 }
 
 export interface ProjectValidationInput {
@@ -351,12 +360,19 @@ export class ProjectValidationRunner {
         databaseReady = await this.#provisionDatabase(sandbox, steps, input);
       }
 
+      const previewEnvironment =
+        (await input.hooks?.previewEnvironment?.(sandbox, expiresAt)) ?? {};
+      const previewEnvs: Record<string, string> = {
+        ...previewEnvironment,
+        // A provisioned database always wins over a caller-supplied DATABASE_URL.
+        ...(databaseReady ? { DATABASE_URL: LOCAL_DATABASE_URL } : {}),
+      };
       const previewStartedAt = this.#now();
       const process = await this.#provider.startProcess(sandbox.id, {
         command: previewStartCommand.replace("3000", String(this.#previewPort)),
         cwd: this.#projectDirectory,
         timeoutMs: this.#sandboxTimeoutMs,
-        ...(databaseReady ? { envs: { DATABASE_URL: LOCAL_DATABASE_URL } } : {}),
+        ...(Object.keys(previewEnvs).length === 0 ? {} : { envs: previewEnvs }),
       });
       const previewStartStep: ValidationStepReport = {
         ordinal: steps.length + 1,

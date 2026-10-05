@@ -88,8 +88,10 @@ export class RunProcessor {
       const upstream = parseUpstreamOutputs(outputs);
       if (upstream.Bob === undefined) return 0;
       const files = await this.#repository.listProjectFiles(run.projectId);
+      // The preview opens on "/", so the app's entry route is required whether or not
+      // Bob planned it (a live run planned only /login and /staff and shipped a 404).
       const missing = findMissingRoutes(
-        upstream.Bob.routes,
+        [{ method: "GET", path: "/" }, ...upstream.Bob.routes],
         files.map((file) => file.path),
       );
       if (missing.length === 0) return 0;

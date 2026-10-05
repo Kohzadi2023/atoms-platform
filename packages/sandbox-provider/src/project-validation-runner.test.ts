@@ -609,3 +609,59 @@ test("an invalid acceptance manifest is rejected before any sandbox is created",
   );
   assert.deepEqual(provider.calls, []);
 });
+
+test("previewEnvironment variables reach preview-start only, never the install/lint/test/build steps", async () => {
+  const provider = new FakeSandboxProvider();
+  const starts: ExecCommand[] = [];
+  const originalStart = provider.startProcess.bind(provider);
+  provider.startProcess = async (id, command) => {
+    starts.push(command);
+    return originalStart(id, command);
+  };
+  const seen: Array<{ sandboxId: string; expiresAt: string }> = [];
+
+  await new ProjectValidationRunner({ provider }).validate({
+    files,
+    metadata: {},
+    hooks: {
+      previewEnvironment: async (sandbox, expiresAt) => {
+        seen.push({ sandboxId: sandbox.id, expiresAt });
+        return { NEXTAUTH_SECRET: "s".repeat(32), NEXTAUTH_URL: "https://preview.example" };
+      },
+    },
+  });
+
+  assert.equal(starts.length, 1);
+  assert.deepEqual(starts[0]?.envs, {
+    NEXTAUTH_SECRET: "s".repeat(32),
+    NEXTAUTH_URL: "https://preview.example",
+  });
+  assert.equal(seen.length, 1);
+  assert.match(seen[0]?.expiresAt ?? "", /^\d{4}-\d{2}-\d{2}T/u);
+  assert.equal(
+    provider.execCommands.some((command) => command.envs?.NEXTAUTH_SECRET !== undefined),
+    false,
+  );
+});
+
+test("a provisioned database overrides a caller-supplied DATABASE_URL and keeps the other preview variables", async () => {
+  const provider = new FakeSandboxProvider();
+  const starts: ExecCommand[] = [];
+  const originalStart = provider.startProcess.bind(provider);
+  provider.startProcess = async (id, command) => {
+    starts.push(command);
+    return originalStart(id, command);
+  };
+
+  await new ProjectValidationRunner({ provider, provisionLocalDatabase: true }).validate({
+    files,
+    metadata: {},
+    hooks: {
+      previewEnvironment: () => ({ DATABASE_URL: "postgresql://wrong", EXTRA: "kept" }),
+    },
+  });
+
+  assert.equal(starts[0]?.envs?.EXTRA, "kept");
+  assert.notEqual(starts[0]?.envs?.DATABASE_URL, "postgresql://wrong");
+  assert.match(starts[0]?.envs?.DATABASE_URL ?? "", /^postgresql:\/\//u);
+});

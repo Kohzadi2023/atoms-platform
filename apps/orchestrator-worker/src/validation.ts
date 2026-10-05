@@ -1,3 +1,5 @@
+import { randomBytes } from "node:crypto";
+
 import type { AgentProjectFile } from "@atoms/agents";
 import type { JsonValue, ProjectType } from "@atoms/contracts";
 import {
@@ -174,6 +176,22 @@ export class Phase2RunValidator implements RunValidator {
                 "stopped",
               );
             }
+          },
+          // The preview's own public address is a pure function of its session and expiry
+          // (the same ticket that is published below), so the generated app can be told
+          // where it lives before it starts. A sign-in framework such as next-auth needs
+          // that URL and a session secret, or its first request fails with a 500.
+          previewEnvironment: (_activeSandbox, previewExpiresAt) => {
+            const sessionId = requireSessionId(sandboxSessionId);
+            const publicUrl = this.#previewSigner
+              .issue(sessionId, new Date(previewExpiresAt))
+              .replace(/\/$/u, "");
+            const secret = randomBytes(32).toString("base64url");
+            return {
+              NEXTAUTH_URL: publicUrl,
+              NEXTAUTH_SECRET: secret,
+              AUTH_SECRET: secret,
+            };
           },
           onStep: async (_activeSandbox, step) => {
             const sessionId = requireSessionId(sandboxSessionId);

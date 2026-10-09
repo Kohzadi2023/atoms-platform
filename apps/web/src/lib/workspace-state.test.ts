@@ -6,6 +6,7 @@ import type { RunEventEnvelope } from "@atoms/contracts";
 import {
   availableRunActions,
   createWorkspaceProjection,
+  isPreviewExpired,
   isSafePreviewUrl,
   reduceRunEvent,
 } from "./workspace-state.js";
@@ -160,6 +161,18 @@ test("preview URLs require the configured signed origin boundary", () => {
     isSafePreviewUrl("http://run.preview.localhost/", "preview.localhost"),
     true,
   );
+});
+
+test("a preview is expired once its status or expiry time says so", () => {
+  const expiresAt = "2026-10-05T12:00:00.000Z";
+  const at = Date.parse(expiresAt);
+  const ready = { status: "READY", url: "https://x.preview.example.com/", expiresAt } as const;
+  assert.equal(isPreviewExpired(undefined, at), false);
+  assert.equal(isPreviewExpired(ready, at - 1), false);
+  assert.equal(isPreviewExpired(ready, at), true);
+  assert.equal(isPreviewExpired({ status: "EXPIRED", expiresAt }, at - 1_000), true);
+  assert.equal(isPreviewExpired({ status: "ERROR", expiresAt }, at + 1_000), false);
+  assert.equal(isPreviewExpired({ ...ready, expiresAt: "not-a-date" }, at), false);
 });
 
 function event(

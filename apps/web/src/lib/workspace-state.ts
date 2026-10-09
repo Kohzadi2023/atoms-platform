@@ -318,6 +318,19 @@ export function availableRunActions(status: AgentRunStatus): readonly RunAction[
   }
 }
 
+// A READY preview whose signed ticket and sandbox have outlived expiresAt only
+// shows a blank frame or a gateway 401, so the UI treats it as expired.
+export function isPreviewExpired(
+  preview: PreviewProjection | undefined,
+  nowMs: number,
+): boolean {
+  if (preview === undefined) return false;
+  if (preview.status === "EXPIRED") return true;
+  if (preview.status !== "READY") return false;
+  const expiresAtMs = Date.parse(preview.expiresAt);
+  return Number.isFinite(expiresAtMs) && expiresAtMs <= nowMs;
+}
+
 export function isSafePreviewUrl(
   value: string | undefined,
   baseDomain: string,

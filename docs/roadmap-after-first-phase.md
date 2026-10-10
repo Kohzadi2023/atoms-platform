@@ -107,6 +107,35 @@ caps, and `Workspace` as the tenant boundary.
 Items 3 and 9 probably need one shared design: how Genesisco chooses which
 agents and stages to enable for a given kind of system. Design that once.
 
+### 10. Building other kinds of applications
+Today every run produces one Next.js and Prisma web repository: Bob plans "one
+generated Next.js repository", Alex's instructions are Next.js specific, the
+sandbox template and validation steps (install, prisma-validate, lint,
+typecheck, test, build, preview health) assume it, and the Preview is an iframe
+of the running site. The only project-type variation is the client-portal
+convention (`CLIENT_PORTAL_*` in `packages/agents/src/manifests.ts`).
+
+Goal: let Genesisco build mobile and desktop applications (confirmed by the
+founder), and use only the stages a given kind needs. Which of the two comes
+first, and which stack for each, is not decided. *Founder decision.*
+
+What would change, per application kind:
+
+- A project type with its own planning and generation instructions (Bob and
+  Alex), not one more convention inside the Next.js rules.
+- A sandbox template with that platform's toolchain, and its own validation
+  steps. A mobile app has no Prisma schema and no `next build`.
+- A different Preview story. An iframe works for web; mobile may need a web
+  export or an emulator, and desktop probably needs screenshots or a recorded
+  session. This is the least certain part. **Unverified feasibility.**
+- Route coverage and the preview-health check are web specific and must be
+  skipped or replaced.
+
+This shares its design with items 3 and 9: choose agents and stages from the
+kind of system. Do not start it before that design exists, and expect each new
+kind to need its own round of "one rule per failure" tuning, as the web path
+did.
+
 ## Suggested order
 
 1. Finish phase one (repeatable runs, local DB, Preview-expired state).
@@ -114,7 +143,8 @@ agents and stages to enable for a given kind of system. Design that once.
 3. Item 3 A and B as one experiment, then C.
 4. Items 4, 5 and 6 (quality and polish).
 5. Items 2 and 1 once item 3 defines what plans unlock.
-6. Item 9 after the shared stage-selection design from item 3.
+6. Items 9 and 10 after the shared stage-selection design from item 3. Item 10
+   first needs the order (mobile or desktop) and the stack chosen.
 
 ## Out of scope here
 

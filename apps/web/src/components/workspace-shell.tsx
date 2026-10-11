@@ -85,6 +85,7 @@ import {
   AGENT_ORDER,
   availableRunActions,
   createWorkspaceProjection,
+  isPreviewExpired,
   isSafePreviewUrl,
   languageForPath,
   reduceRunEvent,
@@ -741,6 +742,12 @@ export function WorkspaceShell({
     projection.preview?.url,
     PREVIEW_BASE_DOMAIN,
   );
+  const [nowMs, setNowMs] = useState(() => Date.now());
+  useEffect(() => {
+    const timer = window.setInterval(() => setNowMs(Date.now()), 15_000);
+    return () => window.clearInterval(timer);
+  }, []);
+  const previewExpired = isPreviewExpired(projection.preview, nowMs);
   const launchConsent = validateLiveRunConsent({
     prompt,
     maximumCostCad: MAX_ALLOWED_COST_CAD,
@@ -1316,6 +1323,7 @@ export function WorkspaceShell({
                 <PreviewPanel
                   preview={projection.preview}
                   safe={previewReady}
+                  expired={previewExpired}
                   hasRun={run !== undefined}
                 />
               ) : null}
@@ -1355,12 +1363,23 @@ export function WorkspaceShell({
 function PreviewPanel({
   preview,
   safe,
+  expired,
   hasRun,
 }: {
   readonly preview: ReturnType<typeof createWorkspaceProjection>["preview"];
   readonly safe: boolean;
+  readonly expired: boolean;
   readonly hasRun: boolean;
 }) {
+  if (expired) {
+    return (
+      <EmptyState
+        icon={MonitorPlay}
+        title="Preview expired"
+        description="This preview's sandbox has been shut down to save resources. Start a new run to get a fresh preview."
+      />
+    );
+  }
   if (preview?.status === "READY" && preview.url !== undefined && safe) {
     return (
       <div className="overflow-hidden rounded-2xl border border-[#26303d] bg-white shadow-2xl shadow-black/30">

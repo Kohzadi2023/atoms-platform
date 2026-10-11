@@ -32,7 +32,7 @@ const dbStartCommand =
   `${LOCAL_DATABASE_BIN_DIRECTORY}/pg_ctl -D ${LOCAL_DATABASE_DATA_DIRECTORY} ` +
   `-o '-p ${String(LOCAL_DATABASE_PORT)} -k /tmp' -l ${LOCAL_DATABASE_LOG_PATH} -w start`;
 const dbMigrateCommand = "pnpm exec prisma migrate deploy";
-const dbSeedCommand = "pnpm run seed";
+const dbSeedCommand = "pnpm exec prisma db seed";
 
 const handle: SandboxHandle = {
   id: "sbx_validation",

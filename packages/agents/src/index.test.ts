@@ -238,6 +238,8 @@ test("Alex instructions carry the strict-JSON, JSX-entity and next-auth rules", 
   assert.match(alex, /react\/no-unescaped-entities/);
   assert.match(alex, /authOptions in lib\/auth\.ts/);
   assert.match(alex, /NextAuth is not a function/);
+  // The sandbox seeds with "pnpm exec prisma db seed", which needs prisma.seed.
+  assert.match(alex, /"prisma": \{"seed": "ts-node prisma\/seed\.ts"\}/);
 });
 
 // Run 91734214: Alex wrote the prisma seed script as

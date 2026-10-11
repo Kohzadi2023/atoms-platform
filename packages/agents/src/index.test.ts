@@ -230,6 +230,16 @@ test("Sophia and Emma instructions carry the reference contract", () => {
   assert.match(REFERENCE_CONTRACT, /approval/);
 });
 
+// Each rule below closed a real validation failure of a generated project
+// (run 307ea91d: install, lint and test, one each), so keep them in the prompt.
+test("Alex instructions carry the strict-JSON, JSX-entity and next-auth rules", () => {
+  const alex = agentManifests.Alex.instructions;
+  assert.match(alex, /strict JSON/);
+  assert.match(alex, /react\/no-unescaped-entities/);
+  assert.match(alex, /authOptions in lib\/auth\.ts/);
+  assert.match(alex, /NextAuth is not a function/);
+});
+
 // G3 (docs/adr/production-execution-gate.md, issue #130): Bob, Alex and David
 // must all promise the same fixed routes, data-testid names and fixture
 // accounts that apps/orchestrator-worker/src/acceptance-manifest.ts targets,

@@ -245,6 +245,8 @@ test("Alex instructions carry the strict-JSON, JSX-entity and next-auth rules", 
   assert.match(alex, /never guess any other @types package name/);
   // Run ca4ab1b9: ts-node type-checked prisma/seed.ts and failed with TS2591.
   assert.match(alex, /"ts-node": \{"transpileOnly": true/);
+  // Run portal37: module CommonJS with the project's "bundler" resolution is TS5095.
+  assert.match(alex, /"moduleResolution": "node"/);
   // The sandbox seeds with "pnpm exec prisma db seed", which needs prisma.seed.
   assert.match(alex, /"prisma": \{"seed": "ts-node prisma\/seed\.ts"\}/);
 });

@@ -243,6 +243,8 @@ test("Alex instructions carry the strict-JSON, JSX-entity and next-auth rules", 
   // not exist). Alex tests pure functions instead.
   assert.match(alex, /Do not write tests for API route handlers/);
   assert.match(alex, /never guess any other @types package name/);
+  // Run ca4ab1b9: ts-node type-checked prisma/seed.ts and failed with TS2591.
+  assert.match(alex, /"ts-node": \{"transpileOnly": true/);
   // The sandbox seeds with "pnpm exec prisma db seed", which needs prisma.seed.
   assert.match(alex, /"prisma": \{"seed": "ts-node prisma\/seed\.ts"\}/);
 });

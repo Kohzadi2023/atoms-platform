@@ -240,6 +240,37 @@ test("Alex instructions carry the strict-JSON, JSX-entity and next-auth rules", 
   assert.match(alex, /NextAuth is not a function/);
 });
 
+// Run 91734214: Alex wrote the prisma seed script as
+//   "ts-node --compiler-options {\\"module\\":\\"CommonJS\\"} prisma/seed.ts"
+// which ends the JSON string early and fails install with "Invalid package.json".
+test("Alex output with an invalid package.json fails the schema so the correction pass can fix it", () => {
+  const file = (content: string) => ({
+    summary: "s",
+    files: [{ path: "package.json", content, expectedVersion: 0 }],
+    commands: { lint: "l", typecheck: "t", test: "x", build: "b" },
+  });
+  const broken =
+    '{"prisma":{"seed":"ts-node --compiler-options {\\\\"module\\\\":\\\\"CommonJS\\\\"} prisma/seed.ts"}}';
+  const result = AlexOutputSchema.safeParse(file(broken));
+  assert.equal(result.success, false);
+  assert.match(
+    JSON.stringify(result.error?.issues ?? []),
+    /package\.json is not valid JSON/,
+  );
+  assert.equal(
+    AlexOutputSchema.safeParse(file('{"prisma":{"seed":"ts-node prisma/seed.ts"}}')).success,
+    true,
+  );
+  // Only package.json is checked: tsconfig.json may legally hold comments.
+  assert.equal(
+    AlexOutputSchema.safeParse({
+      ...file("{}"),
+      files: [{ path: "tsconfig.json", content: "{ // c\n}", expectedVersion: 0 }],
+    }).success,
+    true,
+  );
+});
+
 // G3 (docs/adr/production-execution-gate.md, issue #130): Bob, Alex and David
 // must all promise the same fixed routes, data-testid names and fixture
 // accounts that apps/orchestrator-worker/src/acceptance-manifest.ts targets,

@@ -283,6 +283,21 @@ const AgentGeneratedFilesSchema = z
         });
       }
       seen.add(file.path);
+      // npm and pnpm reject an invalid package.json, and Alex has twice
+      // over-escaped a quote inside a script string. Failing the schema sends
+      // the error back through the agent's correction pass, which costs no
+      // sandbox attempt and no repair.
+      if (file.path === "package.json") {
+        try {
+          JSON.parse(file.content);
+        } catch (error) {
+          context.addIssue({
+            code: "custom",
+            path: [index, "content"],
+            message: `package.json is not valid JSON (${error instanceof Error ? error.message : "parse error"}); write a double quote inside a script string as \\" with a single backslash, or move that option into a config file`,
+          });
+        }
+      }
     });
   });
 

@@ -247,6 +247,14 @@ test("Alex instructions carry the strict-JSON, JSX-entity and next-auth rules", 
   assert.match(alex, /"prisma": \{"seed": "ts-node prisma\/seed\.ts"\}/);
 });
 
+// Run 69cbb631: David wrote add_multi_tenancy as the only migration, which
+// altered a table nothing created, so DB_MIGRATE failed on the empty database.
+test("David instructions require a full initial migration when none exists", () => {
+  const david = agentManifests.David.instructions;
+  assert.match(david, /first migration must create every table/);
+  assert.match(david, /relation does not exist/);
+});
+
 // Run ead886ff: David returned prisma/schema.prisma (written by Alex, version 1)
 // with expectedVersion 0 and the run failed with GeneratedFileConflictError.
 test("ModelBackedAgentRuntime fills expectedVersion from the observed files for Alex output", async () => {

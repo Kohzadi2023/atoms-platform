@@ -247,6 +247,40 @@ test("Alex instructions carry the strict-JSON, JSX-entity and next-auth rules", 
   assert.match(alex, /"prisma": \{"seed": "ts-node prisma\/seed\.ts"\}/);
 });
 
+// Run ead886ff: David returned prisma/schema.prisma (written by Alex, version 1)
+// with expectedVersion 0 and the run failed with GeneratedFileConflictError.
+test("ModelBackedAgentRuntime fills expectedVersion from the observed files for Alex output", async () => {
+  const gateway = new FakeGateway();
+  gateway.outputText = JSON.stringify({
+    summary: "s",
+    files: [
+      { path: "prisma/schema.prisma", content: "model A {}", expectedVersion: 0 },
+      { path: "lib/old.ts", content: "x", expectedVersion: 7 },
+      { path: "lib/new.ts", content: "y", expectedVersion: 3 },
+    ],
+    commands: { lint: "l", typecheck: "t", test: "x", build: "b" },
+  });
+  const output = await new ModelBackedAgentRuntime(gateway).execute({
+    agentName: "Alex",
+    runId: RUN_ID,
+    prompt: "p",
+    upstreamOutputs: {},
+    currentFiles: [
+      { path: "prisma/schema.prisma", content: "model A {}", version: 1 },
+      { path: "lib/old.ts", content: "x", version: 1 },
+      { path: "lib/old.ts", content: "x2", version: 2 },
+    ],
+  });
+  assert.deepEqual(
+    output.files.map((file) => [file.path, file.expectedVersion]),
+    [
+      ["prisma/schema.prisma", 1],
+      ["lib/old.ts", 2],
+      ["lib/new.ts", 0],
+    ],
+  );
+});
+
 // Run 91734214: Alex wrote the prisma seed script as
 //   "ts-node --compiler-options {\\"module\\":\\"CommonJS\\"} prisma/seed.ts"
 // which ends the JSON string early and fails install with "Invalid package.json".

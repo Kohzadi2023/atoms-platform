@@ -123,7 +123,9 @@ export class ModelBackedAgentRuntime implements AgentRuntime {
       }
 
       const parsed = manifest.outputSchema.safeParse(value);
-      if (parsed.success) return parsed.data;
+      if (parsed.success) {
+        return alignExpectedVersions(request, parsed.data as AgentOutputByName[Name]);
+      }
       if (correction >= MAX_SCHEMA_CORRECTIONS) {
         throw new AgentRuntimeError(
           `Agent ${request.agentName} output failed schema validation`,
@@ -137,6 +139,36 @@ export class ModelBackedAgentRuntime implements AgentRuntime {
       correctionIssues = summarizeSchemaIssues(parsed.error.issues);
     }
   }
+}
+
+/**
+ * Alex and David return `expectedVersion` per file: the version they observed
+ * in `currentFiles`, zero for a new path. The model sometimes writes zero for a
+ * path that already exists (run ead886ff: David on prisma/schema.prisma, "expected
+ * version 0 but found 1"), which failed the whole run. The runtime handed the
+ * model exactly this snapshot, so it fills the field from the same snapshot.
+ * This keeps the guard: the repository still compares the value with the stored
+ * version when the files are applied, so an edit made after the snapshot
+ * was taken is still reported as a conflict.
+ */
+function alignExpectedVersions<Name extends ActiveAgentName>(
+  request: AgentExecutionRequest<Name>,
+  output: AgentOutputByName[Name],
+): AgentOutputByName[Name] {
+  if (request.agentName !== "Alex" && request.agentName !== "David") return output;
+  const files = (output as { files?: unknown }).files;
+  if (!Array.isArray(files)) return output;
+  const observed = new Map<string, number>();
+  for (const file of request.currentFiles) {
+    observed.set(file.path, Math.max(observed.get(file.path) ?? 0, file.version));
+  }
+  return {
+    ...output,
+    files: files.map((file: { path: string; expectedVersion: number }) => ({
+      ...file,
+      expectedVersion: observed.get(file.path) ?? 0,
+    })),
+  } as AgentOutputByName[Name];
 }
 
 const MAX_SCHEMA_CORRECTIONS = 1;

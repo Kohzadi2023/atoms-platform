@@ -166,8 +166,8 @@ export interface ProjectValidationRunnerOptions {
   /**
    * When true and a build's template carries the local database (see
    * local-database-template.ts), a passing build is followed by db-start,
-   * db-migrate (`prisma migrate deploy`) and db-seed (`pnpm run seed`, only if
-   * the generated package.json defines one) before preview-start, so the
+   * db-migrate (`prisma migrate deploy`) and db-seed (`pnpm exec prisma db seed`,
+   * which needs the generated package.json to define "prisma.seed") before preview-start, so the
    * delivered preview -- and the G3 acceptance scenarios that need real
    * sign-in -- have a live, ephemeral database to run against. None of these
    * three steps ever blocks the run: a missing or failing seed script simply
@@ -575,7 +575,10 @@ export class ProjectValidationRunner {
     await input.hooks?.onStep?.(sandbox, migrateStep);
     if (migrateStep.result.exitCode !== 0) return false;
 
-    const seedCommand = "pnpm run seed";
+    // The same command the database-provider migration runner uses: it reads
+    // the "prisma.seed" key of package.json. A generated project has no
+    // script literally named "seed" (run 52a931f2: ERR_PNPM_NO_SCRIPT).
+    const seedCommand = "pnpm exec prisma db seed";
     const seedStep = await this.#tryStep(steps.length + 1, "db-seed", seedCommand, () =>
       this.#provider.exec(sandbox.id, {
         command: seedCommand,

@@ -238,6 +238,11 @@ test("Alex instructions carry the strict-JSON, JSX-entity and next-auth rules", 
   assert.match(alex, /react\/no-unescaped-entities/);
   assert.match(alex, /authOptions in lib\/auth\.ts/);
   assert.match(alex, /NextAuth is not a function/);
+  // Run 1df7b7d6: three failures, all from API handler tests (undeclared
+  // node-mocks-http, a hallucinated @types package, a mocked model that does
+  // not exist). Alex tests pure functions instead.
+  assert.match(alex, /Do not write tests for API route handlers/);
+  assert.match(alex, /never guess any other @types package name/);
   // The sandbox seeds with "pnpm exec prisma db seed", which needs prisma.seed.
   assert.match(alex, /"prisma": \{"seed": "ts-node prisma\/seed\.ts"\}/);
 });

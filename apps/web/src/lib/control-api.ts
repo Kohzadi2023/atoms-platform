@@ -7,6 +7,7 @@ import {
   IdempotencyKeySchema,
   MeetingListResponseSchema,
   MeetingResponseSchema,
+  PreviewReopenResponseSchema,
   ProjectAttachmentSchema,
   ProjectFileListResponseSchema,
   ProjectResponseSchema,
@@ -24,6 +25,7 @@ import {
   type GetMeResponse,
   type MeetingListResponse,
   type MeetingResponse,
+  type PreviewReopenResponse,
   type ProjectFileListResponse,
   type ProjectResponse,
   type ProjectAttachment,
@@ -205,6 +207,19 @@ export class ControlApiClient {
         method: "POST",
         body: JSON.stringify(parsed),
       },
+    );
+  }
+
+  /**
+   * Rebuilds the preview of a finished project from its saved files. The answer
+   * is only an acknowledgement; the new preview arrives as a preview.updated
+   * event on the returned run.
+   */
+  reopenProjectPreview(projectId: string): Promise<PreviewReopenResponse> {
+    return this.#request(
+      `/v1/projects/${encodeURIComponent(projectId)}/preview/reopen`,
+      PreviewReopenResponseSchema,
+      { method: "POST" },
     );
   }
 

@@ -39,6 +39,26 @@ test("createRun sends the shared idempotency header and payload", async (context
   });
 });
 
+test("reopenProjectPreview posts to the project's preview route and parses the acknowledgement", async (context) => {
+  const requests: Array<{ readonly url: string; readonly init: RequestInit }> = [];
+  const originalFetch = globalThis.fetch;
+  context.after(() => {
+    globalThis.fetch = originalFetch;
+  });
+  globalThis.fetch = async (input, init = {}) => {
+    requests.push({ url: String(input), init });
+    return jsonResponse({ status: "REQUESTED", runId: RUN_ID });
+  };
+
+  const client = new ControlApiClient({ baseUrl: "http://control.test/" });
+  const result = await client.reopenProjectPreview(PROJECT_ID);
+
+  assert.deepEqual(result, { status: "REQUESTED", runId: RUN_ID });
+  assert.equal(requests[0]?.url, `http://control.test/v1/projects/${PROJECT_ID}/preview/reopen`);
+  assert.equal(requests[0]?.init.method, "POST");
+  assert.equal(requests[0]?.init.body, undefined);
+});
+
 test("requests send the access token supplied by the provider", async (context) => {
   let authorization: string | null = null;
   const originalFetch = globalThis.fetch;

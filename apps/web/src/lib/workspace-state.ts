@@ -331,6 +331,39 @@ export function isPreviewExpired(
   return Number.isFinite(expiresAtMs) && expiresAtMs <= nowMs;
 }
 
+// A finished project whose preview is gone can have it rebuilt from the saved
+// files. Offered only once a preview event has been seen (before that the page is
+// still replaying events and a button would flash), and never for a run that has
+// not completed, whose first preview is still on its way.
+export function canReopenPreview(
+  runStatus: string | undefined,
+  preview: PreviewProjection | undefined,
+  nowMs: number,
+): boolean {
+  if (runStatus !== "COMPLETED" || preview === undefined) return false;
+  return (
+    isPreviewExpired(preview, nowMs) ||
+    preview.status === "STOPPED" ||
+    preview.status === "ERROR"
+  );
+}
+
+export type PreviewReopenOutcome = "waiting" | "ready" | "failed";
+
+// The re-open answers through the run's event stream with one more preview.updated.
+// Any preview whose expiry differs from the one the click started from is that
+// answer (a failure is reported with an ERROR status and the time it happened).
+export function previewReopenOutcome(
+  baselineExpiresAt: string | undefined,
+  preview: PreviewProjection | undefined,
+  nowMs: number,
+): PreviewReopenOutcome {
+  if (preview === undefined || preview.expiresAt === baselineExpiresAt) return "waiting";
+  if (preview.status === "ERROR") return "failed";
+  if (preview.status === "READY" && !isPreviewExpired(preview, nowMs)) return "ready";
+  return "waiting";
+}
+
 export function isSafePreviewUrl(
   value: string | undefined,
   baseDomain: string,

@@ -104,6 +104,28 @@ What already exists and can be reused: idempotent run creation, the recovery
 queue, the approval gate for safe handoff to a human, per-run and daily budget
 caps, and `Workspace` as the tenant boundary.
 
+Reference examples of target systems (from a carousel of eight workflow
+automations, 2026-10-11). They show the kinds of systems this item should be
+able to build, not a commitment to build each one:
+
+- AI voice call agent: answers calls, books appointments (calendar), sends a
+  confirmation email, creates a CRM contact, hands off to a human. This is the
+  AI secretary above. Needs items 11 and 12 and real-time voice.
+- Multilingual FAQ chatbot: detects the language and answers in it from a
+  knowledge base. Needs item 11.
+- Lead generation: finds leads, enriches and qualifies them, sends outreach
+  email, schedules follow-ups. Needs item 12 and a policy on outbound email.
+- Content creation agent and viral YouTube idea generator: research, script,
+  publish on a schedule. Overlaps with item 3.
+- Avatar video, faceless video, and UGC ad generator from a competitor's ad:
+  need a video or avatar provider, which is a separate external dependency and
+  not planned. The competitor-ad analysis also raises copyright and platform
+  terms questions to settle first.
+
+Common shape of all eight: a trigger, a short chain of steps that call
+external tools, and a loop or schedule. That matches the durable event-driven
+run kind listed above.
+
 Items 3 and 9 probably need one shared design: how Genesisco chooses which
 agents and stages to enable for a given kind of system. Design that once.
 
@@ -136,6 +158,40 @@ kind of system. Do not start it before that design exists, and expect each new
 kind to need its own round of "one rule per failure" tuning, as the web path
 did.
 
+### 11. Knowledge retrieval and long-term memory (RAG)
+Today agents see only what the run hands them: the request, upstream agent
+outputs, and a snapshot of the project files (`currentFiles`). There is no
+retrieval over documents and no memory that survives between runs. The stack in
+use is LangGraph (with Postgres checkpoints), Zod structured outputs, and
+PostgreSQL through Prisma. There is no vector store.
+
+What it would unlock:
+
+- Item 9: the AI secretary needs a business's own facts (services, prices,
+  hours, past conversations) and per-customer memory.
+- Item 3: Sophia, Sarah and Adrian are better when they can ground claims in
+  stored evidence instead of one-run context.
+- Later runs on the same project remembering earlier decisions.
+
+Open questions: PostgreSQL with `pgvector` (no new service, tenant boundary
+stays `Workspace`) or a separate vector database; what is stored per workspace
+and for how long; how retrieved text is kept inside the per-run budget caps.
+**Unverified feasibility** of `pgvector` on the current Postgres tier.
+
+### 12. External tools through MCP
+Agents currently call nothing outside the platform: tool use is limited to
+sandbox commands that the worker runs. The Model Context Protocol would let an
+agent use external tools (CRM, calendar, messaging, search) through one
+standard interface instead of a hand-written integration per tool.
+
+This is the tool layer for item 9 (limited, field-level CRM tools) and could
+serve item 3. Each tool connection needs per-workspace credentials, an allow
+list, and an approval step for actions with side effects; none of that exists.
+Do not start it before item 9 has chosen which tools it needs.
+
+Not planned: GraphQL (REST is enough), Python services, and a second
+orchestration framework next to LangGraph.
+
 ## Suggested order
 
 1. Finish phase one (repeatable runs, local DB, Preview-expired state).
@@ -145,6 +201,9 @@ did.
 5. Items 2 and 1 once item 3 defines what plans unlock.
 6. Items 9 and 10 after the shared stage-selection design from item 3. Item 10
    first needs the order (mobile or desktop) and the stack chosen.
+7. Items 11 and 12 together with item 9, because the AI secretary is the first
+   system that needs retrieval, memory and external tools. Item 11 may also
+   help item 3 earlier.
 
 ## Out of scope here
 

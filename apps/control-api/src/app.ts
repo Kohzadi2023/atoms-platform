@@ -61,6 +61,10 @@ import {
   type ReleaseRoutesOptions,
 } from "./release-routes.js";
 import { registerGtmRoutes, type GtmRoutesOptions } from "./gtm-routes.js";
+import {
+  registerPreviewReopenRoutes,
+  type PreviewReopenRoutesOptions,
+} from "./preview-reopen-routes.js";
 import { registerAdminRoutes, type AdminRoutesOptions } from "./admin-routes.js";
 import { registerMeetingRoutes, type MeetingRoutesOptions } from "./meeting-routes.js";
 import {
@@ -131,6 +135,7 @@ export interface BuildControlApiOptions {
   readonly authenticator?: Authenticator;
   readonly databaseOperations?: DatabaseRoutesOptions;
   readonly attachmentOperations?: AttachmentRoutesOptions;
+  readonly previewReopenOperations?: PreviewReopenRoutesOptions;
   readonly releaseOperations?: ReleaseRoutesOptions;
   readonly gtmOperations?: GtmRoutesOptions;
   readonly meetingOperations?: MeetingRoutesOptions;
@@ -334,6 +339,12 @@ export async function buildControlApi(
   if (options.attachmentOperations !== undefined) {
     registerAttachmentRoutes(api, {
       ...options.attachmentOperations,
+      now,
+    });
+  }
+  if (options.previewReopenOperations !== undefined) {
+    registerPreviewReopenRoutes(api, {
+      ...options.previewReopenOperations,
       now,
     });
   }
@@ -832,6 +843,8 @@ export async function buildControlApi(
       await options.databaseOperations?.queue.close();
       await options.attachmentOperations?.queue.close();
       await options.attachmentOperations?.repository.close();
+      await options.previewReopenOperations?.queue.close();
+      await options.previewReopenOperations?.repository.close();
       await options.runQueue.close();
       await options.executionReadiness?.close?.();
       await options.repository.close();

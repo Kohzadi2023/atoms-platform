@@ -18,7 +18,11 @@ test("the worker passes the queue Redis mode to every BullMQ worker and queue an
   assert.match(source, /QUEUE_REDIS_MODE: QueueRedisModeSchema/u);
   const constructors = source.match(/new BullMq\w+\(\{/gu) ?? [];
   const passes = source.match(/redisMode: environment\.QUEUE_REDIS_MODE,/gu) ?? [];
-  assert.equal(constructors.length, 6, "orchestrator, attachment, handoff, database, recovery, reconciliation");
+  assert.equal(
+    constructors.length,
+    7,
+    "orchestrator, attachment, preview reopen, handoff, database, recovery, reconciliation",
+  );
   assert.equal(passes.length, constructors.length);
   assert.match(source, /createRedisClient\(\{\s*redisUrl: environment\.REDIS_URL,\s*mode: environment\.QUEUE_REDIS_MODE/u);
   // A plain client would fail with MOVED on a cluster.

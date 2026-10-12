@@ -51,6 +51,8 @@ import { PrismaReleaseAssessmentRepository } from "./release-repository.js";
 import { PrismaWorkerRepository } from "./repository.js";
 import { Phase2RunValidator } from "./validation.js";
 import { BullMqAttachmentWorker } from "./attachment-bullmq-worker.js";
+import { BullMqPreviewReopenWorker } from "./preview-reopen-bullmq-worker.js";
+import { PreviewReopenProcessor } from "./preview-reopen.js";
 import { AttachmentProcessor } from "./attachment-processor.js";
 import { PrismaAttachmentScanRepository } from "./attachment-repository.js";
 import { PrismaRunAttachmentLoader } from "./attachment-loader.js";
@@ -472,6 +474,24 @@ async function main(): Promise<void> {
     logError("Attachment scan job failed", error, { jobId }),
   );
 
+  const previewReopenWorker = new BullMqPreviewReopenWorker({
+    redisUrl: environment.REDIS_URL,
+    redisMode: environment.QUEUE_REDIS_MODE,
+    processor: new PreviewReopenProcessor({
+      repository,
+      runner: validationRunner,
+      previewStore,
+      previewSigner,
+    }),
+    ...(environment.RUN_QUEUE_PREFIX === undefined
+      ? {}
+      : { prefix: environment.RUN_QUEUE_PREFIX }),
+  });
+  previewReopenWorker.onError((error) => logError("Preview reopen worker error", error));
+  previewReopenWorker.onFailed((jobId, error) =>
+    logError("Preview reopen job failed", error, { jobId }),
+  );
+
   const customerSuccessHandoffRepository = new PrismaCustomerSuccessHandoffRepository(
     prisma,
   );
@@ -676,6 +696,7 @@ async function main(): Promise<void> {
     await databaseWorker?.close();
     await customerSuccessHandoffWorker.close();
     await attachmentWorker.close();
+    await previewReopenWorker.close();
     await worker.close();
     await previewStore.close();
     await checkpointer.end();

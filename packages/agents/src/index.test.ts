@@ -258,6 +258,11 @@ test("Alex instructions carry the strict-JSON, JSX-entity and next-auth rules", 
   assert.match(alex, /not only a greeting/);
   assert.match(alex, /navigation menu that links to each page the requirements name/);
   assert.match(alex, /never the same route under two paths/);
+  // Run agency-portal2: a pre-rendered page queried Prisma at build time, a layout
+  // component was used without an import, and a signIn mock lacked status.
+  assert.match(alex, /export const dynamic = 'force-dynamic'/);
+  assert.match(alex, /react\/jsx-no-undef/);
+  assert.match(alex, /full SignInResponse/);
   // The sandbox seeds with "pnpm exec prisma db seed", which needs prisma.seed.
   assert.match(alex, /"prisma": \{"seed": "ts-node prisma\/seed\.ts"\}/);
 });

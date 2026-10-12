@@ -5,6 +5,7 @@ import test from "node:test";
 
 import { BullMqAttachmentScanQueue } from "./attachment-queue.js";
 import { BullMqDatabaseOperationQueue } from "./database-operation-queue.js";
+import { BullMqPreviewReopenQueue } from "./preview-reopen-queue.js";
 import { BullMqRunQueue } from "./run-queue.js";
 
 const clusterWithoutTag = {
@@ -18,6 +19,7 @@ test("every queue refuses cluster mode without a hash-tagged prefix, before it o
     () => new BullMqRunQueue({ ...clusterWithoutTag, prefix: "atoms-staging" }),
     () => new BullMqAttachmentScanQueue({ ...clusterWithoutTag, prefix: "atoms-staging" }),
     () => new BullMqDatabaseOperationQueue({ ...clusterWithoutTag, prefix: "atoms-staging" }),
+    () => new BullMqPreviewReopenQueue({ ...clusterWithoutTag, prefix: "atoms-staging" }),
   ]) {
     assert.throws(create, /hash tag/);
   }
@@ -29,7 +31,7 @@ test("the API passes the queue Redis mode to every queue and to the readiness so
   assert.match(source, /QUEUE_REDIS_MODE: QueueRedisModeSchema/u);
   const constructors = source.match(/new (BullMq\w+|RedisWorkerReadinessSource)\(\{/gu) ?? [];
   const passes = source.match(/redisMode: environment\.QUEUE_REDIS_MODE,/gu) ?? [];
-  assert.equal(constructors.length, 4, "three queues and the readiness source");
+  assert.equal(constructors.length, 5, "four queues and the readiness source");
   assert.equal(passes.length, constructors.length);
 });
 
@@ -43,5 +45,5 @@ test("the API passes RUN_QUEUE_PREFIX to every queue and to the readiness source
   const prefixPasses = source.match(
     /\.\.\.\(environment\.RUN_QUEUE_PREFIX === undefined\s*\n\s*\? \{\}\s*\n\s*: \{ prefix: environment\.RUN_QUEUE_PREFIX \}\),/gu,
   ) ?? [];
-  assert.equal(prefixPasses.length, 4, "three queues and the readiness source");
+  assert.equal(prefixPasses.length, 5, "four queues and the readiness source");
 });

@@ -12,6 +12,8 @@ import { getWorkspaceAdminOverviewCounts } from "./admin-overview-repository.js"
 import { resolveAuthRuntimeOptions } from "./auth-runtime.js";
 import { BullMqAttachmentScanQueue } from "./attachment-queue.js";
 import { PrismaAttachmentRepository } from "./attachment-repository.js";
+import { BullMqPreviewReopenQueue } from "./preview-reopen-queue.js";
+import { PrismaPreviewReopenRepository } from "./preview-reopen-repository.js";
 import { BullMqDatabaseOperationQueue } from "./database-operation-queue.js";
 import { PrismaDatabaseControlRepository } from "./database-repository.js";
 import { PrismaGtmControlRepository } from "./gtm-repository.js";
@@ -162,6 +164,13 @@ async function main(): Promise<void> {
       ? {}
       : { kmsKeyId: environment.S3_KMS_KEY_ID }),
   });
+  const previewReopenQueue = new BullMqPreviewReopenQueue({
+    redisUrl: environment.REDIS_URL,
+    redisMode: environment.QUEUE_REDIS_MODE,
+    ...(environment.RUN_QUEUE_PREFIX === undefined
+      ? {}
+      : { prefix: environment.RUN_QUEUE_PREFIX }),
+  });
   const databaseQueue = new BullMqDatabaseOperationQueue({
     redisUrl: environment.REDIS_URL,
     redisMode: environment.QUEUE_REDIS_MODE,
@@ -198,6 +207,10 @@ async function main(): Promise<void> {
       repository: attachmentRepository,
       queue: attachmentQueue,
       storage,
+    },
+    previewReopenOperations: {
+      repository: new PrismaPreviewReopenRepository(prisma),
+      queue: previewReopenQueue,
     },
     releaseOperations: {
       repository: new PrismaReleaseControlRepository(prisma),

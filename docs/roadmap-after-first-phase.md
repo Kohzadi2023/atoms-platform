@@ -104,6 +104,28 @@ What already exists and can be reused: idempotent run creation, the recovery
 queue, the approval gate for safe handoff to a human, per-run and daily budget
 caps, and `Workspace` as the tenant boundary.
 
+Reference examples of target systems (from a carousel of eight workflow
+automations, 2026-10-11). They show the kinds of systems this item should be
+able to build, not a commitment to build each one:
+
+- AI voice call agent: answers calls, books appointments (calendar), sends a
+  confirmation email, creates a CRM contact, hands off to a human. This is the
+  AI secretary above. Needs items 11 and 12 and real-time voice.
+- Multilingual FAQ chatbot: detects the language and answers in it from a
+  knowledge base. Needs item 11.
+- Lead generation: finds leads, enriches and qualifies them, sends outreach
+  email, schedules follow-ups. Needs item 12 and a policy on outbound email.
+- Content creation agent and viral YouTube idea generator: research, script,
+  publish on a schedule. Overlaps with item 3.
+- Avatar video, faceless video, and UGC ad generator from a competitor's ad:
+  need a video or avatar provider, which is a separate external dependency and
+  not planned. The competitor-ad analysis also raises copyright and platform
+  terms questions to settle first.
+
+Common shape of all eight: a trigger, a short chain of steps that call
+external tools, and a loop or schedule. That matches the durable event-driven
+run kind listed above.
+
 Items 3 and 9 probably need one shared design: how Genesisco chooses which
 agents and stages to enable for a given kind of system. Design that once.
 

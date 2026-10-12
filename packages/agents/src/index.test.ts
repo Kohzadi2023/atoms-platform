@@ -253,6 +253,11 @@ test("Alex instructions carry the strict-JSON, JSX-entity and next-auth rules", 
   assert.match(alex, /contains an import or an export/);
   assert.match(alex, /includes an expires field/);
   assert.match(alex, /Account\.user needs User\.accounts/);
+  // Run agency-portal1: /dashboard was a greeting, no page linked to any other, and
+  // approve existed under two paths.
+  assert.match(alex, /not only a greeting/);
+  assert.match(alex, /navigation menu that links to each page the requirements name/);
+  assert.match(alex, /never the same route under two paths/);
   // The sandbox seeds with "pnpm exec prisma db seed", which needs prisma.seed.
   assert.match(alex, /"prisma": \{"seed": "ts-node prisma\/seed\.ts"\}/);
 });

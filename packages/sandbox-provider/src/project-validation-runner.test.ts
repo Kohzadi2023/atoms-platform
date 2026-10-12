@@ -31,6 +31,7 @@ import {
 const dbStartCommand =
   `${LOCAL_DATABASE_BIN_DIRECTORY}/pg_ctl -D ${LOCAL_DATABASE_DATA_DIRECTORY} ` +
   `-o '-p ${String(LOCAL_DATABASE_PORT)} -k /tmp' -l ${LOCAL_DATABASE_LOG_PATH} -w start`;
+const installCommand = "pnpm install --no-frozen-lockfile --dangerously-allow-all-builds";
 const dbMigrateCommand = "pnpm exec prisma migrate deploy";
 const dbSeedCommand = "pnpm exec prisma db seed";
 
@@ -45,6 +46,10 @@ class FakeSandboxProvider implements SandboxProvider {
   readonly written: SandboxFileInput[] = [];
   createSpec: SandboxSpec | undefined;
   failCommand: string | undefined;
+  /** The next N installs fail with a dropped download (ECONNRESET). */
+  droppedInstalls = 0;
+  /** What a failing command prints to stderr. */
+  failureStderr = "deterministic failure";
   terminated = false;
 
   async create(input: SandboxSpec): Promise<SandboxHandle> {
@@ -66,11 +71,20 @@ class FakeSandboxProvider implements SandboxProvider {
   async exec(_id: string, command: ExecCommand): Promise<ExecResult> {
     this.calls.push(command.command);
     this.execCommands.push(command);
+    if (command.command === installCommand && this.droppedInstalls > 0) {
+      this.droppedInstalls -= 1;
+      return {
+        exitCode: 1,
+        stdout: "@prisma/engines postinstall: code: 'ECONNRESET'",
+        stderr: "ERR_PNPM_EXECUTOR_LIFECYCLE_SCRIPT_FAILED",
+        durationMs: 10,
+      };
+    }
     const failed = command.command === this.failCommand;
     return {
       exitCode: failed ? 2 : 0,
       stdout: failed ? "" : "ok",
-      stderr: failed ? "deterministic failure" : "",
+      stderr: failed ? this.failureStderr : "",
       durationMs: 10,
     };
   }
@@ -156,6 +170,49 @@ test("runner restores a locked revision and executes the fixed validation pipeli
   assert.equal(result.previewProcessId, 73);
   assert.equal(result.preview.requestHeaders?.["E2B-Traffic-Access-Token"], "provider-secret");
   assert.equal(provider.terminated, false);
+});
+
+test("a dropped download during install is retried in place and only the last install is reported", async () => {
+  const provider = new FakeSandboxProvider();
+  provider.droppedInstalls = 1;
+  const observed: ValidationStepName[] = [];
+  const runner = new ProjectValidationRunner({ provider });
+
+  await runner.validate({
+    files,
+    metadata: {},
+    hooks: { onStep: async (_sandbox, step) => { observed.push(step.name); } },
+  });
+
+  assert.equal(provider.calls.filter((call) => call === installCommand).length, 2);
+  assert.equal(observed.filter((name) => name === "install").length, 1);
+  assert.equal(observed.includes("build"), true);
+});
+
+test("install gives up after three dropped downloads and reports the failure", async () => {
+  const provider = new FakeSandboxProvider();
+  provider.droppedInstalls = 5;
+  const runner = new ProjectValidationRunner({ provider });
+
+  await assert.rejects(
+    runner.validate({ files, metadata: {} }),
+    (error: unknown) => error instanceof SandboxValidationError && error.step === "install",
+  );
+  assert.equal(provider.calls.filter((call) => call === installCommand).length, 3);
+  assert.equal(provider.terminated, true);
+});
+
+test("an install that fails for a reason of the code itself is not retried", async () => {
+  const provider = new FakeSandboxProvider();
+  provider.failCommand = installCommand;
+  provider.failureStderr = "ERR_PNPM_SPEC_NOT_SUPPORTED_BY_ANY_RESOLVER";
+  const runner = new ProjectValidationRunner({ provider });
+
+  await assert.rejects(
+    runner.validate({ files, metadata: {} }),
+    (error: unknown) => error instanceof SandboxValidationError && error.step === "install",
+  );
+  assert.equal(provider.calls.filter((call) => call === installCommand).length, 1);
 });
 
 test("prisma-validate gets a placeholder DATABASE_URL -- it parses the schema but never connects", async () => {

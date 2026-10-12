@@ -32,6 +32,12 @@ import type {
   WorkerRepository,
   WorkerTaskRecord,
 } from "./domain.js";
+import {
+  PREVIEW_REOPEN_FIRST_ATTEMPT,
+  type CreatePreviewReopenSessionInput,
+  type RecordPreviewReopenedInput,
+  type RecordPreviewReopenFailedInput,
+} from "./preview-reopen.js";
 import type {
   CreateSandboxSessionInput,
   Phase2ValidationRepository,
@@ -766,6 +772,104 @@ export class PrismaWorkerRepository
       },
       { isolationLevel: "Serializable" },
     );
+  }
+
+  /**
+   * Re-opening a preview: a finished run gets one more sandbox. The attempt
+   * number starts above every number a run itself uses (the original attempt
+   * and its repairs at 101, 201, 301), so the two never collide. Null when the
+   * run is not a COMPLETED run of this project and workspace -- nothing to reopen.
+   */
+  createPreviewReopenSession(
+    input: CreatePreviewReopenSessionInput,
+  ): Promise<string | null> {
+    return this.#prisma.$transaction(
+      async (transaction) => {
+        const run = await transaction.agentRun.findFirst({
+          where: {
+            id: input.runId,
+            projectId: input.projectId,
+            workspaceId: input.workspaceId,
+            status: "COMPLETED",
+          },
+          select: { id: true },
+        });
+        if (run === null) return null;
+        const last = await transaction.sandboxSession.aggregate({
+          where: { runId: run.id },
+          _max: { attempt: true },
+        });
+        const session = await transaction.sandboxSession.create({
+          data: {
+            workspaceId: input.workspaceId,
+            projectId: input.projectId,
+            runId: run.id,
+            provider: "E2B",
+            externalId: input.externalId,
+            attempt: Math.max(PREVIEW_REOPEN_FIRST_ATTEMPT - 1, last._max.attempt ?? 0) + 1,
+            expiresAt: input.expiresAt,
+          },
+        });
+        return session.id;
+      },
+      { isolationLevel: "Serializable" },
+    );
+  }
+
+  /** The new preview becomes the one the run's event stream (and so the UI) shows. */
+  recordPreviewReopened(input: RecordPreviewReopenedInput): Promise<void> {
+    return this.#prisma.$transaction(
+      async (transaction) => {
+        await transaction.sandboxSession.update({
+          where: { id: input.sandboxSessionId },
+          data: { status: "READY", error: Prisma.DbNull },
+        });
+        await transaction.previewSession.create({
+          data: {
+            id: input.sandboxSessionId,
+            workspaceId: input.workspaceId,
+            projectId: input.projectId,
+            runId: input.runId,
+            sandboxSessionId: input.sandboxSessionId,
+            status: "READY",
+            gatewayUrl: input.gatewayUrl,
+            processId: input.processId,
+            expiresAt: input.expiresAt,
+            readyAt: input.now,
+          },
+        });
+        await appendEvent(transaction, input.runId, "preview.updated", {
+          version: "v1",
+          previewSessionId: input.sandboxSessionId,
+          status: "READY",
+          url: input.gatewayUrl,
+          expiresAt: input.expiresAt.toISOString(),
+        });
+      },
+      { isolationLevel: "Serializable" },
+    );
+  }
+
+  /** Tells the UI the re-open failed, so it stops waiting instead of polling for ever. */
+  recordPreviewReopenFailed(input: RecordPreviewReopenFailedInput): Promise<void> {
+    return this.#prisma.$transaction(async (transaction) => {
+      if (input.sandboxSessionId !== undefined) {
+        await transaction.sandboxSession.updateMany({
+          where: { id: input.sandboxSessionId },
+          data: {
+            status: "FAILED",
+            error: toPrismaJson(input.error),
+            terminatedAt: input.now,
+          },
+        });
+      }
+      await appendEvent(transaction, input.runId, "preview.updated", {
+        version: "v1",
+        previewSessionId: input.sandboxSessionId ?? input.runId,
+        status: "ERROR",
+        expiresAt: input.now.toISOString(),
+      });
+    });
   }
 
   async markSandboxFailed(

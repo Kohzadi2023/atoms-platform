@@ -215,6 +215,49 @@ test("an install that fails for a reason of the code itself is not retried", asy
   assert.equal(provider.calls.filter((call) => call === installCommand).length, 1);
 });
 
+test("previewOnly runs install and build, then the database and preview steps, and skips the checks and acceptance", async () => {
+  const provider = new FakeSandboxProvider();
+  const observed: ValidationStepName[] = [];
+  const runner = new ProjectValidationRunner({
+    provider,
+    provisionLocalDatabase: true,
+    acceptanceCheck: {},
+  });
+
+  await runner.validate({
+    files,
+    metadata: {},
+    acceptanceManifest,
+    previewOnly: true,
+    hooks: { onStep: async (_sandbox, step) => { observed.push(step.name); } },
+  });
+
+  assert.deepEqual(observed, [
+    "install",
+    "build",
+    "db-start",
+    "db-migrate",
+    "db-seed",
+    "preview-start",
+    "preview-health",
+  ]);
+  assert.equal(provider.calls.includes("pnpm lint"), false);
+  assert.equal(provider.calls.includes("pnpm typecheck"), false);
+  assert.equal(provider.calls.includes("pnpm test"), false);
+});
+
+test("previewOnly still fails the run when install or build fails", async () => {
+  const provider = new FakeSandboxProvider();
+  provider.failCommand = "pnpm build";
+  const runner = new ProjectValidationRunner({ provider });
+
+  await assert.rejects(
+    runner.validate({ files, metadata: {}, previewOnly: true }),
+    (error: unknown) => error instanceof SandboxValidationError && error.step === "build",
+  );
+  assert.equal(provider.terminated, true);
+});
+
 test("prisma-validate gets a placeholder DATABASE_URL -- it parses the schema but never connects", async () => {
   const provider = new FakeSandboxProvider();
   const runner = new ProjectValidationRunner({ provider });

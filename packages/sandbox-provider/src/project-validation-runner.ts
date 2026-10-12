@@ -129,6 +129,13 @@ export interface ProjectValidationInput {
    * gates run success -- see the step's own comment in `validate()`.
    */
   readonly acceptanceManifest?: AcceptanceManifest | null;
+  /**
+   * Re-opening the preview of a project that already passed validation: only
+   * install and build run before the database and preview steps, and no
+   * acceptance step runs. The checks (prisma-validate, lint, typecheck, test)
+   * were the run's job and are not repeated for a preview.
+   */
+  readonly previewOnly?: boolean;
 }
 
 export interface ProjectValidationResult {
@@ -352,7 +359,13 @@ export class ProjectValidationRunner {
       );
       await input.hooks?.onFilesRestored?.(sandbox);
 
-      for (const definition of validationCommands) {
+      const commands =
+        input.previewOnly === true
+          ? validationCommands.filter(
+              (definition) => definition.name === "install" || definition.name === "build",
+            )
+          : validationCommands;
+      for (const definition of commands) {
         const execute = (): Promise<ValidationStepReport> =>
           this.#executeStep(
             sandbox,
@@ -446,7 +459,11 @@ export class ProjectValidationRunner {
       await input.hooks?.onStep?.(sandbox, healthStep);
       this.#assertSuccessful(healthStep);
 
-      if (this.#acceptancePlaywrightEntry !== undefined && acceptanceManifest !== null) {
+      if (
+        input.previewOnly !== true &&
+        this.#acceptancePlaywrightEntry !== undefined &&
+        acceptanceManifest !== null
+      ) {
         // G3: evidence for the release assessment, never a reason to withhold
         // the preview. A failing or crashing scenario is a normal outcome
         // here, so this step is deliberately never passed to

@@ -220,6 +220,17 @@ function tailOfStepOutput(result: ExecResult): string {
   return `${combined.slice(0, VALIDATION_FAILURE_OUTPUT_HEAD)}\n...[output truncated]...\n${combined.slice(-VALIDATION_FAILURE_OUTPUT_TAIL)}`;
 }
 
+const MAX_INSTALL_ATTEMPTS = 3;
+const TRANSIENT_NETWORK_FAILURE =
+  /ECONNRESET|ETIMEDOUT|ESOCKETTIMEDOUT|EAI_AGAIN|socket hang up/i;
+
+function isTransientNetworkFailure(step: ValidationStepReport): boolean {
+  return (
+    step.result.exitCode !== 0 &&
+    TRANSIENT_NETWORK_FAILURE.test(`${step.result.stdout}\n${step.result.stderr}`)
+  );
+}
+
 // prisma validate only parses and type-checks the schema -- it never opens a
 // connection -- but Prisma's config loader still requires every env() the schema
 // references to resolve to *some* string, or it fails before validation even
@@ -342,14 +353,29 @@ export class ProjectValidationRunner {
       await input.hooks?.onFilesRestored?.(sandbox);
 
       for (const definition of validationCommands) {
-        const step = await this.#executeStep(
-          sandbox,
-          steps.length + 1,
-          definition.name,
-          definition.command,
-          definition.timeoutMs,
-          definition.envs,
-        );
+        const execute = (): Promise<ValidationStepReport> =>
+          this.#executeStep(
+            sandbox,
+            steps.length + 1,
+            definition.name,
+            definition.command,
+            definition.timeoutMs,
+            definition.envs,
+          );
+        let step = await execute();
+        if (definition.name === "install") {
+          // Run ace7c18a: ECONNRESET while fetching the Prisma engines failed
+          // the first install, and the repair agent then "fixed" a package.json
+          // that was fine. A dropped download says nothing about the code, so
+          // it is retried here and only the last result is recorded.
+          for (
+            let attempt = 1;
+            attempt < MAX_INSTALL_ATTEMPTS && isTransientNetworkFailure(step);
+            attempt += 1
+          ) {
+            step = await execute();
+          }
+        }
         steps.push(step);
         await input.hooks?.onStep?.(sandbox, step);
         this.#assertSuccessful(step);

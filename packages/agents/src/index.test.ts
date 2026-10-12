@@ -247,6 +247,12 @@ test("Alex instructions carry the strict-JSON, JSX-entity and next-auth rules", 
   assert.match(alex, /"ts-node": \{"transpileOnly": true/);
   // Run portal37: module CommonJS with the project's "bundler" resolution is TS5095.
   assert.match(alex, /"moduleResolution": "node"/);
+  // Run ace7c18a: ^4.2.4.7 failed install; the other rules came from the same run's
+  // prisma validate and typecheck failures (missing back-relation, TS2451, Session.expires).
+  assert.match(alex, /at most three numeric parts/);
+  assert.match(alex, /contains an import or an export/);
+  assert.match(alex, /includes an expires field/);
+  assert.match(alex, /Account\.user needs User\.accounts/);
   // The sandbox seeds with "pnpm exec prisma db seed", which needs prisma.seed.
   assert.match(alex, /"prisma": \{"seed": "ts-node prisma\/seed\.ts"\}/);
 });

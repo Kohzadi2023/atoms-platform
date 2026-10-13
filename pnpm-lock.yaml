@@ -447,6 +447,10 @@ importers:
         version: 7.0.2
 
   packages/memory:
+    dependencies:
+      '@atoms/db':
+        specifier: workspace:*
+        version: link:../db
     devDependencies:
       '@types/node':
         specifier: 'catalog:'

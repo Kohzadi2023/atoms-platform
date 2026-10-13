@@ -93,3 +93,35 @@ export interface ModelGateway {
   generate(request: ModelRequest): Promise<ModelResponse>;
   stream(request: ModelRequest): AsyncIterable<ModelStreamEvent>;
 }
+
+export interface EmbeddingRequest {
+  /** One text per vector, in order. Every text must have content. */
+  readonly inputs: readonly string[];
+  /** Overrides the gateway's default output size; the vectors come back this long. */
+  readonly dimensions?: number;
+}
+
+export interface EmbeddingUsage {
+  readonly inputTokens: number;
+  readonly totalTokens: number;
+  /** Integer micro-USD estimate, present only when pricing was configured. */
+  readonly estimatedCostUsdMicros?: number;
+}
+
+export interface EmbeddingResponse {
+  readonly model: string;
+  readonly dimensions: number;
+  /** Same order and length as the request's inputs. */
+  readonly vectors: readonly (readonly number[])[];
+  readonly usage: EmbeddingUsage;
+  readonly latencyMs: number;
+}
+
+/**
+ * Turns text into vectors for similarity search. Separate from ModelGateway on
+ * purpose: generation and embedding are priced, limited and failed differently,
+ * and a provider may offer one without the other.
+ */
+export interface EmbeddingGateway {
+  embed(request: EmbeddingRequest): Promise<EmbeddingResponse>;
+}

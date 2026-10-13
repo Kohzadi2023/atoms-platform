@@ -336,3 +336,161 @@ test("an error other than a 429 is thrown at once, without waiting", async () =>
   assert.equal(calls(), 1);
   assert.deepEqual(waits, []);
 });
+
+function embeddingClient(
+  create: (request: unknown) => Promise<unknown>,
+): GeminiClient {
+  return { embeddings: { create } } as unknown as GeminiClient;
+}
+
+function embeddingResponse(
+  vectors: readonly (readonly number[])[],
+  overrides: Record<string, unknown> = {},
+): unknown {
+  return {
+    object: "list",
+    model: "gemini-embedding-001",
+    data: vectors.map((embedding, index) => ({ object: "embedding", index, embedding })),
+    usage: { prompt_tokens: 12, total_tokens: 12 },
+    ...overrides,
+  };
+}
+
+test("embed asks for the configured model and size and returns the vectors in input order with usage and cost", async () => {
+  const requests: unknown[] = [];
+  const gateway = new GeminiModelGateway({
+    client: embeddingClient(async (request) => {
+      requests.push(request);
+      // Returned out of order on purpose: the gateway must restore input order.
+      return {
+        ...(embeddingResponse([[0, 0, 1], [1, 0, 0]]) as object),
+        data: [
+          { object: "embedding", index: 1, embedding: [1, 0, 0] },
+          { object: "embedding", index: 0, embedding: [0, 0, 1] },
+        ],
+      };
+    }),
+    embeddingDimensions: 3,
+    pricing: {
+      "gemini-embedding-001": { inputUsdPerMillionTokens: 0.15, outputUsdPerMillionTokens: 0 },
+    },
+  });
+
+  const result = await gateway.embed({ inputs: ["first text", "second text"] });
+
+  assert.deepEqual(requests, [
+    {
+      model: "gemini-embedding-001",
+      input: ["first text", "second text"],
+      dimensions: 3,
+      encoding_format: "float",
+    },
+  ]);
+  assert.deepEqual(result.vectors, [[0, 0, 1], [1, 0, 0]]);
+  assert.equal(result.dimensions, 3);
+  assert.equal(result.usage.inputTokens, 12);
+  assert.equal(result.usage.estimatedCostUsdMicros, 2, "12 tokens at 0.15 USD per million");
+});
+
+test("embed lets a request override the vector size", async () => {
+  const requests: Array<{ dimensions: number }> = [];
+  const gateway = new GeminiModelGateway({
+    client: embeddingClient(async (request) => {
+      requests.push(request as { dimensions: number });
+      return embeddingResponse([[1, 2]]);
+    }),
+  });
+
+  await gateway.embed({ inputs: ["text"], dimensions: 2 });
+
+  assert.equal(requests[0]?.dimensions, 2);
+});
+
+test("embed rejects an empty batch, an oversized batch and an empty text before calling the provider", async () => {
+  let calls = 0;
+  const gateway = new GeminiModelGateway({
+    client: embeddingClient(async () => {
+      calls += 1;
+      return embeddingResponse([[1]]);
+    }),
+    embeddingDimensions: 1,
+  });
+
+  for (const inputs of [[], Array.from({ length: 101 }, () => "x"), ["fine", "   "]]) {
+    await assert.rejects(
+      gateway.embed({ inputs }),
+      (error: unknown) => error instanceof ModelGatewayError && error.code === "INVALID_REQUEST",
+    );
+  }
+  assert.equal(calls, 0);
+});
+
+test("embed fails closed on a vector count or size that does not match the request", async () => {
+  const shortBatch = new GeminiModelGateway({
+    client: embeddingClient(async () => embeddingResponse([[1, 2, 3]])),
+    embeddingDimensions: 3,
+  });
+  await assert.rejects(
+    shortBatch.embed({ inputs: ["a", "b"] }),
+    (error: unknown) => error instanceof ModelGatewayError && error.code === "RESPONSE_FAILED",
+  );
+
+  const wrongSize = new GeminiModelGateway({
+    client: embeddingClient(async () => embeddingResponse([[1, 2]])),
+    embeddingDimensions: 3,
+  });
+  await assert.rejects(
+    wrongSize.embed({ inputs: ["a"] }),
+    (error: unknown) =>
+      error instanceof ModelGatewayError &&
+      error.code === "RESPONSE_FAILED" &&
+      !error.retryable,
+  );
+});
+
+test("embed waits and retries after a rate limit, then gives up after the configured waits", async () => {
+  let calls = 0;
+  const waits: number[] = [];
+  const rateLimited = () =>
+    new APIError(429, { message: "slow down" }, "slow down", new Headers());
+  const gateway = new GeminiModelGateway({
+    client: embeddingClient(async () => {
+      calls += 1;
+      if (calls <= 2) throw rateLimited();
+      return embeddingResponse([[1]]);
+    }),
+    embeddingDimensions: 1,
+    rateLimitRetryDelaysMs: [5, 7],
+    sleep: async (milliseconds) => {
+      waits.push(milliseconds);
+    },
+  });
+
+  const result = await gateway.embed({ inputs: ["text"] });
+  assert.deepEqual(result.vectors, [[1]]);
+  assert.deepEqual(waits, [5, 7]);
+
+  const alwaysLimited = new GeminiModelGateway({
+    client: embeddingClient(async () => {
+      throw rateLimited();
+    }),
+    embeddingDimensions: 1,
+    rateLimitRetryDelaysMs: [1],
+    sleep: async () => undefined,
+  });
+  await assert.rejects(
+    alwaysLimited.embed({ inputs: ["text"] }),
+    (error: unknown) => error instanceof ModelGatewayError && error.code === "RATE_LIMITED",
+  );
+});
+
+test("embed refuses cleanly when the client has no embeddings support", async () => {
+  const gateway = new GeminiModelGateway({
+    client: { chat: { completions: { create: async () => completionFixture("m") } } } as unknown as GeminiClient,
+  });
+
+  await assert.rejects(
+    gateway.embed({ inputs: ["text"] }),
+    (error: unknown) => error instanceof ModelGatewayError && error.code === "INVALID_REQUEST",
+  );
+});

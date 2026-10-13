@@ -72,6 +72,18 @@ test("ingestDocument chunks, embeds, settles to real usage and stores", async ()
   assert.equal(budget.used, (repository.stored?.chunks.length ?? 0) * 10, "reservation settled to the provider's count");
 });
 
+test("ingestDocument counts the estimate when the provider reports no usage", async () => {
+  const { budget, repository, ingester } = setup(async (inputs) => ({
+    model: "m1",
+    vectors: inputs.map(vector),
+    usage: { totalTokens: 0 },
+  }));
+  await ingester.ingestDocument({ workspaceId: WORKSPACE, title: "Doc", text: longDocument });
+  const estimate = (repository.stored?.chunks ?? []).reduce((sum, c) => sum + c.tokenCount, 0);
+  assert.ok(estimate > 0);
+  assert.equal(budget.used, estimate, "the cap sees the estimate, not zero");
+});
+
 test("ingestDocument sends at most 100 texts per request", async () => {
   const text = Array.from({ length: 400 }, (_, i) => `P${i} ${"x".repeat(1_100)}`).join("\n\n");
   const { calls, ingester } = setup();

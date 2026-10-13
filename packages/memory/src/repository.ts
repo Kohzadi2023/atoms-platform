@@ -34,6 +34,8 @@ export interface QuickSearchInput {
   readonly limit?: number;
   /** Candidates taken from each of the two searches before fusion. */
   readonly candidatesPerSearch?: number;
+  /** How much the keyword list counts against the vector list (1). Default KEYWORD_WEIGHT. */
+  readonly keywordWeight?: number;
 }
 
 export interface MemoryHit {
@@ -56,6 +58,13 @@ interface CandidateRow {
   readonly position: number;
   readonly text: string;
 }
+
+/**
+ * Keyword search catches exact terms (a phone number, a name, a product code) that
+ * a vector blurs, but on ordinary questions it is the noisier list, so it counts for
+ * less. Chosen from the golden-set run; see docs/adr/memory-and-retrieval.md.
+ */
+export const KEYWORD_WEIGHT = 0.5;
 
 const DEFAULT_LIMIT = 8;
 const DEFAULT_CANDIDATES = 30;
@@ -157,7 +166,10 @@ export class MemoryRepository {
     const rows = new Map<string, CandidateRow>();
     for (const row of [...byVector, ...byKeyword]) rows.set(row.id, row);
 
-    return reciprocalRankFusion([byVector, byKeyword], { limit }).map((fused) => {
+    return reciprocalRankFusion([byVector, byKeyword], {
+      limit,
+      weights: [1, input.keywordWeight ?? KEYWORD_WEIGHT],
+    }).map((fused) => {
       const row = rows.get(fused.id);
       if (row === undefined) throw new Error("fused hit without a row");
       return {

@@ -21,10 +21,19 @@ export const RRF_K = 60;
  */
 export function reciprocalRankFusion(
   lists: readonly (readonly RankedHit[])[],
-  options: { readonly k?: number; readonly limit?: number } = {},
+  options: {
+    readonly k?: number;
+    readonly limit?: number;
+    /** One weight per list (default 1 each): a weak list can count for less. */
+    readonly weights?: readonly number[];
+  } = {},
 ): FusedHit[] {
   const k = options.k ?? RRF_K;
   if (!(k > 0)) throw new RangeError("k must be positive");
+  const weights = options.weights ?? lists.map(() => 1);
+  if (weights.length !== lists.length || weights.some((w) => !(w >= 0) || !Number.isFinite(w))) {
+    throw new RangeError("weights must be one finite, non-negative number per list");
+  }
 
   const byId = new Map<string, { score: number; ranks: (number | null)[] }>();
   lists.forEach((list, listIndex) => {
@@ -34,7 +43,7 @@ export function reciprocalRankFusion(
       seenInList.add(hit.id);
       const rank = index + 1;
       const entry = byId.get(hit.id) ?? { score: 0, ranks: lists.map(() => null) };
-      entry.score += 1 / (k + rank);
+      entry.score += (weights[listIndex] ?? 1) / (k + rank);
       entry.ranks[listIndex] = rank;
       byId.set(hit.id, entry);
     });

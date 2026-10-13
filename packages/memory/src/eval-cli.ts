@@ -14,6 +14,7 @@ import { GeminiModelGateway } from "@atoms/model-gateway";
 import { EmbeddingBudget } from "./embedding-budget.js";
 import { summarizeRetrieval, type RankedResult } from "./evaluation.js";
 import { GOLDEN_PASSAGES, GOLDEN_QUESTIONS } from "./golden-set.js";
+import { reciprocalRankFusion } from "./fusion.js";
 import { createDocumentIngester } from "./ingest.js";
 import { MemoryRepository } from "./repository.js";
 
@@ -51,6 +52,9 @@ try {
   const vector: RankedResult[] = [];
   const keyword: RankedResult[] = [];
   const hybrid: RankedResult[] = [];
+  // The same two candidate lists re-fused at other keyword weights, to choose KEYWORD_WEIGHT.
+  const weightVariants = [1, 0.5, 0.25, 0.1];
+  const variantRows = new Map<number, RankedResult[]>(weightVariants.map((w) => [w, []]));
   const misses: unknown[] = [];
   for (const item of GOLDEN_QUESTIONS) {
     const embedded = await gateway.embed({ inputs: [item.question] });
@@ -72,6 +76,12 @@ try {
     vector.push(row(byRank((h) => h.vectorRank)));
     keyword.push(row(byRank((h) => h.keywordRank)));
     hybrid.push(row(hits.map((h) => h.sourceTitle)));
+    const vectorList = byRank((h) => h.vectorRank).map((id) => ({ id }));
+    const keywordList = byRank((h) => h.keywordRank).map((id) => ({ id }));
+    for (const w of weightVariants) {
+      const fused = reciprocalRankFusion([vectorList, keywordList], { weights: [1, w] });
+      variantRows.get(w)?.push(row(fused.map((f) => f.id)));
+    }
     if (hits[0]?.sourceTitle !== item.expected) {
       misses.push({
         question: item.question,
@@ -92,6 +102,17 @@ try {
     console.log(
       "QG",
       name,
+      JSON.stringify({
+        all: summarizeRetrieval(rows),
+        sameLanguage: summarizeRetrieval(slice(rows, "same")),
+        crossLanguage: summarizeRetrieval(slice(rows, "cross")),
+      }),
+    );
+  }
+  for (const [w, rows] of variantRows) {
+    console.log(
+      "QG hybrid-keyword-weight",
+      w,
       JSON.stringify({
         all: summarizeRetrieval(rows),
         sameLanguage: summarizeRetrieval(slice(rows, "same")),

@@ -6,7 +6,9 @@ import type { RunEventEnvelope } from "@atoms/contracts";
 import {
   availableRunActions,
   createWorkspaceProjection,
+  canReopenPreview,
   isPreviewExpired,
+  previewReopenOutcome,
   isSafePreviewUrl,
   reduceRunEvent,
 } from "./workspace-state.js";
@@ -173,6 +175,38 @@ test("a preview is expired once its status or expiry time says so", () => {
   assert.equal(isPreviewExpired({ status: "EXPIRED", expiresAt }, at - 1_000), true);
   assert.equal(isPreviewExpired({ status: "ERROR", expiresAt }, at + 1_000), false);
   assert.equal(isPreviewExpired({ ...ready, expiresAt: "not-a-date" }, at), false);
+});
+
+test("a finished project whose preview is gone can have it reopened, and nothing else can", () => {
+  const expiresAt = "2026-10-05T12:00:00.000Z";
+  const at = Date.parse(expiresAt);
+  const ready = { status: "READY", url: "https://x.preview.example.com/", expiresAt } as const;
+  assert.equal(canReopenPreview("COMPLETED", ready, at), true, "expired by time");
+  assert.equal(canReopenPreview("COMPLETED", { status: "EXPIRED", expiresAt }, at - 1), true);
+  assert.equal(canReopenPreview("COMPLETED", { status: "STOPPED", expiresAt }, at - 1), true);
+  assert.equal(canReopenPreview("COMPLETED", { status: "ERROR", expiresAt }, at - 1), true);
+  assert.equal(canReopenPreview("COMPLETED", ready, at - 1), false, "still live");
+  assert.equal(canReopenPreview("COMPLETED", undefined, at), false, "events not replayed yet");
+  assert.equal(canReopenPreview("RUNNING", { status: "EXPIRED", expiresAt }, at), false);
+  assert.equal(canReopenPreview(undefined, { status: "EXPIRED", expiresAt }, at), false);
+});
+
+test("a reopen waits until a preview with a new expiry arrives, then reports ready or failed", () => {
+  const before = "2026-10-05T12:00:00.000Z";
+  const after = "2026-10-05T13:30:00.000Z";
+  const nowMs = Date.parse("2026-10-05T13:00:00.000Z");
+  const old = { status: "READY", url: "https://x.preview.example.com/", expiresAt: before } as const;
+  const fresh = { status: "READY", url: "https://y.preview.example.com/", expiresAt: after } as const;
+  assert.equal(previewReopenOutcome(before, undefined, nowMs), "waiting");
+  assert.equal(previewReopenOutcome(before, old, nowMs), "waiting", "the old preview is not the answer");
+  assert.equal(previewReopenOutcome(before, fresh, nowMs), "ready");
+  assert.equal(previewReopenOutcome(before, { status: "ERROR", expiresAt: after }, nowMs), "failed");
+  assert.equal(previewReopenOutcome(undefined, fresh, nowMs), "ready", "a project that had no preview event");
+  assert.equal(
+    previewReopenOutcome(before, { ...fresh, expiresAt: "2026-10-05T12:30:00.000Z" }, nowMs),
+    "waiting",
+    "a new preview that has already lapsed is not ready",
+  );
 });
 
 function event(

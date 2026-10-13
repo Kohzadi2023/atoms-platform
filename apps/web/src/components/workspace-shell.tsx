@@ -84,10 +84,12 @@ import {
 import {
   AGENT_ORDER,
   availableRunActions,
+  canReopenPreview,
   createWorkspaceProjection,
   isPreviewExpired,
   isSafePreviewUrl,
   languageForPath,
+  previewReopenOutcome,
   reduceRunEvent,
   type AgentName,
   type TaskStatus,
@@ -101,6 +103,9 @@ const DEVELOPMENT_ACCESS_TOKEN_PROVIDER =
     nodeEnv: process.env.NODE_ENV,
     configuredToken: process.env.NEXT_PUBLIC_CONTROL_API_ACCESS_TOKEN,
   });
+// A re-opened preview installs, builds and starts a project from its saved files, which
+// takes a few minutes; past this the page stops waiting and says so.
+const REOPEN_PREVIEW_TIMEOUT_MS = 8 * 60_000;
 const PREVIEW_BASE_DOMAIN =
   process.env.NEXT_PUBLIC_PREVIEW_BASE_DOMAIN ?? "preview.localhost";
 const ACTIVE_RUN_STORAGE_KEY = "atoms.active-run.v1";
@@ -190,6 +195,12 @@ export function WorkspaceShell({
   const [previousContent, setPreviousContent] = useState<string | undefined>();
   const [editorValue, setEditorValue] = useState("");
   const [saving, setSaving] = useState(false);
+  // Re-opening an expired preview: the answer arrives as one more preview.updated on the
+  // finished run, whose event stream has already ended, so while waiting the stream is
+  // re-opened every few seconds (streamEpoch) from the last sequence seen.
+  const [reopening, setReopening] = useState(false);
+  const [streamEpoch, setStreamEpoch] = useState(0);
+  const reopenBaselineRef = useRef<string | undefined>(undefined);
   const lastSequenceRef = useRef(0);
   const runRequestRef = useRef<
     { readonly fingerprint: string; readonly idempotencyKey: string } | undefined
@@ -420,7 +431,20 @@ export function WorkspaceShell({
         if (!controller.signal.aborted) setError(toMessage(caught));
       });
     return () => controller.abort();
-  }, [api, refreshArtifacts, refreshFiles, run?.id, run?.projectId]);
+  }, [api, refreshArtifacts, refreshFiles, run?.id, run?.projectId, streamEpoch]);
+
+  useEffect(() => {
+    if (!reopening) return;
+    const poll = window.setInterval(() => setStreamEpoch((epoch) => epoch + 1), 4_000);
+    const giveUp = window.setTimeout(() => {
+      setReopening(false);
+      setError("The preview did not come back in time. Try again, or start a new run.");
+    }, REOPEN_PREVIEW_TIMEOUT_MS);
+    return () => {
+      window.clearInterval(poll);
+      window.clearTimeout(giveUp);
+    };
+  }, [reopening]);
 
   useEffect(() => {
     if (run === undefined || terminal) return;
@@ -748,6 +772,41 @@ export function WorkspaceShell({
     return () => window.clearInterval(timer);
   }, []);
   const previewExpired = isPreviewExpired(projection.preview, nowMs);
+  const canReopen = canReopenPreview(run?.status, projection.preview, nowMs);
+  useEffect(() => {
+    if (!reopening) return;
+    const outcome = previewReopenOutcome(
+      reopenBaselineRef.current,
+      projection.preview,
+      Date.now(),
+    );
+    if (outcome === "ready") {
+      setReopening(false);
+      setNotice("The preview is back. It stays up for about 30 minutes.");
+    } else if (outcome === "failed") {
+      setReopening(false);
+      setError("The preview could not be rebuilt. Try again, or start a new run.");
+    }
+  }, [projection.preview, reopening]);
+
+  async function reopenPreview() {
+    if (project === undefined || reopening) return;
+    setError(undefined);
+    setNotice(undefined);
+    reopenBaselineRef.current = projection.preview?.expiresAt;
+    try {
+      await api.reopenProjectPreview(project.id);
+      setReopening(true);
+    } catch (caught: unknown) {
+      if (caught instanceof ControlApiError && caught.code === "PREVIEW_ALREADY_ACTIVE") {
+        // The preview is live after all (another tab, or a stale page): show it.
+        setStreamEpoch((epoch) => epoch + 1);
+        setNotice("This project's preview is still live; refreshing it.");
+        return;
+      }
+      setError(toMessage(caught));
+    }
+  }
   const launchConsent = validateLiveRunConsent({
     prompt,
     maximumCostCad: MAX_ALLOWED_COST_CAD,
@@ -1325,6 +1384,9 @@ export function WorkspaceShell({
                   safe={previewReady}
                   expired={previewExpired}
                   hasRun={run !== undefined}
+                  canReopen={canReopen}
+                  reopening={reopening}
+                  onReopen={() => void reopenPreview()}
                 />
               ) : null}
               {activeTab === "code" ? (
@@ -1365,19 +1427,48 @@ function PreviewPanel({
   safe,
   expired,
   hasRun,
+  canReopen,
+  reopening,
+  onReopen,
 }: {
   readonly preview: ReturnType<typeof createWorkspaceProjection>["preview"];
   readonly safe: boolean;
   readonly expired: boolean;
   readonly hasRun: boolean;
+  readonly canReopen: boolean;
+  readonly reopening: boolean;
+  readonly onReopen: () => void;
 }) {
-  if (expired) {
+  if (reopening) {
     return (
       <EmptyState
         icon={MonitorPlay}
-        title="Preview expired"
-        description="This preview's sandbox has been shut down to save resources. Start a new run to get a fresh preview."
+        title="Rebuilding the preview"
+        description="Atoms is restoring the saved files into a fresh sandbox, installing and building them. This takes a few minutes and uses no AI credit."
       />
+    );
+  }
+  if (expired || canReopen) {
+    return (
+      <div className="space-y-4">
+        <EmptyState
+          icon={MonitorPlay}
+          title={expired ? "Preview expired" : "Preview is not running"}
+          description="This preview's sandbox has been shut down to save resources. You can rebuild it from the saved files, or start a new run."
+        />
+        {canReopen ? (
+          <div className="flex justify-center">
+            <button
+              type="button"
+              className="inline-flex items-center gap-2 rounded-lg bg-[#8df1cc] px-4 py-2 text-sm font-semibold text-[#0b1210] transition hover:bg-[#a4f5d8]"
+              onClick={onReopen}
+            >
+              <MonitorPlay size={16} aria-hidden="true" />
+              Re-open preview
+            </button>
+          </div>
+        ) : null}
+      </div>
     );
   }
   if (preview?.status === "READY" && preview.url !== undefined && safe) {

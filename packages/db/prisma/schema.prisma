@@ -282,6 +282,7 @@ model Workspace {
   secretReferences       SecretReference[]
   gtmScopes              GtmScope[]
   memorySources          MemorySource[]
+  memoryEmbeddingUsage   MemoryEmbeddingUsage[]
 
   @@map("workspaces")
 }
@@ -1384,4 +1385,18 @@ model MemoryChunk {
   @@unique([sourceId, position])
   @@index([workspaceId])
   @@map("memory_chunks")
+}
+
+// Tokens sent to the embedding model per workspace per UTC day. Embedding has its own
+// daily cap, separate from the generation budget, so a large upload cannot spend the
+// model budget. Reserved atomically before a call and settled to the real usage after.
+model MemoryEmbeddingUsage {
+  workspaceId String    @map("workspace_id") @db.Uuid
+  usageDate   DateTime  @map("usage_date") @db.Date
+  tokens      BigInt    @default(0)
+  workspace   Workspace @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+  updatedAt   DateTime  @updatedAt @map("updated_at") @db.Timestamptz(3)
+
+  @@id([workspaceId, usageDate])
+  @@map("memory_embedding_usage")
 }

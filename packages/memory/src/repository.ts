@@ -113,6 +113,14 @@ export class MemoryRepository {
     });
   }
 
+  /** The id of this workspace's source with this content hash, if any. */
+  async findSourceIdByHash(workspaceId: string, contentHash: string): Promise<string | null> {
+    const rows = await this.#prisma.$queryRaw<{ id: string }[]>`
+      SELECT id::text AS id FROM memory_sources
+      WHERE workspace_id = ${workspaceId}::uuid AND content_hash = ${contentHash}`;
+    return rows[0]?.id ?? null;
+  }
+
   /** Hybrid search: cosine similarity and keyword match, merged by reciprocal rank fusion. */
   async searchQuick(input: QuickSearchInput): Promise<MemoryHit[]> {
     const limit = input.limit ?? DEFAULT_LIMIT;

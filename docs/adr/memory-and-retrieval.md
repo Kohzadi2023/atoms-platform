@@ -1,6 +1,6 @@
 # ADR: Memory and retrieval (roadmap item 11)
 
-- **Status:** Proposed, 2026-10-13. Nothing here is decided or built; the decisions it needs from the founder are listed at the end.
+- **Status:** Accepted, 2026-10-13, with the four decisions below taken by delegation: the founder had no preference and asked for the recommendation to be followed. Nothing is built yet; phase P0 starts from this ADR.
 - **Scope:** giving agents retrieval over a workspace's own documents and a memory that survives between runs.
 - **Related:** `docs/roadmap-after-first-phase.md` items 3, 9, 11 and 12, and the "Reference: MiroFish" section there.
 
@@ -108,9 +108,15 @@ Decided before any agent uses it, not after:
 - **Row-level security** on these tables: worth the added complexity, or is the single repository enough?
 - **Cost at the free plan.** Premium agents are skipped on the FREE plan; whether retrieval is a premium capability is a pricing question for item 2.
 
-## Decisions needed from the founder
+## Decisions taken (2026-10-13, by delegation)
 
-1. Approve enabling `pgvector` on staging (P0).
-2. Which consumer comes first: the AI secretary (item 9) or Sophia's evidence (item 3).
-3. Retention and deletion rules for customer-provided documents.
-4. Embedding provider: the Gemini default, or another.
+The founder said they had no preference and told the author to go ahead with the recommendation. These are therefore the author's recommendations, recorded so they can be reversed:
+
+1. **Enable `pgvector` on staging: yes**, immediately before the first migration is deployed, not earlier. It adds no cost, changes no existing table, and is undone by dropping the extension. The production server, when there is one, is a separate decision.
+2. **First consumer: the AI secretary (item 9).** It is the use the founder actually described, and it needs exactly this memory (business facts that change, per-customer history). Sophia's evidence (item 3) comes second, since Sophia is skipped on the FREE plan and has no consumer until item 2 decides what plans unlock. Until a secretary run kind exists, the capability is built and measured on its own against the golden set.
+3. **Retention and deletion:** a source is kept until the workspace owner deletes it; deleting a source deletes its chunks and facts. Sources flagged as containing personal data and conversation episodes are purged after 12 months by default. Customer documents are never used in a shared evaluation set. **These defaults are provisional until a lawyer has read them**, which the Roundtable work already lists as an open gate.
+4. **Embedding provider: Gemini**, the provider already in use. Whether the current key may call the embedding endpoint is verified in P0 before anything depends on it.
+
+## What phase P0 needs beyond the schema
+
+Found while preparing P0: CI (`migration-matrix`), the local `compose.yaml` and `deploy/staging/compose.yaml` all run `postgres:17-alpine`, which has no `pgvector`. A migration that creates the extension would fail there. P0 therefore changes those images to the maintainers' `pgvector/pgvector` image at the same major version, in the same pull request as the migration, and the staging server gets the extension enabled before that migration is deployed.

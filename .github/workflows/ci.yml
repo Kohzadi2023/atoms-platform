@@ -211,6 +211,14 @@ jobs:
         run: |
           pnpm --filter @atoms/orchestrator-worker... build
           pnpm --filter @atoms/orchestrator-worker test:provider-budget:built
+      - name: Exercise memory ingest, hybrid search, tenant isolation and deletion against real PostgreSQL with pgvector
+        env:
+          DATABASE_URL: postgresql://atoms:atoms@localhost:5432/atoms_clean
+          RUN_MEMORY_INTEGRATION_TESTS: "true"
+          MEMORY_INTEGRATION_CONFIRMATION: DEDICATED_EPHEMERAL_DATABASE
+        run: |
+          pnpm --filter @atoms/memory... build
+          pnpm --filter @atoms/memory test:integration:built
       - name: Exercise paused-run approval expiry against real PostgreSQL
         env:
           DATABASE_URL: postgresql://atoms:atoms@localhost:5432/atoms_clean

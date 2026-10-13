@@ -95,6 +95,13 @@ enum SandboxCommandStatus {
   FAILED
 }
 
+// Memory and retrieval (docs/adr/memory-and-retrieval.md). A conversation is a source
+// like any other once it has been written down; the kind only says where it came from.
+enum MemorySourceKind {
+  DOCUMENT
+  CONVERSATION
+}
+
 enum PreviewSessionStatus {
   READY
   STOPPED
@@ -274,6 +281,7 @@ model Workspace {
   integrationConnections IntegrationConnection[]
   secretReferences       SecretReference[]
   gtmScopes              GtmScope[]
+  memorySources          MemorySource[]
 
   @@map("workspaces")
 }
@@ -1327,4 +1335,53 @@ model RetentionProposal {
 
   @@index([customerAccountId, status])
   @@map("retention_proposals")
+}
+
+// One ingested document or conversation. Content is not stored here, only what is
+// needed to avoid ingesting the same text twice and to delete it later; the passages
+// live in MemoryChunk. Deleting a source deletes its chunks.
+model MemorySource {
+  id                   String           @id @default(uuid()) @db.Uuid
+  workspaceId          String           @map("workspace_id") @db.Uuid
+  kind                 MemorySourceKind @default(DOCUMENT)
+  title                String           @db.VarChar(300)
+  language             String?          @db.VarChar(16)
+  // SHA-256 of the normalized text; identical text in one workspace is one source.
+  contentHash          String           @map("content_hash") @db.VarChar(64)
+  containsPersonalData Boolean          @default(false) @map("contains_personal_data")
+  chunkCount           Int              @default(0) @map("chunk_count")
+  workspace            Workspace        @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+  chunks               MemoryChunk[]
+  createdAt            DateTime         @default(now()) @map("created_at") @db.Timestamptz(3)
+  updatedAt            DateTime         @updatedAt @map("updated_at") @db.Timestamptz(3)
+
+  @@unique([workspaceId, contentHash])
+  @@index([workspaceId, createdAt])
+  @@map("memory_sources")
+}
+
+// A passage of a source, with its vector and a generated full-text column.
+//
+// Prisma cannot read or write `embedding` or `search`; they are declared so the schema
+// matches the database, and every query on them is SQL in packages/memory. The HNSW
+// index on `embedding` and the GIN index on `search` are created in the migration and,
+// like the partial index on GtmScope, are invisible to Prisma's own schema types.
+// `embedding` is 768 numbers because that is the vector size the memory package asks
+// Gemini for; a different size is a new column and a re-embed, not an edit.
+model MemoryChunk {
+  id             String                       @id @default(uuid()) @db.Uuid
+  workspaceId    String                       @map("workspace_id") @db.Uuid
+  sourceId       String                       @map("source_id") @db.Uuid
+  position       Int
+  text           String                       @db.Text
+  tokenCount     Int                          @map("token_count")
+  embeddingModel String                       @map("embedding_model") @db.VarChar(100)
+  embedding      Unsupported("vector(768)")
+  search         Unsupported("tsvector")?
+  source         MemorySource                 @relation(fields: [sourceId], references: [id], onDelete: Cascade)
+  createdAt      DateTime                     @default(now()) @map("created_at") @db.Timestamptz(3)
+
+  @@unique([sourceId, position])
+  @@index([workspaceId])
+  @@map("memory_chunks")
 }

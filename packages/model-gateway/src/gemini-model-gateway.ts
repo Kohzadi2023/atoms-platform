@@ -11,6 +11,9 @@ import type { CompletionUsage } from "openai/resources/completions";
 
 import { ModelGatewayError, normalizeOpenAIError } from "./errors.js";
 import type {
+  EmbeddingGateway,
+  EmbeddingRequest,
+  EmbeddingResponse,
   ModelGateway,
   ModelPolicy,
   ModelPricing,
@@ -44,7 +47,15 @@ const DEFAULT_MODEL_ROUTES: Readonly<Record<ModelPolicy, string>> = {
   fallback: "gemini-2.0-flash",
 };
 
-export type GeminiClient = Pick<OpenAI, "chat">;
+// `embeddings` is optional so a client that only generates text (every existing
+// test double) still satisfies the type; embed() refuses when it is missing.
+export type GeminiClient = Pick<OpenAI, "chat"> & Partial<Pick<OpenAI, "embeddings">>;
+
+/** Gemini's embedding model reached through the same OpenAI-compatibility layer. */
+const DEFAULT_EMBEDDING_MODEL = "gemini-embedding-001";
+const DEFAULT_EMBEDDING_DIMENSIONS = 768;
+/** One request carries at most this many texts; callers batch above it. */
+export const MAX_EMBEDDING_INPUTS_PER_REQUEST = 100;
 
 export interface GeminiModelGatewayOptions {
   readonly apiKey?: string;
@@ -60,14 +71,19 @@ export interface GeminiModelGatewayOptions {
    * asking again costs nothing. Pass an empty list to turn this off.
    */
   readonly rateLimitRetryDelaysMs?: readonly number[];
+  readonly embeddingModel?: string;
+  /** Length of the vectors; the model can shorten its output to this. */
+  readonly embeddingDimensions?: number;
   /** Replaceable so tests do not actually wait. */
   readonly sleep?: (milliseconds: number) => Promise<void>;
 }
 
 const DEFAULT_RATE_LIMIT_RETRY_DELAYS_MS: readonly number[] = [10_000, 25_000, 45_000];
 
-export class GeminiModelGateway implements ModelGateway {
+export class GeminiModelGateway implements ModelGateway, EmbeddingGateway {
   readonly #client: GeminiClient;
+  readonly #embeddingModel: string;
+  readonly #embeddingDimensions: number;
   readonly #models: Readonly<Record<ModelPolicy, string>>;
   readonly #pricing: Readonly<Record<string, ModelPricing>>;
   readonly #rateLimitRetryDelaysMs: readonly number[];
@@ -87,6 +103,8 @@ export class GeminiModelGateway implements ModelGateway {
           : { timeout: options.timeoutMs }),
       });
     this.#models = { ...DEFAULT_MODEL_ROUTES, ...options.models };
+    this.#embeddingModel = options.embeddingModel ?? DEFAULT_EMBEDDING_MODEL;
+    this.#embeddingDimensions = options.embeddingDimensions ?? DEFAULT_EMBEDDING_DIMENSIONS;
     this.#pricing = options.pricing ?? {};
     this.#rateLimitRetryDelaysMs =
       options.rateLimitRetryDelaysMs ?? DEFAULT_RATE_LIMIT_RETRY_DELAYS_MS;
@@ -114,6 +132,88 @@ export class GeminiModelGateway implements ModelGateway {
           model,
           performance.now() - startedAt,
         );
+      } catch (error) {
+        const normalized = normalizeOpenAIError(error);
+        const delay = this.#rateLimitRetryDelaysMs[attempt];
+        if (normalized.code !== "RATE_LIMITED" || delay === undefined) {
+          throw normalized;
+        }
+        await this.#sleep(delay);
+      }
+    }
+  }
+
+  async embed(request: EmbeddingRequest): Promise<EmbeddingResponse> {
+    const embeddings = this.#client.embeddings;
+    if (embeddings === undefined) {
+      throw new ModelGatewayError("this Gemini client cannot create embeddings", {
+        code: "INVALID_REQUEST",
+        retryable: false,
+      });
+    }
+    const inputs = request.inputs;
+    if (inputs.length === 0 || inputs.length > MAX_EMBEDDING_INPUTS_PER_REQUEST) {
+      throw new ModelGatewayError(
+        `embed takes 1 to ${String(MAX_EMBEDDING_INPUTS_PER_REQUEST)} texts, got ${String(inputs.length)}`,
+        { code: "INVALID_REQUEST", retryable: false },
+      );
+    }
+    if (inputs.some((text) => text.trim().length === 0)) {
+      throw new ModelGatewayError("embed does not accept an empty text", {
+        code: "INVALID_REQUEST",
+        retryable: false,
+      });
+    }
+    const dimensions = request.dimensions ?? this.#embeddingDimensions;
+    const startedAt = performance.now();
+
+    for (let attempt = 0; ; attempt += 1) {
+      try {
+        const response = await embeddings.create({
+          model: this.#embeddingModel,
+          input: [...inputs],
+          dimensions,
+          encoding_format: "float",
+        });
+        // Fail closed on a malformed answer: a missing or short vector stored
+        // against the wrong text would corrupt search silently.
+        const ordered = [...response.data].sort((a, b) => a.index - b.index);
+        if (ordered.length !== inputs.length) {
+          throw new ModelGatewayError(
+            `the provider returned ${String(ordered.length)} vectors for ${String(inputs.length)} texts`,
+            { code: "RESPONSE_FAILED", retryable: true },
+          );
+        }
+        for (const item of ordered) {
+          if (item.embedding.length !== dimensions) {
+            throw new ModelGatewayError(
+              `the provider returned a vector of ${String(item.embedding.length)} numbers, expected ${String(dimensions)}`,
+              { code: "RESPONSE_FAILED", retryable: false },
+            );
+          }
+        }
+        const inputTokens = response.usage?.prompt_tokens ?? 0;
+        const pricing = this.#pricing[this.#embeddingModel];
+        return {
+          model: response.model || this.#embeddingModel,
+          dimensions,
+          vectors: ordered.map((item) => item.embedding),
+          usage: {
+            inputTokens,
+            totalTokens: response.usage?.total_tokens ?? inputTokens,
+            ...(pricing === undefined
+              ? {}
+              : {
+                  estimatedCostUsdMicros: calculateGeminiCostUsdMicros(
+                    inputTokens,
+                    0,
+                    0,
+                    pricing,
+                  ),
+                }),
+          },
+          latencyMs: Math.max(0, Math.round(performance.now() - startedAt)),
+        };
       } catch (error) {
         const normalized = normalizeOpenAIError(error);
         const delay = this.#rateLimitRetryDelaysMs[attempt];

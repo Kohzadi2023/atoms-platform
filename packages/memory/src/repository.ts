@@ -60,11 +60,16 @@ interface CandidateRow {
 }
 
 /**
- * Keyword search catches exact terms (a phone number, a name, a product code) that
- * a vector blurs, but on ordinary questions it is the noisier list, so it counts for
- * less. Chosen from the golden-set run; see docs/adr/memory-and-retrieval.md.
+ * Fusion settings, chosen from the golden-set grid on staging (28 mixed Persian and
+ * English questions, real embeddings): at the usual k of 60 even a small keyword
+ * weight let a one-place keyword hit outvote the vector's first choice (recall@1
+ * 0.82 to 0.93), and equal weights were worse than the vector search alone. With
+ * k = 3 and a keyword weight from 0.02 to 0.1 the fused result matched the vector
+ * search (recall@1 1.0). The keyword list is therefore a tie-breaker, kept for exact
+ * identifiers (a phone number, a name); on this set it measurably adds nothing yet.
  */
-export const KEYWORD_WEIGHT = 0.5;
+export const FUSION_K = 3;
+export const KEYWORD_WEIGHT = 0.05;
 
 const DEFAULT_LIMIT = 8;
 const DEFAULT_CANDIDATES = 30;
@@ -167,6 +172,7 @@ export class MemoryRepository {
     for (const row of [...byVector, ...byKeyword]) rows.set(row.id, row);
 
     return reciprocalRankFusion([byVector, byKeyword], {
+      k: FUSION_K,
       limit,
       weights: [1, input.keywordWeight ?? KEYWORD_WEIGHT],
     }).map((fused) => {

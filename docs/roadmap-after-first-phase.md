@@ -198,6 +198,34 @@ Do not start it before item 9 has chosen which tools it needs.
 Not planned: GraphQL (REST is enough), Python services, and a second
 orchestration framework next to LangGraph.
 
+### 13. A second model as reviewer
+Today the pipeline calls one model family (Gemini) for every agent. A second,
+different model could review an output instead of producing it: Sophia's market
+analysis and claims, or Alex's generated code before the sandbox validates it.
+A reviewer from another family tends to miss different things, so it can catch
+invented figures and plain mistakes that the author model repeats.
+
+The founder holds API keys for Grok (xAI) and DeepSeek. Neither is needed for
+the first phase, and nothing is wired.
+
+What it would take:
+
+- A second provider adapter in `packages/model-gateway`, with its own price table so the per-run and daily budget caps still apply.
+- A reviewer step with a narrow, structured verdict (accept, or a list of
+  concrete problems), not a free rewrite. Its output goes to the author or the
+  repair loop, which already exists for sandbox failures.
+- A decision on which outputs are worth the extra cost. Reviewing Sophia's
+  claims is likely cheaper and more useful than reviewing all of Alex's code,
+  because the sandbox already checks the code.
+- Keys stored as staging secrets, set by the founder in their own terminal.
+
+Open points, none verified: whether review actually improves results, which is
+worth a small A/B on saved runs before building; and data handling. DeepSeek's
+hosted API sends data to servers outside our tenancy, so it is fine for
+throwaway test projects but not for customer documents or personal data
+(items 9 and 11) without a lawyer's reading and consent. Do not start it before
+phase one is stable and item 4 shows where the real quality gaps are.
+
 ## Reference: MiroFish (read, not adopted)
 
 Studied 2026-10-13 from the public repository `666ghj/MiroFish` (README and the
@@ -252,6 +280,8 @@ Patterns worth copying, each into the item that needs it:
 7. Items 11 and 12 together with item 9, because the AI secretary is the first
    system that needs retrieval, memory and external tools. Item 11 may also
    help item 3 earlier.
+8. Item 13 (second-model reviewer) after phase one is stable, starting with a
+   small A/B on saved runs.
 
 ## Out of scope here
 

@@ -14,6 +14,7 @@ import { GeminiModelGateway } from "@atoms/model-gateway";
 import { EmbeddingBudget } from "./embedding-budget.js";
 import { summarizeRetrieval, type RankedResult } from "./evaluation.js";
 import { GOLDEN_PASSAGES, GOLDEN_QUESTIONS } from "./golden-set.js";
+import { reciprocalRankFusion } from "./fusion.js";
 import { createDocumentIngester } from "./ingest.js";
 import { MemoryRepository } from "./repository.js";
 
@@ -51,6 +52,13 @@ try {
   const vector: RankedResult[] = [];
   const keyword: RankedResult[] = [];
   const hybrid: RankedResult[] = [];
+  // The same two candidate lists re-fused at other keyword weights, to choose KEYWORD_WEIGHT.
+  // RRF with a large k is nearly flat at the top, so any keyword hit can outvote a
+  // one-place vector lead; a smaller k and a smaller weight keep the vector order.
+  const ks = [60, 10, 3];
+  const weightVariants = [1, 0.5, 0.25, 0.1, 0.05, 0.02];
+  const variantRows = new Map<string, RankedResult[]>();
+  for (const k of ks) for (const w of weightVariants) variantRows.set(`k=${k} w=${w}`, []);
   const misses: unknown[] = [];
   for (const item of GOLDEN_QUESTIONS) {
     const embedded = await gateway.embed({ inputs: [item.question] });
@@ -72,6 +80,14 @@ try {
     vector.push(row(byRank((h) => h.vectorRank)));
     keyword.push(row(byRank((h) => h.keywordRank)));
     hybrid.push(row(hits.map((h) => h.sourceTitle)));
+    const vectorList = byRank((h) => h.vectorRank).map((id) => ({ id }));
+    const keywordList = byRank((h) => h.keywordRank).map((id) => ({ id }));
+    for (const k of ks) {
+      for (const w of weightVariants) {
+        const fused = reciprocalRankFusion([vectorList, keywordList], { k, weights: [1, w] });
+        variantRows.get(`k=${k} w=${w}`)?.push(row(fused.map((f) => f.id)));
+      }
+    }
     if (hits[0]?.sourceTitle !== item.expected) {
       misses.push({
         question: item.question,
@@ -97,6 +113,15 @@ try {
         sameLanguage: summarizeRetrieval(slice(rows, "same")),
         crossLanguage: summarizeRetrieval(slice(rows, "cross")),
       }),
+    );
+  }
+  for (const [name, rows] of variantRows) {
+    const all = summarizeRetrieval(rows);
+    console.log(
+      "QG grid",
+      name,
+      `r1=${all.recallAt1} r3=${all.recallAt3} mrr=${all.meanReciprocalRank}`,
+      `cross-r1=${summarizeRetrieval(slice(rows, "cross")).recallAt1}`,
     );
   }
   console.log("QG top1-misses", JSON.stringify(misses));

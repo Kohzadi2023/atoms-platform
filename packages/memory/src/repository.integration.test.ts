@@ -108,10 +108,12 @@ test(
       assert.equal(byVector[0]?.vectorRank, 1);
 
       // Keyword side: a vector that matches nothing in particular, a question that names the passage.
+      // (keywordWeight is raised so the keyword list alone decides the order.)
       const byKeyword = await repository.searchQuick({
         workspaceId: workspaceA,
         queryText: "What are your opening hours?",
         queryEmbedding: axis(100),
+        keywordWeight: 100, // the vector list is a tie here, so let the keyword list decide
         limit: 3,
       });
       assert.equal(byKeyword[0]?.sourceTitle, "Hours");
@@ -122,6 +124,7 @@ test(
         workspaceId: workspaceA,
         queryText: "ساعت کاری چهارشنبه",
         queryEmbedding: axis(100),
+        keywordWeight: 100, // the vector list is a tie here, so let the keyword list decide
         limit: 3,
       });
       assert.equal(byPersian[0]?.sourceTitle, "ساعت کاری");

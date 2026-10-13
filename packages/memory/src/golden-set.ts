@@ -110,4 +110,9 @@ export const GOLDEN_QUESTIONS: readonly GoldenQuestion[] = [
   { question: "عصب‌کشی دندان آسیاب چند است؟", language: "fa", expected: "root-canal", kind: "cross" },
   { question: "اینویزالاین چقدر طول می‌کشد؟", language: "fa", expected: "aligners", kind: "same" },
   { question: "How much do clear aligners cost?", language: "en", expected: "aligners", kind: "cross" },
+  // Questions that name an exact term: the case keyword search is for.
+  { question: "416-555-0142", language: "en", expected: "emergency", kind: "same" },
+  { question: "Don Mills", language: "en", expected: "location", kind: "same" },
+  { question: "Visa Mastercard e-transfer", language: "en", expected: "payment", kind: "same" },
+  { question: "دکتر پیمان رضایی", language: "fa", expected: "languages", kind: "same" },
 ];

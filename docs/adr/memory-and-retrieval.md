@@ -57,7 +57,7 @@ Information enters through `MemoryEpisode` rows consumed by a BullMQ queue (`mem
 ### 4. Embeddings and cost
 
 - Add an `embed` method to the model gateway, with the Gemini embedding model as the default so the provider stays the one already in use.
-- Route it through the same ledger, with its own per-workspace daily embedding cap, so a large upload cannot spend the model budget. Ingestion is refused, not truncated, when the cap is hit.
+- Give it its own per-workspace daily embedding cap, in its own table (`memory_embedding_usage`; the existing ledger is per run, so it does not fit), so a large upload cannot spend the model budget. Ingestion is refused, not truncated, when the cap is hit.
 - Store the model id and dimension with every vector. A model change is a re-embed job, not a silent mix.
 
 ### 5. Tenancy, privacy, deletion
@@ -120,3 +120,13 @@ The founder said they had no preference and told the author to go ahead with the
 ## What phase P0 needs beyond the schema
 
 Found while preparing P0: CI (`migration-matrix`), the local `compose.yaml` and `deploy/staging/compose.yaml` all run `postgres:17-alpine`, which has no `pgvector`. A migration that creates the extension would fail there. P0 therefore changes those images to the maintainers' `pgvector/pgvector` image at the same major version, in the same pull request as the migration, and the staging server gets the extension enabled before that migration is deployed.
+
+## First measurements (2026-10-13, staging)
+
+Real Gemini embeddings (`gemini-embedding-001`, 768 dimensions), real pgvector on the staging server, an invented dental clinic (12 passages) and 28 questions, half Persian and half English, half of them across languages (`packages/memory/src/golden-set.ts`, run by `eval-cli`). 28 questions can only show a gross failure; they do not certify quality.
+
+- **Embedding quality is not the problem.** Vector search alone: recall@1 1.0, including all 12 cross-language questions (a Persian question answered from an English passage and the reverse). The risk this ADR listed as "main thing not yet verified" held up on this set.
+- **Keyword search cannot cross languages** (0 of 12), and on the first run it ranked by words such as "the" and "is". Fused at equal weight with the usual constant it was **worse than vector alone** (recall@1 0.583).
+- **Fix:** common English and Persian function words are dropped from the keyword query, and fusion uses k = 3 with the keyword list at weight 0.05. In the grid, k = 3 with weights 0.02 to 0.1 matched the vector search (recall@1 1.0); the usual k = 60 never did. Keyword search is kept as a tie-breaker for exact identifiers, but on this set it adds nothing measurable. Whether it earns its place needs questions where the vector fails, which this set does not contain.
+- The Gemini OpenAI-compatible embeddings endpoint **returns no `usage`**; ingestion counts its own estimate against the daily cap.
+- Not measured: stale-fact rate (no facts yet), citation precision, cost per query beyond the 536 embedding tokens the whole run used, passages longer than one paragraph, noisy real documents.

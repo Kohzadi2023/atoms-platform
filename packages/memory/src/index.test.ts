@@ -113,3 +113,22 @@ test("reciprocalRankFusion handles no lists and rejects a bad k", () => {
   assert.deepEqual(reciprocalRankFusion([]), []);
   assert.throws(() => reciprocalRankFusion([[]], { k: 0 }), RangeError);
 });
+
+test("reciprocalRankFusion weights let a noisy list count for less", () => {
+  const vector = [{ id: "right" }, { id: "x" }];
+  const keyword = [{ id: "noise" }, { id: "right" }];
+  assert.equal(reciprocalRankFusion([vector, keyword], { weights: [1, 1] })[0]?.id, "right");
+  // keyword says "noise" first and vector has nothing else strong: at weight 1 they tie
+  // on rank 1, at a lower keyword weight the vector's first choice wins outright.
+  const tie = reciprocalRankFusion([[{ id: "v" }], [{ id: "k" }]], { weights: [1, 1] });
+  assert.equal(tie[0]?.score, tie[1]?.score);
+  const weighted = reciprocalRankFusion([[{ id: "v" }], [{ id: "k" }]], { weights: [1, 0.5] });
+  assert.deepEqual(weighted.map((h) => h.id), ["v", "k"]);
+  assert.ok((weighted[0]?.score ?? 0) > (weighted[1]?.score ?? 0));
+});
+
+test("reciprocalRankFusion rejects malformed weights", () => {
+  assert.throws(() => reciprocalRankFusion([[], []], { weights: [1] }), RangeError);
+  assert.throws(() => reciprocalRankFusion([[]], { weights: [-1] }), RangeError);
+  assert.throws(() => reciprocalRankFusion([[]], { weights: [Number.NaN] }), RangeError);
+});

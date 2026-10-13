@@ -446,6 +446,15 @@ importers:
         specifier: 'catalog:'
         version: 7.0.2
 
+  packages/memory:
+    devDependencies:
+      '@types/node':
+        specifier: 'catalog:'
+        version: 24.13.3
+      typescript:
+        specifier: 'catalog:'
+        version: 7.0.2
+
   packages/model-gateway:
     dependencies:
       '@atoms/contracts':

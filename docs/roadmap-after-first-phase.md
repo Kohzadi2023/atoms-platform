@@ -179,7 +179,10 @@ What it would unlock:
 Open questions: PostgreSQL with `pgvector` (no new service, tenant boundary
 stays `Workspace`) or a separate vector database; what is stored per workspace
 and for how long; how retrieved text is kept inside the per-run budget caps.
-**Unverified feasibility** of `pgvector` on the current Postgres tier.
+**Checked 2026-10-13:** `VECTOR` is on the allow-list of the staging Postgres
+16 server and is not enabled yet; capacity on the current tier is unmeasured.
+A design proposal with the data model, three retrieval depths, cost handling and
+the decisions it needs is in `docs/adr/memory-and-retrieval.md`.
 
 Design reference: MiroFish (see "Reference: MiroFish" below) builds its memory as
 a typed graph with facts that can expire, which fits the changing facts of item 9.

@@ -94,7 +94,7 @@ jobs:
     timeout-minutes: 30
     services:
       postgres:
-        image: postgres:17-alpine
+        image: pgvector/pgvector:pg17
         env:
           POSTGRES_DB: atoms_upgrade
           POSTGRES_USER: atoms
@@ -180,7 +180,7 @@ jobs:
       name: phase3-staging
     services:
       postgres:
-        image: postgres:17-alpine
+        image: pgvector/pgvector:pg17
         env:
           POSTGRES_DB: atoms_provider_exit
           POSTGRES_USER: atoms

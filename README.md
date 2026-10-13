@@ -21,7 +21,7 @@ cleanup exit while emitting credential-free evidence artifacts.
 
 - Node.js 24+
 - pnpm 11+
-- Docker with Compose, or compatible PostgreSQL, Redis, S3, and ClamAV services
+- Docker with Compose, or compatible PostgreSQL (16 or newer, with the `pgvector` extension available), Redis, S3, and ClamAV services
 
 ## Bootstrap
 
@@ -34,6 +34,13 @@ pnpm db:migrate:deploy
 pnpm db:seed:local
 pnpm verify
 ```
+
+The memory migrations (`docs/adr/memory-and-retrieval.md`) create the `pgvector`
+extension, so the local database must be able to. `compose.yaml` therefore uses the
+`pgvector/pgvector:pg17` image. If you already have an `atoms_postgres_data` volume
+created by the earlier `postgres:17-alpine` image, that volume cannot be reused (a
+different operating system image owns the files): run `docker compose down -v` once
+and bootstrap again. Local data is disposable; `pnpm db:seed:local` recreates it.
 
 Before starting the application, configure the provider keys and one
 authentication mode in the untracked `.env` file. For the local seeded user,

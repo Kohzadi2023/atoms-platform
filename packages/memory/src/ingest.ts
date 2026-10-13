@@ -78,7 +78,12 @@ export function createDocumentIngester(deps: {
           }
           model = response.model;
           vectors.push(...response.vectors);
-          spent += response.usage.totalTokens;
+          // Gemini's OpenAI-compatible endpoint may omit usage (seen on staging,
+          // 2026-10-13). Count the estimate then, so the daily cap never sees zero.
+          spent +=
+            response.usage.totalTokens > 0
+              ? response.usage.totalTokens
+              : batch.reduce((sum, chunk) => sum + chunk.tokenCount, 0);
         }
         if (model === undefined) throw new Error("embedder returned no model id");
 

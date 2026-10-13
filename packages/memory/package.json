@@ -17,7 +17,8 @@
     "typecheck": "tsc -p tsconfig.json --noEmit"
   },
   "dependencies": {
-    "@atoms/db": "workspace:*"
+    "@atoms/db": "workspace:*",
+    "@atoms/model-gateway": "workspace:*"
   },
   "devDependencies": {
     "@types/node": "catalog:",

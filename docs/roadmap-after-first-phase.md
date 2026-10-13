@@ -59,6 +59,9 @@ Proposed steps (A and B in one PR, C is a separate decision):
 Risk: every new Alex rule can open a new validation failure. Try it as a
 separate experiment with fresh staging runs, after repeatability is confirmed.
 
+Design reference for evidence-backed analysis and for pre-launch audience
+simulation: see "Reference: MiroFish" below.
+
 ### 4. Release assessment: `release.blocked`
 Runs finish, but the observe-only assessor reports `release.blocked` (28 issues)
 because ACCESSIBILITY, E2E, PERFORMANCE, REGRESSION and SECURITY checks and
@@ -178,6 +181,9 @@ stays `Workspace`) or a separate vector database; what is stored per workspace
 and for how long; how retrieved text is kept inside the per-run budget caps.
 **Unverified feasibility** of `pgvector` on the current Postgres tier.
 
+Design reference: MiroFish (see "Reference: MiroFish" below) builds its memory as
+a typed graph with facts that can expire, which fits the changing facts of item 9.
+
 ### 12. External tools through MCP
 Agents currently call nothing outside the platform: tool use is limited to
 sandbox commands that the worker runs. The Model Context Protocol would let an
@@ -191,6 +197,48 @@ Do not start it before item 9 has chosen which tools it needs.
 
 Not planned: GraphQL (REST is enough), Python services, and a second
 orchestration framework next to LangGraph.
+
+## Reference: MiroFish (read, not adopted)
+
+Studied 2026-10-13 from the public repository `666ghj/MiroFish` (README and the
+backend services' structure only; nothing was installed or run, and the quality
+of its code and the accuracy of its predictions are **not verified**). It is a
+multi-agent "prediction" engine: seed text becomes a graph, the graph becomes
+thousands of persona agents that interact on simulated social platforms, and a
+report agent writes up what happened.
+
+Why it is not a dependency: AGPL-3.0 (changes offered over a network must be
+published, and a commercial use needs a lawyer's reading first), Python while
+Genesisco is TypeScript, memory held in Zep Cloud (customer data would leave our
+tenancy), and its own docs warn that LLM consumption is high, against our
+per-run and daily budget caps. Its agents are language models, not customers;
+the Roundtable work already showed a single model playing several roles herds
+and invents numbers.
+
+Patterns worth copying, each into the item that needs it:
+
+- **Memory as a typed graph with expiring facts (item 11).** An ontology is
+  generated from the source text first, the graph is built in batches, and edges
+  carry validity so retrieval can include or exclude superseded facts. An AI
+  secretary needs exactly this: prices, hours and staff change.
+- **Three retrieval depths (item 11).** A quick search, a broad "panorama" that
+  also returns expired facts, and a deep search that first splits the question
+  into sub-questions. One tool per depth is easier to budget than one retriever.
+- **Memory written back from activity (items 9 and 11).** Agent actions are
+  turned into episodes and queued into the graph in the background, so later
+  steps remember earlier ones without blocking the run.
+- **Generate long configuration in steps (agents, Alex).** Time, events, agents
+  in batches, then platform settings, "to avoid failures from one very long
+  output". Genesisco's runs failed the same way and were fixed one rule at a time;
+  planning an outline and then producing one part at a time, with a reflection
+  pass, is a candidate design for generating larger applications.
+- **Plan, then write section by section with tool calls (item 3).** Its report
+  agent plans an outline, then writes each section through think, call a tool,
+  reflect, with every thought and tool call logged. That is a model for Sophia's
+  evidence-backed market analysis, and the log matches our run events.
+- **Audience simulation before launch (item 3).** Persona agents reacting to a
+  landing page or message could pre-screen copy. Treat it as brainstorming, never
+  as a forecast, until a test against real responses shows otherwise.
 
 ## Suggested order
 

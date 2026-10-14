@@ -9,6 +9,7 @@ import type {
 } from "@atoms/model-gateway";
 
 import {
+  ALEX_DESIGN_RULES,
   AgentRuntimeError,
   AlexOutputSchema,
   CLIENT_PORTAL_TESTABILITY_CONTRACT,
@@ -537,4 +538,25 @@ test("every agent request asks the provider for JSON output", async () => {
   const gateway = new SequencedGateway([VALID_ALEX_OUTPUT]);
   await new ModelBackedAgentRuntime(gateway).execute(ALEX_REQUEST);
   assert.equal(gateway.requests[0]?.responseFormat, "json");
+});
+
+// Generated sites were bare HTML: Alex used Tailwind class names but never installed
+// Tailwind. The recipe in ALEX_DESIGN_RULES was built with `next build` before it was
+// written, and it avoids v4 (native binaries) and every network fetch.
+test("Alex instructions carry the Tailwind v3 install recipe and the design rules", () => {
+  const alex = agentManifests.Alex.instructions;
+  assert.ok(alex.includes(ALEX_DESIGN_RULES));
+  assert.match(alex, /tailwindcss \^3\.4\.17/);
+  assert.match(alex, /postcss\.config\.js/);
+  assert.match(alex, /@tailwind base; @tailwind components; @tailwind utilities/);
+  assert.match(alex, /never use the Tailwind v4 syntax/);
+  assert.match(alex, /lucide-react \^0\.468\.0/);
+  assert.match(alex, /Never use emoji as icons/);
+  assert.match(alex, /no remote images, fonts, stylesheets or scripts/);
+  assert.match(alex, /dir="rtl"/);
+  assert.match(alex, /Do not write tests for styling/);
+  // Only Alex gets them; the other agents' instructions are unchanged.
+  for (const name of ["Bob", "David", "Mike", "Emma"] as const) {
+    assert.ok(!agentManifests[name].instructions.includes("VISUAL DESIGN"), name);
+  }
 });

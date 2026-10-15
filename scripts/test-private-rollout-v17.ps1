@@ -296,7 +296,10 @@ function Reset-Case([string]$Name) {
     $script:CaseName=$Name;$script:StateApp=Copy-Data $Baseline;$script:Calls=[Collections.Generic.List[object]]::new()
     $script:Jobs=@();$script:ExitStatus=0;$script:CommitSucceeded=$false;$script:AppMutationMayHaveApplied=$false;$script:LastFailure=""
     $script:JobMayExist=$false;$script:Original=$null;$script:NewImage="";$script:CheckpointPath=""
-    $script:RunId=[Guid]::NewGuid().ToString("N");$script:RevisionPrefix="pvrt-"+$script:RunId.Substring(0,12)
+    # Fixed nonce fixture, as in the v18/v19 harnesses. The frozen v17 artifact classifies exec transport text with an
+    # unanchored "429" match, and that text embeds this nonce, so a random GUID containing "429" (about 0.7% of runs)
+    # was misread as a rate limit and failed the incomplete-output case. The fixture contains no HTTP status digits.
+    $script:RunId="0123456789abcdef0123456789abcdef";$script:RevisionPrefix="pvrt-"+$script:RunId.Substring(0,12)
     $script:ResumeSourceRunId="";$script:JobName="atoms-stg-pvrt-"+$script:RunId.Substring(0,12);$script:BuildTag=""
     $script:BuildCalls=0;$script:PatchCalls=0;$script:ExecCalls=0;$script:JobStartCalls=0;$script:JobDeleteCalls=0
     $script:BuiltDigest=$ResumeBuildDigest;$script:Apply=$true;$script:RollbackCheckpoint=""

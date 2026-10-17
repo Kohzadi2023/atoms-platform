@@ -256,13 +256,50 @@ The first command is a dry run and sends nothing. `--build` is billable and regi
 
 ## Renewing the preview wildcard certificate
 
-The `*.preview.genesisco.io` certificate (`genesisco-preview-wildcard-le` in `atoms-staging-env`) is from Let's Encrypt, valid 90 days, and **expires 2026-12-18**. Nothing renews it. Wildcard names need DNS-01, DNS is at Namecheap, and there is no DNS API integration (issue #93). When it expires every public preview URL fails TLS.
+The `*.preview.genesisco.io` certificate (`genesisco-preview-wildcard-le` in `atoms-staging-env`) is from Let's Encrypt, valid 90 days, and **expires 2026-12-18**. Wildcard names need DNS-01 and DNS is at Namecheap, so renewal is automated through a small delegated Azure DNS zone (see "Automatic renewal" below) once its one-time setup is done. Until then nothing renews it. When it expires every public preview URL fails TLS.
 
 **Warning.** `.github/workflows/preview-cert-expiry.yml` runs weekly (Mondays 06:17 UTC) and fails when fewer than 30 days remain. It is read-only: one TLS handshake to `cert-expiry-check.preview.genesisco.io`, no credentials. GitHub emails a failed scheduled run to the person who last edited the workflow's cron line, so check that this is someone who will act; the Actions tab shows it either way. Run the same check by hand any time:
 
 ```bash
 node scripts/check-preview-cert-expiry.mjs
 ```
+
+### Automatic renewal (Azure DNS)
+
+`.github/workflows/preview-cert-renew.yml` runs on Mondays at 05:43 UTC. A first job with no credentials reads the served certificate (`scripts/plan-preview-cert-renewal.mjs`) and starts a renewal only when **45 days or fewer** remain. The window is wider than the 30-day alert on purpose: the alert above now means "automatic renewal has failed about twice", not "renewal is due". The first scheduled run inside the window is 2026-11-09.
+
+**How it works.** `genesisco.io` stays at Namecheap and nothing is moved. Two records are added there once. An `NS` record set for the host `acme` hands the child zone `acme.genesisco.io` to Azure DNS, and a `CNAME` at `_acme-challenge.preview` points to `preview.acme.genesisco.io`. Let's Encrypt follows the CNAME, so the workflow answers the challenge by writing a TXT record into the Azure zone with `lego` (pinned version and checksum), using an OIDC identity that can edit only that zone. It then uploads the PFX under a **new** name (`genesisco-preview-wildcard-le-<date>-<time>`), remembers the certificate currently bound, binds the new one, and checks what the public Gateway serves: at least 80 days of validity, and a made-up subdomain still answers `401 Invalid preview URL` over TLS. If the check fails it rebinds the previous certificate and the run fails. The old certificate is never deleted by the workflow.
+
+**One-time setup.** None of this has been run yet; the rehearsal in step 6 is how it gets proven.
+
+1. **Identity.** Create an app registration and service principal for the workflow, with a federated credential for the GitHub environment (no client secret exists):
+
+   ```bash
+   az ad app create --display-name atoms-preview-cert-renewal
+   az ad sp create --id <appId>
+   az ad app federated-credential create --id <appId> --parameters '{"name":"preview-cert-renewal","issuer":"https://token.actions.githubusercontent.com","subject":"repo:Kohzadi2023/atoms-platform:environment:preview-cert-renewal","audiences":["api://AzureADTokenExchange"]}'
+   ```
+
+2. **Zone and its role.** Deploy the zone into `atoms-staging-rg` (the workflow limits zone discovery to that resource group). `renewalPrincipalId` is the service principal's **object** ID, not the app ID. The output lists the four name servers:
+
+   ```bash
+   az deployment group create -g atoms-staging-rg --template-file infra/azure/staging/preview-acme-dns.bicep --parameters renewalPrincipalId=<service principal object id> --query properties.outputs.nameServers.value
+   ```
+
+3. **Certificate and Gateway rights.** The identity must be able to upload and delete certificates on `atoms-staging-env` and update `atoms-staging-preview-gateway`. `Contributor` on `atoms-staging-rg` works but is broader than needed (it also covers the staging VM); a custom role limited to `Microsoft.App/managedEnvironments/certificates/*`, `Microsoft.App/managedEnvironments/read` and `Microsoft.App/containerApps/{read,write}` is tighter. The exact action set for `hostname bind` was not verified here, so if a real renewal reports an authorization error, the rollback keeps the old certificate in service and the error names the missing action.
+4. **Namecheap, once.** Remove any existing TXT record named `_acme-challenge.preview` first (a CNAME cannot share a name with another record). Then add four `NS` records, host `acme`, one per name server from step 2, and one `CNAME`, host `_acme-challenge.preview`, value `preview.acme.genesisco.io.`. Check both resolve before continuing:
+
+   ```bash
+   nslookup -type=NS acme.genesisco.io
+   nslookup -type=CNAME _acme-challenge.preview.genesisco.io
+   ```
+
+5. **GitHub.** Create the environment `preview-cert-renewal` with the secrets `AZURE_CLIENT_ID`, `AZURE_TENANT_ID`, `AZURE_SUBSCRIPTION_ID` and `ACME_EMAIL` (the address Let's Encrypt writes to about expiry). Add **no** required reviewers: a scheduled run cannot wait for one.
+6. **Rehearse.** Run the workflow by hand with `mode=rehearse` (the default). It issues a certificate from the Let's Encrypt **staging** CA through the real DNS path, uploads it under a throwaway name to prove Azure accepts the PFX, deletes it, and binds nothing. It does not exercise `hostname bind`; the first real renewal does, protected by the rollback. Once the rehearsal passes, `mode=renew` with `force` renews early, which is a safe way to prove the whole path weeks before it matters.
+
+**Limits.** Let's Encrypt allows five failed validations per hour per host and five identical certificates a week, so do not run `mode=renew` repeatedly while debugging; use `rehearse`. Old certificates accumulate in the environment: after a renewal has served correctly for a while, list them with `az containerapp env certificate list --name atoms-staging-env --resource-group atoms-staging-rg -o table` and delete the ones no longer bound. If automatic renewal cannot be made to work, the manual procedure below is still valid.
+
+### Manual renewal (fallback)
 
 **Renew at the latest two weeks before expiry.** Everything below runs on an operator's machine; none of it is automated, and none of it was exercised by the change that added this section. The last issuance used the `acme` Python library because `certbot` refused to run without Windows administrator rights, so the `certbot` commands below are the standard equivalent, not a replay of what was done. Check flags with `--help` before running.
 
@@ -296,7 +333,7 @@ node scripts/check-preview-cert-expiry.mjs
 
 **Rollback.** Rebind the previous certificate name with the same `hostname bind` command.
 
-**Automating it** (a Namecheap API key kept as a protected secret, or moving DNS to Azure DNS) is the real fix and is still open in #93. The expiry check above is what makes doing it by hand safe until then.
+The expiry check above stays in place as the independent alarm whichever way the certificate is renewed.
 
 ## References
 

@@ -1,0 +1,205 @@
+name: Preview certificate renewal
+
+# Renews the *.preview.genesisco.io wildcard certificate (issue #93).
+#
+# DNS-01 challenges are answered in an Azure DNS zone (acme.genesisco.io) that Namecheap
+# delegates to, through one CNAME at _acme-challenge.preview. Nothing here holds a Namecheap
+# credential. See "Renewing the preview wildcard certificate" in
+# docs/azure-container-apps-preview-staging.md for the one-time setup.
+#
+# Scheduled runs renew only when 45 days or fewer remain (plan job, no credentials).
+# Manual runs default to `rehearse`: a full issue against the Let's Encrypt STAGING CA through
+# the same DNS path, uploaded under a throwaway name to prove Azure accepts the PFX, then
+# deleted. A rehearsal never binds anything and never touches the certificate in service.
+# preview-cert-expiry.yml stays as the independent alarm: it fails under 30 days, which now
+# means "automatic renewal has failed twice".
+
+on:
+  schedule:
+    - cron: "43 5 * * 1"
+  workflow_dispatch:
+    inputs:
+      mode:
+        description: rehearse = Let's Encrypt staging, nothing bound. renew = real certificate.
+        type: choice
+        options:
+          - rehearse
+          - renew
+        default: rehearse
+      force:
+        description: With mode=renew, renew even when the certificate is outside the renewal window
+        type: boolean
+        default: false
+
+permissions:
+  contents: read
+
+concurrency:
+  group: preview-cert-renewal
+  cancel-in-progress: false
+
+env:
+  LEGO_VERSION: v5.5.2
+  # SHA-256 of lego_v5.5.2_linux_amd64.tar.gz as published by the go-acme/lego release API.
+  LEGO_SHA256: 2a35505089e7772c92e1e9ac144df91151ef2eca8568630db0ff91fca06d9bef
+  ACME_ZONE_NAME: acme.genesisco.io
+  PREVIEW_WILDCARD: "*.preview.genesisco.io"
+  AZURE_RESOURCE_GROUP: atoms-staging-rg
+  CONTAINER_ENV_NAME: atoms-staging-env
+  GATEWAY_APP_NAME: atoms-staging-preview-gateway
+  LETSENCRYPT_STAGING_URL: https://acme-staging-v02.api.letsencrypt.org/directory
+
+jobs:
+  plan:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    outputs:
+      mode: ${{ steps.mode.outputs.mode }}
+      renew: ${{ steps.plan.outputs.renew }}
+      certificate_name: ${{ steps.plan.outputs.certificate_name }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+      - name: Resolve the mode (scheduled runs are always real)
+        id: mode
+        env:
+          INPUT_MODE: ${{ inputs.mode }}
+        run: echo "mode=${INPUT_MODE:-renew}" >> "$GITHUB_OUTPUT"
+      - name: Decide from the certificate the public Preview Gateway serves
+        id: plan
+        env:
+          FORCE: ${{ inputs.force }}
+        run: |
+          args=()
+          if [ "$FORCE" = "true" ]; then args+=(--force); fi
+          node scripts/plan-preview-cert-renewal.mjs "${args[@]}"
+
+  issue:
+    needs: plan
+    if: needs.plan.outputs.mode == 'rehearse' || needs.plan.outputs.renew == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    environment: preview-cert-renewal
+    permissions:
+      contents: read
+      id-token: write
+    env:
+      MODE: ${{ needs.plan.outputs.mode }}
+      CERT_NAME: ${{ needs.plan.outputs.certificate_name }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+
+      - name: Install the pinned lego ACME client
+        run: |
+          set -euo pipefail
+          curl -fsSL --retry 3 -o lego.tar.gz \
+            "https://github.com/go-acme/lego/releases/download/${LEGO_VERSION}/lego_${LEGO_VERSION}_linux_amd64.tar.gz"
+          echo "${LEGO_SHA256}  lego.tar.gz" | sha256sum --check --strict -
+          mkdir -p "$RUNNER_TEMP/bin"
+          tar -xzf lego.tar.gz -C "$RUNNER_TEMP/bin" lego
+          rm lego.tar.gz
+          echo "$RUNNER_TEMP/bin" >> "$GITHUB_PATH"
+
+      - name: Sign in to Azure with the renewal identity (OIDC, no stored secret)
+        uses: azure/login@8216e11d8cd9b42fe925c852af8e76311ff067ac # v2
+        with:
+          client-id: ${{ secrets.AZURE_CLIENT_ID }}
+          tenant-id: ${{ secrets.AZURE_TENANT_ID }}
+          subscription-id: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
+
+      - name: Generate a one-time PFX password
+        run: |
+          set -euo pipefail
+          password="$(openssl rand -hex 24)"
+          echo "::add-mask::$password"
+          echo "PFX_PASSWORD=$password" >> "$GITHUB_ENV"
+
+      - name: Issue the certificate (DNS-01 through Azure DNS)
+        env:
+          AZURE_AUTH_METHOD: cli
+          AZURE_SUBSCRIPTION_ID: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
+          AZURE_ZONE_NAME: ${{ env.ACME_ZONE_NAME }}
+          AZURE_PROPAGATION_TIMEOUT: "300"
+          LEGO_EMAIL: ${{ secrets.ACME_EMAIL }}
+          LEGO_ACCEPT_TOS: "true"
+          LEGO_DNS: azuredns
+          LEGO_DOMAINS: ${{ env.PREVIEW_WILDCARD }}
+          LEGO_PFX: "true"
+          LEGO_PFX_PASSWORD: ${{ env.PFX_PASSWORD }}
+        run: |
+          set -euo pipefail
+          export LEGO_PATH="$RUNNER_TEMP/lego"
+          if [ "$MODE" = "rehearse" ]; then export LEGO_SERVER="$LETSENCRYPT_STAGING_URL"; fi
+          lego run
+          mapfile -t pfx < <(find "$LEGO_PATH" -name '*.pfx')
+          if [ "${#pfx[@]}" -ne 1 ]; then echo "expected exactly one .pfx, found ${#pfx[@]}"; exit 1; fi
+          echo "PFX_FILE=${pfx[0]}" >> "$GITHUB_ENV"
+
+      - name: Upload the certificate under a new name (never overwrites the one in service)
+        run: |
+          set -euo pipefail
+          upload_name="$CERT_NAME"
+          if [ "$MODE" = "rehearse" ]; then upload_name="${CERT_NAME}-rehearsal"; fi
+          echo "UPLOADED_NAME=$upload_name" >> "$GITHUB_ENV"
+          az containerapp env certificate upload \
+            --name "$CONTAINER_ENV_NAME" --resource-group "$AZURE_RESOURCE_GROUP" \
+            --certificate-file "$PFX_FILE" --certificate-name "$upload_name" \
+            --password "$PFX_PASSWORD" --only-show-errors --output none
+
+      - name: Remember the certificate currently bound, for rollback
+        if: env.MODE == 'renew'
+        run: |
+          set -euo pipefail
+          previous="$(az containerapp hostname list --name "$GATEWAY_APP_NAME" --resource-group "$AZURE_RESOURCE_GROUP" \
+            --output json | jq -r --arg host "$PREVIEW_WILDCARD" '.[] | select(.name == $host) | .certificateId // empty')"
+          if [ -z "$previous" ]; then echo "could not read the certificate currently bound to $PREVIEW_WILDCARD; not binding"; exit 1; fi
+          echo "PREVIOUS_CERT_NAME=${previous##*/}" >> "$GITHUB_ENV"
+
+      - name: Bind the new certificate to the Gateway wildcard hostname
+        if: env.MODE == 'renew'
+        run: |
+          set -euo pipefail
+          az containerapp hostname bind \
+            --name "$GATEWAY_APP_NAME" --resource-group "$AZURE_RESOURCE_GROUP" \
+            --environment "$CONTAINER_ENV_NAME" --hostname "$PREVIEW_WILDCARD" \
+            --certificate "$CERT_NAME" --validation-method CNAME --only-show-errors --output none
+
+      - name: Verify what the public Gateway serves, and roll back if it is wrong
+        if: env.MODE == 'renew'
+        run: |
+          set -uo pipefail
+          verified=false
+          for attempt in $(seq 1 15); do
+            if node scripts/check-preview-cert-expiry.mjs --min-days 80 \
+              && code="$(curl -sS --max-time 20 -o "$RUNNER_TEMP/body" -w '%{http_code}' "https://renewal-check-${attempt}.preview.genesisco.io/")" \
+              && [ "$code" = "401" ] && grep -q 'Invalid preview URL' "$RUNNER_TEMP/body"; then
+              verified=true
+              break
+            fi
+            echo "attempt ${attempt}/15 not yet serving the new certificate; waiting 20 seconds"
+            sleep 20
+          done
+          if [ "$verified" != "true" ]; then
+            echo "::error::The new certificate was not served correctly. Rebinding the previous one ($PREVIOUS_CERT_NAME)."
+            az containerapp hostname bind \
+              --name "$GATEWAY_APP_NAME" --resource-group "$AZURE_RESOURCE_GROUP" \
+              --environment "$CONTAINER_ENV_NAME" --hostname "$PREVIEW_WILDCARD" \
+              --certificate "$PREVIOUS_CERT_NAME" --validation-method CNAME --only-show-errors --output none
+            exit 1
+          fi
+
+      - name: Remove key material and the rehearsal certificate
+        if: always()
+        run: |
+          rm -rf "$RUNNER_TEMP/lego" "$RUNNER_TEMP/body"
+          if [ "$MODE" = "rehearse" ] && [ -n "${UPLOADED_NAME:-}" ]; then
+            az containerapp env certificate delete \
+              --name "$CONTAINER_ENV_NAME" --resource-group "$AZURE_RESOURCE_GROUP" \
+              --certificate "$UPLOADED_NAME" --yes --only-show-errors --output none \
+              || echo "::warning::Could not delete the rehearsal certificate $UPLOADED_NAME; delete it by hand."
+          fi

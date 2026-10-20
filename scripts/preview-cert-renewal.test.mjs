@@ -88,63 +88,172 @@ test("run writes the decision to the output file and exits 0, or 2 when the chec
   }
 });
 
+
 // The workflow cannot run in CI without a real Azure subscription and Let's Encrypt, so these
-// pin the properties that make a bad edit dangerous. They do not prove the workflow works.
-const workflow = readFileSync(new URL("../.github/workflows/preview-cert-renew.yml", import.meta.url), "utf8");
-const bicep = readFileSync(new URL("../infra/azure/staging/preview-acme-dns.bicep", import.meta.url), "utf8");
+// pin the properties that make a bad edit dangerous. They do not prove the workflow works; the
+// rehearsal does. Each property is checked inside the step it belongs to, with comments removed,
+// so a phrase in a comment or in a different step cannot satisfy an assertion.
+// Checkouts on Windows may use CRLF; the patterns below assume LF.
+const withoutComments = (text, marker) =>
+  text
+    .replaceAll("\r\n", "\n")
+    .split("\n")
+    .filter((line) => !line.trimStart().startsWith(marker))
+    .join("\n");
+const workflow = withoutComments(
+  readFileSync(new URL("../.github/workflows/preview-cert-renew.yml", import.meta.url), "utf8"),
+  "#",
+);
+const bicep = withoutComments(
+  readFileSync(new URL("../infra/azure/staging/preview-acme-dns.bicep", import.meta.url), "utf8"),
+  "//",
+);
 
-test("the workflow installs lego only from a pinned version with a pinned checksum", () => {
-  assert.match(workflow, /LEGO_VERSION: v5\.\d+\.\d+/);
-  assert.match(workflow, /LEGO_SHA256: [0-9a-f]{64}/);
-  assert.match(workflow, /sha256sum --check --strict/);
-  assert.match(workflow, /azure\/login@[0-9a-f]{40} # v2/);
+const [triggers, jobsText] = workflow.split(/^jobs:\n/mu);
+const jobBlocks = Object.fromEntries(
+  jobsText
+    .split(/^ {2}(?=[a-z]+:\n)/mu)
+    .filter((block) => block.trim().length > 0)
+    .map((block) => [block.slice(0, block.indexOf(":")), block]),
+);
+const stepsOf = (job) => jobBlocks[job].split(/^ {6}- (?=name:|uses:)/mu).slice(1);
+const titleOf = (stepText) => stepText.match(/name: (.*)/u)?.[1] ?? "";
+function step(job, title) {
+  const found = stepsOf(job).filter((candidate) => candidate.includes(title));
+  assert.equal(found.length, 1, `expected exactly one step containing "${title}" in job ${job}`);
+  return found[0];
+}
+
+test("lego is installed only from a pinned version, with its checksum verified before extraction", () => {
+  assert.match(triggers, /LEGO_VERSION: v5\.\d+\.\d+/u);
+  assert.match(triggers, /LEGO_SHA256: [0-9a-f]{64}/u);
+  const install = step("issue", "Install the pinned lego ACME client");
+  const verified = install.indexOf("sha256sum --check --strict");
+  assert.ok(verified > 0 && verified < install.indexOf("tar -xzf"), "the checksum is checked before the archive is extracted");
+  assert.doesNotMatch(install, /\|\|\s*(true|:)/u, "a failed checksum must fail the step");
 });
 
-test("only the issue job can request an OIDC token, and the default is read-only", () => {
-  const top = workflow.split(/^jobs:/m)[0];
-  assert.match(top, /^permissions:\n {2}contents: read\n/m);
-  assert.doesNotMatch(top, /id-token/);
-  assert.equal(workflow.match(/id-token: write/g)?.length, 1);
-  assert.match(workflow, /environment: preview-cert-renewal/);
+test("every action is pinned to a full commit SHA, and checkout does not persist credentials", () => {
+  const uses = [...workflow.matchAll(/uses:\s*(\S+)@(\S+)/gu)];
+  assert.ok(uses.length >= 5, "checkout, setup-node and azure/login are all used");
+  for (const [, action, reference] of uses) {
+    assert.match(reference, /^[0-9a-f]{40}$/u, `${action} must be pinned to a full commit SHA`);
+  }
+  for (const job of ["plan", "issue"]) {
+    assert.match(step(job, "actions/checkout"), /persist-credentials: false/u);
+  }
 });
 
-test("manual runs default to a rehearsal against Let's Encrypt staging that binds nothing", () => {
-  assert.match(workflow, /mode:[\s\S]*?default: rehearse/);
-  assert.match(workflow, /acme-staging-v02\.api\.letsencrypt\.org/);
-  assert.match(workflow, /if: env\.MODE == 'renew'\n\s+run: \|\n\s+set -euo pipefail\n\s+az containerapp hostname bind/);
-  const rehearsalUpload = workflow.indexOf('upload_name="${CERT_NAME}-rehearsal"');
-  assert.ok(rehearsalUpload > 0, "a rehearsal must upload under a throwaway name");
-  assert.match(workflow, /az containerapp env certificate delete/);
+test("only the issue job holds the OIDC permission and the environment, and nothing triggers on a pull request", () => {
+  assert.match(triggers, /^permissions:\n {2}contents: read\n/mu);
+  assert.doesNotMatch(triggers, /id-token|pull_request/u);
+  assert.doesNotMatch(jobBlocks.plan, /id-token|environment:/u);
+  assert.match(jobBlocks.issue, /id-token: write/u);
+  assert.match(jobBlocks.issue, /environment: preview-cert-renewal/u);
 });
 
-test("a renewal uploads under a new name, binds only after the upload, and can roll back", () => {
-  const upload = workflow.indexOf("az containerapp env certificate upload");
-  const remember = workflow.indexOf("PREVIOUS_CERT_NAME=");
-  const bind = workflow.indexOf("--certificate \"$CERT_NAME\" --validation-method CNAME");
-  const rollback = workflow.indexOf("--certificate \"$PREVIOUS_CERT_NAME\" --validation-method CNAME");
-  assert.ok(upload > 0 && remember > upload && bind > remember && rollback > bind);
-  assert.doesNotMatch(workflow, /certificate delete[^\n]*PREVIOUS_CERT_NAME/);
-  assert.match(workflow, /check-preview-cert-expiry\.mjs --min-days 80/);
-  assert.match(workflow, /Invalid preview URL/);
+test("manual runs default to a rehearsal on the Let's Encrypt staging CA, and only renew mode binds", () => {
+  assert.match(triggers, /mode:\n[\s\S]*?default: rehearse\n[\s\S]*?force:/u);
+  assert.match(triggers, /LETSENCRYPT_STAGING_URL: https:\/\/acme-staging-v02\.api\.letsencrypt\.org\//u);
+  assert.match(
+    step("issue", "Issue the certificate"),
+    /if \[ "\$MODE" = "rehearse" \]; then export LEGO_SERVER="\$LETSENCRYPT_STAGING_URL"; fi/u,
+  );
+  const binders = stepsOf("issue").filter((candidate) => candidate.includes("hostname bind"));
+  assert.equal(binders.length, 2, "one bind and one rollback bind");
+  for (const binder of binders) assert.match(binder, /\n {8}if: .*env\.MODE == 'renew'/u, "every bind is renew-only");
+  assert.match(
+    step("issue", "Upload the certificate under a new name"),
+    /if \[ "\$MODE" = "rehearse" \]; then upload_name="\$\{upload_name\}-rehearsal"; fi/u,
+  );
 });
 
-test("the PFX password is masked, kept out of argv for lego, and key material is removed", () => {
-  assert.match(workflow, /::add-mask::\$password/);
-  assert.match(workflow, /LEGO_PFX_PASSWORD: \$\{\{ env\.PFX_PASSWORD \}\}/);
-  assert.doesNotMatch(workflow, /lego run [^\n]*--pfx/);
-  assert.match(workflow, /if: always\(\)\n\s+run: \|\n\s+rm -rf "\$RUNNER_TEMP\/lego"/);
-  assert.doesNotMatch(workflow, /\becho\b[^\n]*\$\{?PFX_PASSWORD/);
+test("an upload cannot reuse a name an earlier attempt may have bound, and the steps run in a fixed order", () => {
+  const upload = step("issue", "Upload the certificate under a new name");
+  assert.match(upload, /\$\{CERT_NAME\}-a\$\{GITHUB_RUN_ATTEMPT\}/u);
+  assert.match(upload, /already exists; refusing to overwrite/u);
+  assert.match(upload, /NEW_CERT_THUMBPRINT=/u);
+
+  const bind = step("issue", "Bind the new certificate");
+  assert.match(bind, /id: bind/u);
+  assert.match(bind, /--certificate "\$UPLOADED_NAME"/u);
+  assert.doesNotMatch(bind, /\$CERT_NAME|PREVIOUS_CERT_NAME/u);
+
+  const remember = step("issue", "Remember the certificate currently bound");
+  assert.match(remember, /if \[ -z "\$previous" \]; then .*exit 1; fi/u, "an unreadable current certificate aborts before binding");
+
+  const titles = stepsOf("issue").map(titleOf);
+  const order = [
+    "Upload the certificate",
+    "Remember the certificate currently bound",
+    "Bind the new certificate",
+    "Verify the public Gateway",
+    "Roll back to the previous certificate",
+  ].map((prefix) => titles.findIndex((title) => title.startsWith(prefix)));
+  assert.ok(order.every((index) => index >= 0), "all five steps exist");
+  assert.deepEqual([...order].sort((a, b) => a - b), order, "they run in this order");
 });
 
-test("renewals never overlap, and no Namecheap credential is involved", () => {
-  assert.match(workflow, /concurrency:\n\s+group: preview-cert-renewal\n\s+cancel-in-progress: false/);
-  assert.doesNotMatch(workflow, /NAMECHEAP_[A-Z_]+/);
+test("verification is tied to the certificate just uploaded and cannot change what is bound", () => {
+  const verify = step("issue", "Verify the public Gateway serves exactly");
+  assert.match(verify, /id: verify/u);
+  assert.match(verify, /--expect-fingerprint "\$NEW_CERT_THUMBPRINT"/u);
+  assert.match(verify, /Invalid preview URL/u);
+  assert.doesNotMatch(verify, /hostname bind|--min-days 80/u);
 });
 
-test("the DNS zone is delegated and scoped: one zone, one role, no subscription-wide grant", () => {
-  assert.match(bicep, /Microsoft\.Network\/dnsZones@/);
-  assert.match(bicep, /dnsZoneContributorRoleId = 'befefa01-2a29-4197-83a8-272ff33ce314'/);
-  assert.match(bicep, /scope: acmeZone/);
-  assert.doesNotMatch(bicep, /targetScope = '(subscription|managementGroup|tenant)'/);
-  assert.match(bicep, /@allowed\(\[\n {2}'acme\.genesisco\.io'\n\]\)/);
+test("rollback is its own always-run step that follows a failed, timed-out or cancelled bind", () => {
+  const rollback = step("issue", "Roll back to the previous certificate");
+  const condition = rollback.match(/\n {8}if: (.*)\n/u)?.[1] ?? "";
+  for (const part of ["always()", "env.MODE == 'renew'", "steps.bind.conclusion != 'skipped'", "steps.verify.outcome != 'success'"]) {
+    assert.ok(condition.includes(part), `the rollback condition must include ${part}`);
+  }
+  assert.match(rollback, /--certificate "\$PREVIOUS_CERT_NAME"/u);
+  assert.match(rollback, /if \[ -z "\$\{PREVIOUS_CERT_NAME:-\}" \]/u);
+});
+
+test("the only certificate deletion is the rehearsal cleanup, and it cannot target the certificate in service", () => {
+  const deletions = stepsOf("issue").filter((candidate) => candidate.includes("certificate delete"));
+  assert.equal(deletions.length, 1);
+  const [cleanup] = deletions;
+  assert.match(cleanup, /\n {8}if: always\(\)/u);
+  assert.match(cleanup, /\[ "\$MODE" = "rehearse" \] && \[ -n "\$\{UPLOADED_NAME:-\}" \]/u);
+  assert.match(cleanup, /--certificate "\$UPLOADED_NAME"/u);
+  assert.doesNotMatch(cleanup, /PREVIOUS_CERT_NAME|\$CERT_NAME\b/u);
+  assert.match(cleanup, /rm -rf "\$RUNNER_TEMP\/lego"/u, "key material is removed whatever happened before");
+});
+
+test("the PFX password is masked and handled only in the three steps that need it", () => {
+  assert.match(step("issue", "Generate a one-time PFX password"), /::add-mask::\$password/u);
+  assert.match(step("issue", "Issue the certificate"), /LEGO_PFX_PASSWORD: \$\{\{ env\.PFX_PASSWORD \}\}/u);
+  const handlers = stepsOf("issue").filter((candidate) => /PFX_PASSWORD/u.test(candidate)).map(titleOf);
+  assert.deepEqual(handlers, [
+    "Generate a one-time PFX password",
+    "Issue the certificate (DNS-01 through Azure DNS)",
+    "Upload the certificate under a new name (never overwrites the one in service)",
+  ]);
+  assert.doesNotMatch(workflow, /set -x|xtrace/u);
+  assert.doesNotMatch(workflow, /\b(echo|printf)\b[^\n]*\$\{?PFX_PASSWORD/u);
+  assert.doesNotMatch(workflow, /lego run [^\n]*--pfx/u);
+});
+
+test("renewals never overlap on a ref, and no Namecheap credential is involved", () => {
+  assert.match(
+    triggers,
+    /concurrency:\n {2}group: preview-cert-renewal-\$\{\{ github\.ref \}\}\n {2}cancel-in-progress: false/u,
+  );
+  assert.doesNotMatch(workflow, /NAMECHEAP_[A-Z_]+/u);
+});
+
+test("the DNS zone is delegated and scoped: one zone, one role assignment, on that zone only", () => {
+  assert.match(bicep, /^targetScope = 'resourceGroup'/mu);
+  assert.equal(bicep.match(/Microsoft\.Authorization\/roleAssignments@/gu)?.length, 1);
+  assert.equal(bicep.match(/Microsoft\.Network\/dnsZones@/gu)?.length, 1);
+  assert.match(bicep, /var dnsZoneContributorRoleId = 'befefa01-2a29-4197-83a8-272ff33ce314'/u);
+  assert.match(bicep, /scope: acmeZone/u);
+  assert.match(
+    bicep,
+    /roleDefinitionId: subscriptionResourceId\('Microsoft\.Authorization\/roleDefinitions', dnsZoneContributorRoleId\)/u,
+  );
+  assert.match(bicep, /@allowed\(\[\n {2}'acme\.genesisco\.io'\n\]\)/u);
 });

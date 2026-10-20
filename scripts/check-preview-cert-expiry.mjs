@@ -1,14 +1,20 @@
 // Read-only check of the certificate the public Preview Gateway serves (issue #93).
 //
-//   node scripts/check-preview-cert-expiry.mjs [--host <name>] [--min-days 30]
+//   node scripts/check-preview-cert-expiry.mjs [--host <name>] [--min-days 30] [--expect-fingerprint <sha1>]
 //
-// The wildcard certificate for *.preview.genesisco.io is a Let's Encrypt certificate
-// with no automatic renewal, so something has to notice before it expires. This opens
-// one TLS connection to a name under the wildcard and reads the certificate the server
-// presents. It sends no request and needs no credentials.
+// The wildcard certificate for *.preview.genesisco.io is a Let's Encrypt certificate,
+// so something has to notice before it expires. This opens one TLS connection to a
+// name under the wildcard and reads the certificate the server presents. It sends no
+// request and needs no credentials.
 //
-// Exit codes: 0 valid for at least --min-days, 1 too close to expiry / expired /
-// not trusted for the host, 2 the check itself could not run.
+// --expect-fingerprint (SHA-1 hex, colons optional) makes the check pass only when the
+// server presents that exact certificate. The renewal workflow uses it to prove the
+// certificate it just bound is the one being served, which a days-left check cannot:
+// a bind that never took effect still leaves a valid certificate in place.
+//
+// Exit codes: 0 valid for at least --min-days (and the expected certificate, if one was
+// given), 1 too close to expiry / expired / not trusted for the host / not the expected
+// certificate, 2 the check itself could not run.
 
 import { connect } from "node:tls";
 import { resolve } from "node:path";
@@ -18,13 +24,22 @@ export const DEFAULT_HOST = "cert-expiry-check.preview.genesisco.io";
 export const DEFAULT_MIN_DAYS = 30;
 const DAY_MS = 86_400_000;
 
+/** SHA-1 fingerprints are compared as bare uppercase hex, whatever separators they arrive with. */
+export function normalizeFingerprint(value) {
+  return String(value ?? "").replaceAll(":", "").trim().toUpperCase();
+}
+
 export function parseArguments(argv) {
   const options = { host: DEFAULT_HOST, minDays: DEFAULT_MIN_DAYS, timeoutMs: 15_000 };
   for (let index = 0; index < argv.length; index += 1) {
     const argument = argv[index];
     if (argument === "--host") options.host = argv[(index += 1)];
     else if (argument === "--min-days") options.minDays = Number(argv[(index += 1)]);
+    else if (argument === "--expect-fingerprint") options.expectFingerprint = normalizeFingerprint(argv[(index += 1)]);
     else throw new RangeError(`unknown argument: ${argument}`);
+  }
+  if (options.expectFingerprint !== undefined && !/^[0-9A-F]{40}$/.test(options.expectFingerprint)) {
+    throw new RangeError("--expect-fingerprint must be a SHA-1 fingerprint: 40 hex digits");
   }
   if (
     typeof options.host !== "string" ||
@@ -46,7 +61,7 @@ export function daysUntil(validTo, now) {
 }
 
 /** Decides the outcome from what the server presented. Pure, so it can be tested. */
-export function evaluateCertificate(certificate, { minDays, now = new Date() }) {
+export function evaluateCertificate(certificate, { minDays, now = new Date(), expectFingerprint }) {
   const days = daysUntil(certificate.validTo, now);
   const lines = [
     `Subject: ${certificate.subject ?? "unknown"}`,
@@ -57,6 +72,16 @@ export function evaluateCertificate(certificate, { minDays, now = new Date() }) 
   if (certificate.authorizationError) {
     lines.push(`NOT TRUSTED for this host: ${certificate.authorizationError}`);
     code = 1;
+  }
+  if (expectFingerprint !== undefined) {
+    // An absent fingerprint must never match, so a server that reports none cannot pass.
+    const served = normalizeFingerprint(certificate.fingerprint);
+    if (served.length === 0 || served !== normalizeFingerprint(expectFingerprint)) {
+      lines.push(`NOT THE EXPECTED CERTIFICATE: serving ${served.length === 0 ? "an unknown fingerprint" : served}, expected ${normalizeFingerprint(expectFingerprint)}.`);
+      code = 1;
+    } else {
+      lines.push("Fingerprint matches the expected certificate.");
+    }
   }
   if (days < 0) {
     lines.push("EXPIRED: public preview URLs fail TLS right now.");
@@ -99,6 +124,7 @@ export function fetchCertificate(host, timeoutMs, connectImpl = connect) {
         subject: peer.subject?.CN,
         issuer: peer.issuer?.O ?? peer.issuer?.CN,
         validTo: peer.valid_to,
+        fingerprint: peer.fingerprint,
         authorizationError,
       });
     });
@@ -126,7 +152,11 @@ export async function run(
   write(`Host:    ${options.host}`);
   let result;
   try {
-    result = evaluateCertificate(certificate, { minDays: options.minDays, now: now() });
+    result = evaluateCertificate(certificate, {
+      minDays: options.minDays,
+      now: now(),
+      expectFingerprint: options.expectFingerprint,
+    });
   } catch (error) {
     write(`could not evaluate the certificate: ${error.message}`);
     return 2;

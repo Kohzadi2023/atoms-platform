@@ -18,7 +18,9 @@ const actionsBlock = bicep.match(/actions: \[\n([\s\S]*?)\n\s*\]\n\s*notActions/
 const actions = [...actionsBlock.matchAll(/'([^']+)'/gu)].map((match) => match[1]);
 
 // Every name here appears literally in Microsoft's "Azure permissions for Compute" reference
-// (Microsoft.App) or in the DNS Zone Contributor built-in role (resourceGroups/read).
+// (Microsoft.App) or in the DNS Zone Contributor built-in role (resourceGroups/read), except
+// managedEnvironments/checkNameAvailability/action: that one was named by Azure's own
+// AuthorizationFailed error when the renewal ran without Contributor (2026-10-20).
 const VERIFIED_ACTIONS = [
   "Microsoft.App/containerApps/listCustomHostNameAnalysis/action",
   "Microsoft.App/containerApps/read",
@@ -26,6 +28,7 @@ const VERIFIED_ACTIONS = [
   "Microsoft.App/managedEnvironments/certificates/delete",
   "Microsoft.App/managedEnvironments/certificates/read",
   "Microsoft.App/managedEnvironments/certificates/write",
+  "Microsoft.App/managedEnvironments/checkNameAvailability/action",
   "Microsoft.App/managedEnvironments/join/action",
   "Microsoft.App/managedEnvironments/read",
   "Microsoft.Resources/subscriptions/resourceGroups/read",
@@ -57,6 +60,7 @@ test("the role is a custom role assignable only in the staging resource group", 
 test("the role covers every Azure call the renewal workflow visibly makes", () => {
   const calls = [
     [/containerapp env certificate upload/u, "Microsoft.App/managedEnvironments/certificates/write"],
+    [/containerapp env certificate upload/u, "Microsoft.App/managedEnvironments/checkNameAvailability/action"],
     [/containerapp env certificate delete/u, "Microsoft.App/managedEnvironments/certificates/delete"],
     [/containerapp env certificate list/u, "Microsoft.App/managedEnvironments/certificates/read"],
     [/containerapp hostname list/u, "Microsoft.App/containerApps/read"],

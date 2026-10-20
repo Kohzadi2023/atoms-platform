@@ -308,6 +308,34 @@ node scripts/check-preview-cert-expiry.mjs
 
 **Limits.** Let's Encrypt allows five failed validations per hour per host and five identical certificates a week, so do not run `mode=renew` repeatedly while debugging; use `rehearse`. Old certificates accumulate in the environment: after a renewal has served correctly for a while, list them with `az containerapp env certificate list --name atoms-staging-env --resource-group atoms-staging-rg -o table` and delete the ones no longer bound. If automatic renewal cannot be made to work, the manual procedure below is still valid.
 
+### Narrowing the renewal identity's access (least privilege)
+
+The setup above gives the renewal identity `Contributor` on `atoms-staging-rg` because the exact permissions `az containerapp hostname bind` needs were not known. That is far more than renewal uses (it covers reading Container App secrets, database credentials and the staging VM). `infra/azure/staging/preview-cert-renewal-role.bicep` defines a custom role with only the nine actions the workflow's `az` commands call, no wildcards and no `listSecrets` (the built-in Container Apps roles include it through `containerApps/*/action`). `scripts/preview-cert-renewal-role.test.mjs` pins that list and checks it against the workflow's `az` calls. **Tests cannot prove the role is enough; only a real bind without `Contributor` can.** Roll it out so a mistake costs nothing: a missing permission makes the run fail before or at the bind, the previous certificate stays in service, and `Contributor` can be given back in one command.
+
+1. **Create the role definition** (subscription-scope deployment; it only defines the role):
+
+   ```bash
+   az deployment sub create --subscription <subscription id> --location canadacentral --template-file infra/azure/staging/preview-cert-renewal-role.bicep --query properties.outputs -o json
+   ```
+
+2. **Assign it next to `Contributor`**, plus `Managed Identity Operator` on the Gateway's user-assigned identity (updating an app that carries one requires `assign/action` on that identity):
+
+   ```bash
+   az role assignment create --subscription <subscription id> --assignee-object-id <service principal object id> --assignee-principal-type ServicePrincipal --role "Atoms preview certificate renewal" --scope /subscriptions/<subscription id>/resourceGroups/atoms-staging-rg
+   az role assignment create --subscription <subscription id> --assignee-object-id <service principal object id> --assignee-principal-type ServicePrincipal --role "Managed Identity Operator" --scope /subscriptions/<subscription id>/resourceGroups/atoms-staging-rg/providers/Microsoft.ManagedIdentity/userAssignedIdentities/atoms-staging-runtime-mi
+   ```
+
+3. **Wait about five minutes** for the assignments to propagate, then **remove `Contributor`**:
+
+   ```bash
+   az role assignment delete --subscription <subscription id> --assignee <service principal object id> --role Contributor --scope /subscriptions/<subscription id>/resourceGroups/atoms-staging-rg
+   ```
+
+4. **Prove it from `main`:** run the workflow with `mode=rehearse`, then once with `mode=renew` and `force` in a quiet window. A `renew` run exercises the bind, which is what the role has never been tried against.
+5. **If a run fails with an authorization error**, it names the missing action. Give `Contributor` back at once (step 2's command with `--role Contributor`), add exactly that action to the Bicep, redeploy the role definition and repeat from step 3. Do not add wildcards.
+
+The `DNS Zone Contributor` role on the `acme.genesisco.io` zone is separate and stays as it is. A zone delete lock was not added: whether it would also stop the ACME client from removing its own TXT records has not been checked.
+
 ### Manual renewal (fallback)
 
 **Renew at the latest two weeks before expiry.** Everything below runs on an operator's machine; none of it is automated, and none of it was exercised by the change that added this section. The last issuance used the `acme` Python library because `certbot` refused to run without Windows administrator rights, so the `certbot` commands below are the standard equivalent, not a replay of what was done. Check flags with `--help` before running.

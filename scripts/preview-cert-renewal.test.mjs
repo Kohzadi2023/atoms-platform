@@ -237,6 +237,53 @@ test("the PFX password is masked and handled only in the three steps that need i
   assert.doesNotMatch(workflow, /lego run [^\n]*--pfx/u);
 });
 
+test("an existing certificate name is accepted only in renew mode and only in the form this workflow creates", () => {
+  const validate = step("plan", "Validate the optional existing certificate name");
+  assert.match(validate, /\[ "\$INPUT_MODE" != "renew" \]/u, "it requires renew mode");
+  const pattern = validate.match(/=~ (\^\S+\$) \]\]/u)?.[1];
+  assert.ok(pattern, "the name pattern could be read from the step");
+  const accepted = new RegExp(pattern, "u");
+  for (const name of [
+    "genesisco-preview-wildcard-le",
+    "genesisco-preview-wildcard-le-20261020-1007",
+    "genesisco-preview-wildcard-le-20261020-1815-a1",
+  ]) assert.ok(accepted.test(name), `${name} should be accepted`);
+  for (const name of [
+    "genesisco-preview-wildcard-le-20261020-1815-a1-rehearsal",
+    "genesisco-preview-wildcard-le-2026102-1815",
+    "genesisco-preview-wildcard-le-20261020-1815-a",
+    "genesisco-preview-wildcard-le; echo pwned",
+    "genesisco-preview-wildcard-le\nother",
+    "mc-atoms-staging--www-genesisco-io-5985",
+    "",
+  ]) assert.ok(name === "" || !accepted.test(name), `${JSON.stringify(name)} must be rejected`);
+  const decide = step("plan", "Decide from the certificate the public Preview Gateway serves");
+  assert.match(decide, /\[ -n "\$EXISTING" \]/u, "binding a named certificate never waits for the renewal window");
+});
+
+test("with an existing certificate nothing is issued or uploaded, and the same verification still applies", () => {
+  for (const title of [
+    "Install the pinned lego ACME client",
+    "Generate a one-time PFX password",
+    "Issue the certificate",
+    "Upload the certificate under a new name",
+  ]) {
+    assert.match(step("issue", title), /\n {8}if: env\.EXISTING_CERT == ''/u, `${title} is skipped when an existing certificate is named`);
+  }
+  const existing = step("issue", "Use a certificate already uploaded to the environment");
+  assert.match(existing, /\n {8}if: env\.EXISTING_CERT != ''/u);
+  assert.match(existing, /\^\[0-9A-Fa-f\]\{40\}\$/u, "the thumbprint must be read from Azure or the step fails");
+  assert.match(existing, /UPLOADED_NAME=\$EXISTING_CERT/u);
+  assert.match(existing, /NEW_CERT_THUMBPRINT=\$thumbprint/u);
+  assert.doesNotMatch(existing, /certificate upload|certificate delete|hostname bind|lego/u, "it only looks the certificate up");
+
+  const titles = stepsOf("issue").map(titleOf);
+  const upload = titles.findIndex((title) => title.startsWith("Upload the certificate"));
+  const use = titles.findIndex((title) => title.startsWith("Use a certificate already uploaded"));
+  const remember = titles.findIndex((title) => title.startsWith("Remember the certificate currently bound"));
+  assert.ok(upload >= 0 && upload < use && use < remember, "lookup follows the upload step and precedes the rollback bookkeeping");
+});
+
 test("renewals never overlap on a ref, and no Namecheap credential is involved", () => {
   assert.match(
     triggers,

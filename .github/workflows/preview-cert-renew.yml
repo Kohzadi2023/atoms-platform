@@ -30,6 +30,10 @@ on:
         description: With mode=renew, renew even when the certificate is outside the renewal window
         type: boolean
         default: false
+      existing_certificate:
+        description: With mode=renew, bind a certificate already uploaded to the environment (by name) instead of issuing a new one. Spends no Let's Encrypt quota; also the way to bind a previous certificate back by hand.
+        type: string
+        default: ""
 
 permissions:
   contents: read
@@ -60,6 +64,7 @@ jobs:
       mode: ${{ steps.mode.outputs.mode }}
       renew: ${{ steps.plan.outputs.renew }}
       certificate_name: ${{ steps.plan.outputs.certificate_name }}
+      existing_certificate: ${{ steps.existing.outputs.name }}
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
         with:
@@ -72,13 +77,30 @@ jobs:
         env:
           INPUT_MODE: ${{ inputs.mode }}
         run: echo "mode=${INPUT_MODE:-renew}" >> "$GITHUB_OUTPUT"
+      - name: Validate the optional existing certificate name
+        id: existing
+        env:
+          INPUT_MODE: ${{ inputs.mode }}
+          EXISTING: ${{ inputs.existing_certificate }}
+        run: |
+          set -euo pipefail
+          if [ -n "$EXISTING" ]; then
+            if [ "$INPUT_MODE" != "renew" ]; then echo "::error::existing_certificate needs mode=renew."; exit 1; fi
+            # Only names this workflow creates (or the original certificate), never a free-form value.
+            if ! [[ "$EXISTING" =~ ^genesisco-preview-wildcard-le(-[0-9]{8}-[0-9]{4}(-a[0-9]+)?)?$ ]]; then
+              echo "::error::existing_certificate is not a certificate name this workflow creates."; exit 1
+            fi
+          fi
+          echo "name=$EXISTING" >> "$GITHUB_OUTPUT"
       - name: Decide from the certificate the public Preview Gateway serves
         id: plan
         env:
           FORCE: ${{ inputs.force }}
+          EXISTING: ${{ steps.existing.outputs.name }}
         run: |
           args=()
-          if [ "$FORCE" = "true" ]; then args+=(--force); fi
+          # Binding a named certificate is a deliberate act, so it never waits for the renewal window.
+          if [ "$FORCE" = "true" ] || [ -n "$EXISTING" ]; then args+=(--force); fi
           node scripts/plan-preview-cert-renewal.mjs "${args[@]}"
 
   issue:
@@ -93,6 +115,7 @@ jobs:
     env:
       MODE: ${{ needs.plan.outputs.mode }}
       CERT_NAME: ${{ needs.plan.outputs.certificate_name }}
+      EXISTING_CERT: ${{ needs.plan.outputs.existing_certificate }}
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
         with:
@@ -102,6 +125,7 @@ jobs:
           node-version: 24
 
       - name: Install the pinned lego ACME client
+        if: env.EXISTING_CERT == ''
         run: |
           set -euo pipefail
           curl -fsSL --retry 3 -o lego.tar.gz \
@@ -120,6 +144,7 @@ jobs:
           subscription-id: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
 
       - name: Generate a one-time PFX password
+        if: env.EXISTING_CERT == ''
         run: |
           set -euo pipefail
           password="$(openssl rand -hex 24)"
@@ -127,6 +152,7 @@ jobs:
           echo "PFX_PASSWORD=$password" >> "$GITHUB_ENV"
 
       - name: Issue the certificate (DNS-01 through Azure DNS)
+        if: env.EXISTING_CERT == ''
         env:
           AZURE_AUTH_METHOD: cli
           AZURE_SUBSCRIPTION_ID: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
@@ -148,6 +174,7 @@ jobs:
           echo "PFX_FILE=${pfx[0]}" >> "$GITHUB_ENV"
 
       - name: Upload the certificate under a new name (never overwrites the one in service)
+        if: env.EXISTING_CERT == ''
         run: |
           set -euo pipefail
           # The attempt number keeps "Re-run failed jobs" from reusing, and so overwriting, a
@@ -167,6 +194,18 @@ jobs:
           thumbprint="$(az containerapp env certificate list --name "$CONTAINER_ENV_NAME" --resource-group "$AZURE_RESOURCE_GROUP" \
             --query "[?name=='${upload_name}'].properties.thumbprint | [0]" --output tsv)"
           if ! [[ "$thumbprint" =~ ^[0-9A-Fa-f]{40}$ ]]; then echo "::error::Could not read the uploaded certificate's thumbprint."; exit 1; fi
+          echo "NEW_CERT_THUMBPRINT=$thumbprint" >> "$GITHUB_ENV"
+
+      - name: Use a certificate already uploaded to the environment
+        if: env.EXISTING_CERT != ''
+        run: |
+          set -euo pipefail
+          # No issuance, no upload: only a lookup of what Azure already holds under that name, so the
+          # same fingerprint check as a fresh renewal applies to the bind that follows.
+          thumbprint="$(az containerapp env certificate list --name "$CONTAINER_ENV_NAME" --resource-group "$AZURE_RESOURCE_GROUP" \
+            --query "[?name=='${EXISTING_CERT}'].properties.thumbprint | [0]" --output tsv)"
+          if ! [[ "$thumbprint" =~ ^[0-9A-Fa-f]{40}$ ]]; then echo "::error::No certificate named $EXISTING_CERT is uploaded to the environment."; exit 1; fi
+          echo "UPLOADED_NAME=$EXISTING_CERT" >> "$GITHUB_ENV"
           echo "NEW_CERT_THUMBPRINT=$thumbprint" >> "$GITHUB_ENV"
 
       - name: Remember the certificate currently bound, for rollback

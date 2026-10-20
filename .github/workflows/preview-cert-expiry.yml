@@ -1,8 +1,10 @@
 name: Preview certificate expiry
 
-# The *.preview.genesisco.io wildcard certificate has no automatic renewal (issue #93).
-# This opens one TLS connection to a name under it and fails when fewer than 30 days
-# remain, so the failure notification is the reminder. Read-only: no credentials.
+# The *.preview.genesisco.io wildcard certificate is renewed by preview-cert-renew.yml once its
+# one-time setup is done (issue #93). This is the independent alarm: it opens one TLS connection
+# to a name under the wildcard and fails when fewer than 30 days remain. With automatic renewal
+# starting at 45 days, a failure here means renewal has not worked, so act on it.
+# Read-only: no credentials.
 
 on:
   schedule:

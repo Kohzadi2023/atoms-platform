@@ -147,6 +147,44 @@ test("fetchCertificate rejects on a connection error and when no certificate is 
   await assert.rejects(none, /no certificate/);
 });
 
+const SERVED = "6D:6D:38:D4:B6:30:FF:3A:41:95:92:E9:76:5F:AD:1B:0A:F4:4D:94";
+const SERVED_BARE = "6D6D38D4B630FF3A419592E9765FAD1B0AF44D94";
+const OTHER_BARE = "DA38D0414158492C2E22ED98222A9893A01CFCA2";
+
+test("--expect-fingerprint passes only for the exact certificate served, whatever the separators or case", () => {
+  const served = certificate(89, { fingerprint: SERVED });
+  assert.equal(evaluateCertificate(served, { minDays: 14, now: NOW, expectFingerprint: SERVED_BARE.toLowerCase() }).code, 0);
+  assert.equal(evaluateCertificate(served, { minDays: 14, now: NOW, expectFingerprint: SERVED }).code, 0);
+
+  const other = evaluateCertificate(served, { minDays: 14, now: NOW, expectFingerprint: OTHER_BARE });
+  assert.equal(other.code, 1);
+  assert.ok(other.lines.some((line) => line.includes("NOT THE EXPECTED CERTIFICATE")));
+});
+
+test("a still-valid old certificate cannot pass for a new one, which a days-left check alone would allow", () => {
+  const old = certificate(89, { fingerprint: OTHER_BARE });
+  assert.equal(evaluateCertificate(old, { minDays: 14, now: NOW }).code, 0, "without an expectation any valid certificate passes");
+  assert.equal(evaluateCertificate(old, { minDays: 14, now: NOW, expectFingerprint: SERVED }).code, 1);
+});
+
+test("a server that reports no fingerprint can never satisfy an expectation", () => {
+  assert.equal(evaluateCertificate(certificate(89), { minDays: 14, now: NOW, expectFingerprint: SERVED }).code, 1);
+  assert.equal(evaluateCertificate(certificate(89, { fingerprint: "" }), { minDays: 14, now: NOW, expectFingerprint: SERVED }).code, 1);
+});
+
+test("--expect-fingerprint must be 40 hex digits, and run wires it through", async () => {
+  assert.equal(parseArguments(["--expect-fingerprint", SERVED]).expectFingerprint, SERVED_BARE);
+  assert.throws(() => parseArguments(["--expect-fingerprint", "abc"]), /40 hex/);
+  assert.throws(() => parseArguments(["--expect-fingerprint", "Z".repeat(40)]), /40 hex/);
+  assert.equal(parseArguments([]).expectFingerprint, undefined);
+
+  const write = () => undefined;
+  const fetchCertificateImpl = async () => certificate(89, { fingerprint: SERVED });
+  assert.equal(await run(["--min-days", "14", "--expect-fingerprint", SERVED], { fetchCertificateImpl, now: () => NOW, write }), 0);
+  assert.equal(await run(["--min-days", "14", "--expect-fingerprint", OTHER_BARE], { fetchCertificateImpl, now: () => NOW, write }), 1);
+  assert.equal(await run(["--expect-fingerprint", "nope"], { fetchCertificateImpl, now: () => NOW, write }), 2);
+});
+
 test("the script is read-only: it opens a connection and never writes to it or shells out", async () => {
   const source = await readFile(new URL("./check-preview-cert-expiry.mjs", import.meta.url), "utf8");
 

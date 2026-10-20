@@ -34,8 +34,11 @@ on:
 permissions:
   contents: read
 
+# One group per ref: a manual run from another branch must not displace a queued scheduled
+# renewal on main (GitHub keeps only one pending run per group). That branch cannot reach
+# the environment anyway, which is restricted to main.
 concurrency:
-  group: preview-cert-renewal
+  group: preview-cert-renewal-${{ github.ref }}
   cancel-in-progress: false
 
 env:
@@ -58,8 +61,10 @@ jobs:
       renew: ${{ steps.plan.outputs.renew }}
       certificate_name: ${{ steps.plan.outputs.certificate_name }}
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-node@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
         with:
           node-version: 24
       - name: Resolve the mode (scheduled runs are always real)
@@ -89,8 +94,10 @@ jobs:
       MODE: ${{ needs.plan.outputs.mode }}
       CERT_NAME: ${{ needs.plan.outputs.certificate_name }}
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-node@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
         with:
           node-version: 24
 
@@ -143,13 +150,24 @@ jobs:
       - name: Upload the certificate under a new name (never overwrites the one in service)
         run: |
           set -euo pipefail
-          upload_name="$CERT_NAME"
-          if [ "$MODE" = "rehearse" ]; then upload_name="${CERT_NAME}-rehearsal"; fi
+          # The attempt number keeps "Re-run failed jobs" from reusing, and so overwriting, a
+          # name an earlier attempt may already have bound.
+          upload_name="${CERT_NAME}-a${GITHUB_RUN_ATTEMPT}"
+          if [ "$MODE" = "rehearse" ]; then upload_name="${upload_name}-rehearsal"; fi
+          existing="$(az containerapp env certificate list --name "$CONTAINER_ENV_NAME" --resource-group "$AZURE_RESOURCE_GROUP" \
+            --query "[?name=='${upload_name}'] | length(@)" --output tsv)"
+          if [ "$existing" != "0" ]; then echo "::error::A certificate named $upload_name already exists; refusing to overwrite it."; exit 1; fi
           echo "UPLOADED_NAME=$upload_name" >> "$GITHUB_ENV"
           az containerapp env certificate upload \
             --name "$CONTAINER_ENV_NAME" --resource-group "$AZURE_RESOURCE_GROUP" \
             --certificate-file "$PFX_FILE" --certificate-name "$upload_name" \
             --password "$PFX_PASSWORD" --only-show-errors --output none
+          # Azure's own thumbprint of what was just uploaded. Verification later compares it with
+          # the certificate the public Gateway serves, so a bind that never took effect cannot pass.
+          thumbprint="$(az containerapp env certificate list --name "$CONTAINER_ENV_NAME" --resource-group "$AZURE_RESOURCE_GROUP" \
+            --query "[?name=='${upload_name}'].properties.thumbprint | [0]" --output tsv)"
+          if ! [[ "$thumbprint" =~ ^[0-9A-Fa-f]{40}$ ]]; then echo "::error::Could not read the uploaded certificate's thumbprint."; exit 1; fi
+          echo "NEW_CERT_THUMBPRINT=$thumbprint" >> "$GITHUB_ENV"
 
       - name: Remember the certificate currently bound, for rollback
         if: env.MODE == 'renew'
@@ -161,37 +179,46 @@ jobs:
           echo "PREVIOUS_CERT_NAME=${previous##*/}" >> "$GITHUB_ENV"
 
       - name: Bind the new certificate to the Gateway wildcard hostname
+        id: bind
         if: env.MODE == 'renew'
         run: |
           set -euo pipefail
           az containerapp hostname bind \
             --name "$GATEWAY_APP_NAME" --resource-group "$AZURE_RESOURCE_GROUP" \
             --environment "$CONTAINER_ENV_NAME" --hostname "$PREVIEW_WILDCARD" \
-            --certificate "$CERT_NAME" --validation-method CNAME --only-show-errors --output none
+            --certificate "$UPLOADED_NAME" --validation-method CNAME --only-show-errors --output none
 
-      - name: Verify what the public Gateway serves, and roll back if it is wrong
+      - name: Verify the public Gateway serves exactly the certificate just uploaded
+        id: verify
         if: env.MODE == 'renew'
         run: |
           set -uo pipefail
-          verified=false
           for attempt in $(seq 1 15); do
-            if node scripts/check-preview-cert-expiry.mjs --min-days 80 \
+            if node scripts/check-preview-cert-expiry.mjs --min-days 14 --expect-fingerprint "$NEW_CERT_THUMBPRINT" \
               && code="$(curl -sS --max-time 20 -o "$RUNNER_TEMP/body" -w '%{http_code}' "https://renewal-check-${attempt}.preview.genesisco.io/")" \
               && [ "$code" = "401" ] && grep -q 'Invalid preview URL' "$RUNNER_TEMP/body"; then
-              verified=true
-              break
+              echo "The new certificate is being served."
+              exit 0
             fi
             echo "attempt ${attempt}/15 not yet serving the new certificate; waiting 20 seconds"
             sleep 20
           done
-          if [ "$verified" != "true" ]; then
-            echo "::error::The new certificate was not served correctly. Rebinding the previous one ($PREVIOUS_CERT_NAME)."
-            az containerapp hostname bind \
-              --name "$GATEWAY_APP_NAME" --resource-group "$AZURE_RESOURCE_GROUP" \
-              --environment "$CONTAINER_ENV_NAME" --hostname "$PREVIEW_WILDCARD" \
-              --certificate "$PREVIOUS_CERT_NAME" --validation-method CNAME --only-show-errors --output none
-            exit 1
-          fi
+          echo "::error::The new certificate was not confirmed as the one being served."
+          exit 1
+
+      # A separate step with always(), so it also runs when the bind itself failed or timed out
+      # after Azure applied it, and when the job is cancelled mid-verification. It does not run
+      # when nothing was bound (an earlier step failed) or when verification succeeded.
+      - name: Roll back to the previous certificate when the new one is not confirmed
+        if: always() && env.MODE == 'renew' && steps.bind.conclusion != 'skipped' && steps.verify.outcome != 'success'
+        run: |
+          set -euo pipefail
+          if [ -z "${PREVIOUS_CERT_NAME:-}" ]; then echo "::error::No previous certificate was recorded; not rolling back."; exit 1; fi
+          echo "::error::Rebinding the previous certificate ($PREVIOUS_CERT_NAME)."
+          az containerapp hostname bind \
+            --name "$GATEWAY_APP_NAME" --resource-group "$AZURE_RESOURCE_GROUP" \
+            --environment "$CONTAINER_ENV_NAME" --hostname "$PREVIEW_WILDCARD" \
+            --certificate "$PREVIOUS_CERT_NAME" --validation-method CNAME --only-show-errors --output none
 
       - name: Remove key material and the rehearsal certificate
         if: always()

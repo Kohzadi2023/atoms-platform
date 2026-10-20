@@ -270,15 +270,17 @@ node scripts/check-preview-cert-expiry.mjs
 
 **How it works.** `genesisco.io` stays at Namecheap and nothing is moved. Two records are added there once. An `NS` record set for the host `acme` hands the child zone `acme.genesisco.io` to Azure DNS, and a `CNAME` at `_acme-challenge.preview` points to `preview.acme.genesisco.io`. Let's Encrypt follows the CNAME, so the workflow answers the challenge by writing a TXT record into the Azure zone with `lego` (pinned version and checksum), using an OIDC identity that can edit only that zone. It then uploads the PFX under a **new** name (`genesisco-preview-wildcard-le-<date>-<time>`), remembers the certificate currently bound, binds the new one, and checks what the public Gateway serves: at least 80 days of validity, and a made-up subdomain still answers `401 Invalid preview URL` over TLS. If the check fails it rebinds the previous certificate and the run fails. The old certificate is never deleted by the workflow.
 
-**One-time setup.** None of this has been run yet; the rehearsal in step 6 is how it gets proven.
+**One-time setup.** Done on 2026-10-20 and proven by a passing rehearsal (run 39374557184). Repeat it only to rebuild the identity.
 
 1. **Identity.** Create an app registration and service principal for the workflow, with a federated credential for the GitHub environment (no client secret exists):
 
    ```bash
    az ad app create --display-name atoms-preview-cert-renewal
    az ad sp create --id <appId>
-   az ad app federated-credential create --id <appId> --parameters '{"name":"preview-cert-renewal","issuer":"https://token.actions.githubusercontent.com","subject":"repo:Kohzadi2023/atoms-platform:environment:preview-cert-renewal","audiences":["api://AzureADTokenExchange"]}'
+   az ad app federated-credential create --id <appId> --parameters '{"name":"preview-cert-renewal-immutable","issuer":"https://token.actions.githubusercontent.com","subject":"repo:Kohzadi2023@149624604/atoms-platform@1319803321:environment:preview-cert-renewal","audiences":["api://AzureADTokenExchange"]}'
    ```
+
+   **The subject must use the repository's immutable form.** This repository has `use_immutable_subject: true`, so GitHub puts the numeric owner and repository IDs in the token (`repo:<owner>@<owner id>/<repo>@<repo id>:environment:...`, the same form `docs/azure-staging-host.md` uses for `phase3-staging`). The plain `repo:Kohzadi2023/atoms-platform:environment:...` form is rejected with `AADSTS700213`, which is how the first rehearsal failed. Read the current prefix with `gh api repos/Kohzadi2023/atoms-platform/actions/oidc/customization/sub` and rebuild the credential if the repository is ever renamed or transferred.
 
 2. **Zone and its role.** Deploy the zone into `atoms-staging-rg` (the workflow limits zone discovery to that resource group). `renewalPrincipalId` is the service principal's **object** ID, not the app ID. The output lists the four name servers:
 

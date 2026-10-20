@@ -308,6 +308,15 @@ node scripts/check-preview-cert-expiry.mjs
 
 **Limits.** Let's Encrypt allows five failed validations per hour per host and five identical certificates a week, so do not run `mode=renew` repeatedly while debugging; use `rehearse`. Old certificates accumulate in the environment: after a renewal has served correctly for a while, list them with `az containerapp env certificate list --name atoms-staging-env --resource-group atoms-staging-rg -o table` and delete the ones no longer bound. If automatic renewal cannot be made to work, the manual procedure below is still valid.
 
+### Binding a certificate that is already uploaded (no Let's Encrypt quota)
+
+`mode=renew` with the optional input `existing_certificate` skips issuance and upload and binds a certificate Azure already holds under that name. The sign-in, the rollback bookkeeping, the bind, the fingerprint verification and the always-run rollback are exactly those of a normal renewal; the only difference is that the thumbprint comes from the certificate already in the environment. It is for two things:
+
+- **Testing the bind permissions without spending a Let's Encrypt certificate.** Let's Encrypt allows five identical certificates a week, so each failed attempt at finding a missing permission used to cost one. Bind a certificate left over from an earlier attempt instead.
+- **Putting a previous certificate back by hand**, which is the manual rollback: name the certificate that was bound before (`az containerapp env certificate list` shows the names).
+
+The name is checked before anything runs: it must be `genesisco-preview-wildcard-le` or `genesisco-preview-wildcard-le-<date>-<time>` with an optional `-a<attempt>`, and nothing else (a `-rehearsal` name, a free-form value or another certificate in the environment is refused). The input needs `mode=renew`, and naming a certificate counts as deliberate, so it does not wait for the renewal window.
+
 ### Narrowing the renewal identity's access (least privilege)
 
 The setup above gives the renewal identity `Contributor` on `atoms-staging-rg` because the exact permissions `az containerapp hostname bind` needs were not known. That is far more than renewal uses (it covers reading Container App secrets, database credentials and the staging VM). `infra/azure/staging/preview-cert-renewal-role.bicep` defines a custom role with only the ten actions the workflow's `az` commands call, no wildcards and no `listSecrets` (the built-in Container Apps roles include it through `containerApps/*/action`). `scripts/preview-cert-renewal-role.test.mjs` pins that list and checks it against the workflow's `az` calls. **Tests cannot prove the role is enough; only a real bind without `Contributor` can.** Roll it out so a mistake costs nothing: a missing permission makes the run fail before or at the bind, the previous certificate stays in service, and `Contributor` can be given back in one command.

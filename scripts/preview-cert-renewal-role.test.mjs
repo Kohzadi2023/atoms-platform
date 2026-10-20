@@ -19,8 +19,9 @@ const actions = [...actionsBlock.matchAll(/'([^']+)'/gu)].map((match) => match[1
 
 // Every name here appears literally in Microsoft's "Azure permissions for Compute" reference
 // (Microsoft.App) or in the DNS Zone Contributor built-in role (resourceGroups/read), except
-// managedEnvironments/checkNameAvailability/action: that one was named by Azure's own
-// AuthorizationFailed error when the renewal ran without Contributor (2026-10-20).
+// managedEnvironments/checkNameAvailability/action and managedEnvironments/managedCertificates/read:
+// those two were named by Azure's own AuthorizationFailed errors when the renewal ran without
+// Contributor (2026-10-20), and the azure-cli source shows the calls that need them.
 const VERIFIED_ACTIONS = [
   "Microsoft.App/containerApps/listCustomHostNameAnalysis/action",
   "Microsoft.App/containerApps/read",
@@ -30,6 +31,7 @@ const VERIFIED_ACTIONS = [
   "Microsoft.App/managedEnvironments/certificates/write",
   "Microsoft.App/managedEnvironments/checkNameAvailability/action",
   "Microsoft.App/managedEnvironments/join/action",
+  "Microsoft.App/managedEnvironments/managedCertificates/read",
   "Microsoft.App/managedEnvironments/read",
   "Microsoft.Resources/subscriptions/resourceGroups/read",
 ];
@@ -66,6 +68,7 @@ test("the role covers every Azure call the renewal workflow visibly makes", () =
     [/containerapp hostname list/u, "Microsoft.App/containerApps/read"],
     [/containerapp hostname bind/u, "Microsoft.App/containerApps/write"],
     [/containerapp hostname bind/u, "Microsoft.App/managedEnvironments/join/action"],
+    [/containerapp hostname bind/u, "Microsoft.App/managedEnvironments/managedCertificates/read"],
   ];
   let checked = 0;
   for (const [pattern, action] of calls) {

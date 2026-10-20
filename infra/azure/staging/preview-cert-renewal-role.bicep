@@ -46,6 +46,10 @@ resource renewalRole 'Microsoft.Authorization/roleDefinitions@2022-04-01' = {
           // (2026-10-20): `az containerapp env certificate upload` checks the name first.
           'Microsoft.App/managedEnvironments/checkNameAvailability/action'
           'Microsoft.App/managedEnvironments/join/action'
+          // Named by an AuthorizationFailed error from the first real bind without Contributor
+          // (2026-10-20): `az containerapp hostname bind --certificate <name>` resolves the name
+          // through list_certificates, which reads managed certificates as well as uploaded ones.
+          'Microsoft.App/managedEnvironments/managedCertificates/read'
           'Microsoft.App/managedEnvironments/certificates/read'
           'Microsoft.App/managedEnvironments/certificates/write'
           'Microsoft.App/managedEnvironments/certificates/delete'

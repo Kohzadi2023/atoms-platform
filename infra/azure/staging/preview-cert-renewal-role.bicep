@@ -46,11 +46,21 @@ resource renewalRole 'Microsoft.Authorization/roleDefinitions@2022-04-01' = {
           // (2026-10-20): `az containerapp env certificate upload` checks the name first.
           'Microsoft.App/managedEnvironments/checkNameAvailability/action'
           'Microsoft.App/managedEnvironments/join/action'
+          // Named by an AuthorizationFailed error from the first real bind without Contributor
+          // (2026-10-20): `az containerapp hostname bind --certificate <name>` resolves the name
+          // through list_certificates, which reads managed certificates as well as uploaded ones.
+          'Microsoft.App/managedEnvironments/managedCertificates/read'
           'Microsoft.App/managedEnvironments/certificates/read'
           'Microsoft.App/managedEnvironments/certificates/write'
           'Microsoft.App/managedEnvironments/certificates/delete'
           'Microsoft.App/containerApps/read'
           'Microsoft.App/containerApps/write'
+          // Not from a failure: from `az provider operation show --namespace Microsoft.App`.
+          // `hostname bind` PATCHes the app, receives 202 with an Azure-AsyncOperation URL, and the
+          // CLI then polls it (azure-cli ContainerAppClient.update -> poll_status). The operation
+          // status and result reads are separate operations in the provider's list.
+          'Microsoft.App/locations/containerappOperationStatuses/read'
+          'Microsoft.App/locations/containerappOperationResults/read'
           'Microsoft.App/containerApps/listCustomHostNameAnalysis/action'
           'Microsoft.Resources/subscriptions/resourceGroups/read'
         ]

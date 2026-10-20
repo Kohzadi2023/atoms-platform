@@ -42,6 +42,9 @@ resource renewalRole 'Microsoft.Authorization/roleDefinitions@2022-04-01' = {
       {
         actions: [
           'Microsoft.App/managedEnvironments/read'
+          // Named by an AuthorizationFailed error from the first rehearsal run without Contributor
+          // (2026-10-20): `az containerapp env certificate upload` checks the name first.
+          'Microsoft.App/managedEnvironments/checkNameAvailability/action'
           'Microsoft.App/managedEnvironments/join/action'
           'Microsoft.App/managedEnvironments/certificates/read'
           'Microsoft.App/managedEnvironments/certificates/write'

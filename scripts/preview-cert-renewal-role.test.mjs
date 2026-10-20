@@ -26,6 +26,8 @@ const VERIFIED_ACTIONS = [
   "Microsoft.App/containerApps/listCustomHostNameAnalysis/action",
   "Microsoft.App/containerApps/read",
   "Microsoft.App/containerApps/write",
+  "Microsoft.App/locations/containerappOperationResults/read",
+  "Microsoft.App/locations/containerappOperationStatuses/read",
   "Microsoft.App/managedEnvironments/certificates/delete",
   "Microsoft.App/managedEnvironments/certificates/read",
   "Microsoft.App/managedEnvironments/certificates/write",

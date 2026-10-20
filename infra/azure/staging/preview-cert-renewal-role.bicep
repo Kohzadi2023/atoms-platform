@@ -55,6 +55,12 @@ resource renewalRole 'Microsoft.Authorization/roleDefinitions@2022-04-01' = {
           'Microsoft.App/managedEnvironments/certificates/delete'
           'Microsoft.App/containerApps/read'
           'Microsoft.App/containerApps/write'
+          // Not from a failure: from `az provider operation show --namespace Microsoft.App`.
+          // `hostname bind` PATCHes the app, receives 202 with an Azure-AsyncOperation URL, and the
+          // CLI then polls it (azure-cli ContainerAppClient.update -> poll_status). The operation
+          // status and result reads are separate operations in the provider's list.
+          'Microsoft.App/locations/containerappOperationStatuses/read'
+          'Microsoft.App/locations/containerappOperationResults/read'
           'Microsoft.App/containerApps/listCustomHostNameAnalysis/action'
           'Microsoft.Resources/subscriptions/resourceGroups/read'
         ]

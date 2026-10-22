@@ -1934,6 +1934,12 @@ function AdminOverviewCard({
       <p className="text-[11px] font-semibold uppercase tracking-[0.1em] text-[#718095]">
         Workspace admin overview
       </p>
+      <a
+        className="mt-1 inline-block text-xs font-medium text-[#78e6bd] hover:underline"
+        href="/admin"
+      >
+        View all projects →
+      </a>
       <div className="mt-2 grid grid-cols-2 gap-2 sm:grid-cols-4">
         <MetricCard icon={Users} label="Members" value={String(overview.counts.members)} />
         <MetricCard icon={ShieldCheck} label="Owners + admins" value={String(overview.counts.owners + overview.counts.admins)} />

@@ -3,7 +3,10 @@
 import dynamic from "next/dynamic";
 
 const MonacoEditor = dynamic(
-  () => import("@monaco-editor/react").then((module) => module.Editor),
+  () =>
+    import("./monaco-setup")
+      .then(() => import("@monaco-editor/react"))
+      .then((module) => module.Editor),
   {
     ssr: false,
     loading: () => (

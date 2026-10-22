@@ -1,3 +1,5 @@
+import { readFileSync } from "node:fs";
+
 import type { NextConfig } from "next";
 
 import { buildContentSecurityPolicy } from "./src/lib/content-security-policy";
@@ -23,8 +25,17 @@ const sharedSecurityHeaders = [
   { key: "X-Content-Type-Options", value: "nosniff" },
 ];
 
+// One product version for every merge. It lives in the repository root package.json,
+// CI requires each pull request to raise it, and the footer shows it.
+const rootPackage = JSON.parse(
+  readFileSync(new URL("../../package.json", import.meta.url), "utf8"),
+) as { version?: unknown };
+const appVersion =
+  typeof rootPackage.version === "string" ? rootPackage.version : "";
+
 const nextConfig: NextConfig = {
   output: "standalone",
+  env: { NEXT_PUBLIC_APP_VERSION: appVersion },
   poweredByHeader: false,
   reactStrictMode: true,
   transpilePackages: ["@atoms/contracts"],

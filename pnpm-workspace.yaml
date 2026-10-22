@@ -11,7 +11,7 @@ allowBuilds:
 
 overrides:
   "deepmerge-ts@<8.0.0": 8.0.0
-  dompurify: 3.4.16
+  dompurify: 3.4.17
   e2b>undici: 8.10.2
   e2b>undici8: npm:undici@8.10.2
   "brace-expansion@>=4.0.0 <5.0.12": 5.0.12
@@ -54,7 +54,7 @@ catalog:
   ioredis: 6.0.0
   lucide-react: 1.28.0
   monaco-editor: 0.56.0
-  next: 16.3.8
+  next: 16.4.1
   openai: 7.3.0
   pg: 8.22.0
   prisma: 7.9.1
@@ -79,7 +79,7 @@ minimumReleaseAgeExclude:
   - ioredis@6.0.0
   - openai@7.3.0
   - turbo@2.10.8
-  - next@16.3.8
+  - next@16.4.1
   - source-map-js@1.2.2
   - fastify@5.12.5
   - undici@8.10.2
@@ -89,7 +89,7 @@ minimumReleaseAgeExclude:
   - react@19.2.8
   - react-dom@19.2.8
   - tailwindcss@4.3.3
-  - dompurify@3.4.16
+  - dompurify@3.4.17
   - postcss@8.5.25
   - sharp@0.35.5
   - '@supabase/auth-js@2.112.4'

@@ -9,6 +9,7 @@ import { z } from "zod";
 
 import { buildControlApi } from "./app.js";
 import { getWorkspaceAdminOverviewCounts } from "./admin-overview-repository.js";
+import { listWorkspaceAdminProjects } from "./admin-projects-repository.js";
 import { resolveAuthRuntimeOptions } from "./auth-runtime.js";
 import { BullMqAttachmentScanQueue } from "./attachment-queue.js";
 import { PrismaAttachmentRepository } from "./attachment-repository.js";
@@ -224,6 +225,7 @@ async function main(): Promise<void> {
     adminOperations: {
       repository,
       loadCounts: (workspaceId) => getWorkspaceAdminOverviewCounts(prisma, workspaceId),
+      loadProjects: (workspaceId) => listWorkspaceAdminProjects(prisma, workspaceId),
     },
   });
 

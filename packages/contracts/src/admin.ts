@@ -1,6 +1,13 @@
 import { z } from "zod";
 
-import { WorkspaceRoleSchema, WorkspaceSummarySchema } from "./api.js";
+import {
+  AgentRunStatusSchema,
+  ProjectTypeSchema,
+  WorkspaceRoleSchema,
+  WorkspaceSummarySchema,
+} from "./api.js";
+
+const IsoTimestampSchema = z.string().datetime({ offset: true });
 
 export const WorkspaceAdminOverviewCountsSchema = z
   .object({
@@ -26,4 +33,56 @@ export const WorkspaceAdminOverviewResponseSchema = z
 
 export type WorkspaceAdminOverviewResponse = z.infer<
   typeof WorkspaceAdminOverviewResponseSchema
+>;
+
+/** Newest projects returned to the admin list; `total` still counts all of them. */
+export const WORKSPACE_ADMIN_PROJECTS_LIMIT = 100;
+
+export const AdminProjectLatestRunSchema = z
+  .object({
+    id: z.string().uuid(),
+    status: AgentRunStatusSchema,
+    createdAt: IsoTimestampSchema,
+    startedAt: IsoTimestampSchema.nullable(),
+    completedAt: IsoTimestampSchema.nullable(),
+  })
+  .strict();
+
+export type AdminProjectLatestRun = z.infer<typeof AdminProjectLatestRunSchema>;
+
+export const AdminProjectSummarySchema = z
+  .object({
+    id: z.string().uuid(),
+    name: z.string(),
+    slug: z.string(),
+    projectType: ProjectTypeSchema,
+    createdAt: IsoTimestampSchema,
+    runCount: z.number().int().nonnegative(),
+    latestRun: AdminProjectLatestRunSchema.nullable(),
+  })
+  .strict();
+
+export type AdminProjectSummary = z.infer<typeof AdminProjectSummarySchema>;
+
+export const WorkspaceAdminProjectsPageSchema = z
+  .object({
+    total: z.number().int().nonnegative(),
+    projects: z.array(AdminProjectSummarySchema),
+  })
+  .strict();
+
+export type WorkspaceAdminProjectsPage = z.infer<
+  typeof WorkspaceAdminProjectsPageSchema
+>;
+
+export const WorkspaceAdminProjectsResponseSchema = z
+  .object({
+    workspace: WorkspaceSummarySchema,
+    total: z.number().int().nonnegative(),
+    projects: z.array(AdminProjectSummarySchema),
+  })
+  .strict();
+
+export type WorkspaceAdminProjectsResponse = z.infer<
+  typeof WorkspaceAdminProjectsResponseSchema
 >;

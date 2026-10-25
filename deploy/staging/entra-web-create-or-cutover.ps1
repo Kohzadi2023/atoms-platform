@@ -1,7 +1,19 @@
-Clear-Host
+[CmdletBinding()]
+param(
+    # Public origins baked into the Web image. By default they are read from Azure: the
+    # Control API's custom domain and the preview gateway's PREVIEW_BASE_DOMAIN.
+    [string]$ControlApiOrigin,
+    [string]$PreviewBaseDomain,
+    [switch]$AllowRawContainerAppsOrigins
+)
+
+# Clear-Host throws when the output is not a console (CI, redirected runs).
+if (-not [Console]::IsOutputRedirected) { Clear-Host }
 Set-StrictMode -Version Latest
 $ErrorActionPreference = "Stop"
 $ProgressPreference = "SilentlyContinue"
+
+. (Join-Path $PSScriptRoot "web-public-origins.ps1")
 
 $ExpectedSubscriptionId = "2ac8ed24-166b-4325-89dc-829d64391ce9"
 $ForbiddenSubscriptionId = "bbcaf423-9a71-43bc-9fc7-821ef012cd01"
@@ -15,7 +27,7 @@ $ExpectedTenantId = "1dda8889-b5fc-43eb-857b-b1549e4b82c3"
 $ExpectedAuthority = "https://atomsstaging91ce9.ciamlogin.com/"
 $ExpectedWebClientId = "3be3b7af-17db-4a00-8448-04ba55fa76f0"
 $ExpectedApiScope = "api://4299c3fb-7ce1-4d23-bd49-26c554b08dac/access_as_user"
-$ExpectedPreviewBaseDomain = "preview.proudpond-7f6fcfdd.canadacentral.azurecontainerapps.io"
+$PreviewGatewayName = "atoms-staging-preview-gateway"
 $ExpectedWebFqdn = "atoms-staging-web.proudpond-7f6fcfdd.canadacentral.azurecontainerapps.io"
 
 $StateDirectory = Join-Path $env:USERPROFILE ".atoms"
@@ -261,17 +273,38 @@ function Resolve-AzureDependencies {
         throw "Could not resolve the staging Control API FQDN."
     }
 
+    # NEXT_PUBLIC_* values are baked into the image and feed the CSP, so they must be the
+    # origins browsers use (custom domains), not the raw Container Apps host names.
+    $customDomains = @($controlApi.properties.configuration.ingress.customDomains | ForEach-Object { [string]$_.name })
+    $resolvedApiOrigin = Resolve-ControlApiOrigin -Explicit $ControlApiOrigin -CustomDomains $customDomains -AllowRaw:$AllowRawContainerAppsOrigins
+
+    $gatewayPreviewDomain = ""
+    if ([string]::IsNullOrWhiteSpace($PreviewBaseDomain)) {
+        $gatewayPreviewDomain = Invoke-AzCapture -Arguments @(
+            "containerapp", "show",
+            "--subscription", $ExpectedSubscriptionId,
+            "--resource-group", $ExpectedResourceGroup,
+            "--name", $PreviewGatewayName,
+            "--query", "properties.template.containers[0].env[?name=='PREVIEW_BASE_DOMAIN'].value | [0]",
+            "--output", "tsv",
+            "--only-show-errors"
+        )
+    }
+    $resolvedPreviewDomain = Resolve-PreviewBaseDomain -Explicit $PreviewBaseDomain -GatewayConfigured $gatewayPreviewDomain -AllowRaw:$AllowRawContainerAppsOrigins
+
     Write-Ok "Container Apps environment: $ExpectedEnvironmentName"
     Write-Ok "Runtime identity: $ExpectedRuntimeIdentityName (AcrPull verified)"
     Write-Ok "ACR: $acrLoginServer"
-    Write-Ok "Control API: https://$controlApiFqdn"
+    Write-Ok "Control API origin baked into the image: $($resolvedApiOrigin.Value) (from $($resolvedApiOrigin.Source))"
+    Write-Ok "Preview base domain baked into the image: $($resolvedPreviewDomain.Value) (from $($resolvedPreviewDomain.Source))"
 
     return [pscustomobject]@{
         EnvironmentId = $environmentId
         IdentityId = $identityId
         AcrId = $acrId
         AcrLoginServer = $acrLoginServer
-        ControlApiOrigin = "https://$controlApiFqdn"
+        ControlApiOrigin = $resolvedApiOrigin.Value
+        PreviewBaseDomain = $resolvedPreviewDomain.Value
     }
 }
 
@@ -290,7 +323,8 @@ function Test-WebAppExists {
 function Build-WebImage {
     param(
         [Parameter(Mandatory)][string]$GitSha,
-        [Parameter(Mandatory)][string]$ControlApiOrigin
+        [Parameter(Mandatory)][string]$ControlApiOrigin,
+        [Parameter(Mandatory)][string]$PreviewBaseDomain
     )
 
     Write-Step "Build and push Web image with verified Entra build-time configuration"
@@ -300,8 +334,12 @@ function Build-WebImage {
     $imageTag = "entra-$shortSha"
     $image = "$AcrName.azurecr.io/web:$imageTag"
 
+    $previousImageUpdate = Get-AcrImageUpdateTime -Az $az -Subscription $ExpectedSubscriptionId -Registry $AcrName -Image "web:$imageTag"
+
     Push-Location $RepositoryRoot
     try {
+        # --no-logs: streaming the build log crashes az on Windows (charmap UnicodeEncodeError)
+        # whenever the output is not a console. The image is awaited below instead.
         & $az acr build `
             --subscription $ExpectedSubscriptionId `
             --resource-group $ExpectedResourceGroup `
@@ -314,13 +352,16 @@ function Build-WebImage {
             --build-arg "NEXT_PUBLIC_ENTRA_TENANT_ID=$ExpectedTenantId" `
             --build-arg "NEXT_PUBLIC_ENTRA_API_SCOPE=$ExpectedApiScope" `
             --build-arg "NEXT_PUBLIC_STORAGE_ORIGIN=$ControlApiOrigin" `
-            --build-arg "NEXT_PUBLIC_PREVIEW_BASE_DOMAIN=$ExpectedPreviewBaseDomain" `
+            --build-arg "NEXT_PUBLIC_PREVIEW_BASE_DOMAIN=$PreviewBaseDomain" `
+            --no-logs `
             --only-show-errors `
             .
 
         if ($LASTEXITCODE -ne 0) {
             throw "ACR Web build failed. No Web Container App change was attempted."
         }
+
+        $null = Wait-AcrImage -Az $az -Subscription $ExpectedSubscriptionId -Registry $AcrName -Image "web:$imageTag" -PreviousUpdate $previousImageUpdate
     }
     finally {
         Pop-Location
@@ -510,7 +551,7 @@ try {
     Assert-VerifiedEntraState
     $gitSha = Assert-RepositoryState
     $dependencies = Resolve-AzureDependencies
-    $image = Build-WebImage -GitSha $gitSha -ControlApiOrigin $dependencies.ControlApiOrigin
+    $image = Build-WebImage -GitSha $gitSha -ControlApiOrigin $dependencies.ControlApiOrigin -PreviewBaseDomain $dependencies.PreviewBaseDomain
     Deploy-WebApp -Image $image -Dependencies $dependencies
     $webUrl = Verify-WebApp -ExpectedImage $image -Dependencies $dependencies
 

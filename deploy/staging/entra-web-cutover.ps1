@@ -2,13 +2,21 @@
 param(
     [string]$RepositoryRoot = (Get-Location).Path,
     [ValidatePattern("^[0-9a-fA-F]{40}$")]
-    [string]$ExpectedSourceSha
+    [string]$ExpectedSourceSha,
+    # Public origins baked into the Web image. By default they are read from Azure: the
+    # Control API's custom domain and the preview gateway's PREVIEW_BASE_DOMAIN.
+    [string]$ControlApiOrigin,
+    [string]$PreviewBaseDomain,
+    [switch]$AllowRawContainerAppsOrigins
 )
 
-Clear-Host
+# Clear-Host throws when the output is not a console (CI, redirected runs).
+if (-not [Console]::IsOutputRedirected) { Clear-Host }
 Set-StrictMode -Version Latest
 $ErrorActionPreference = "Stop"
 $ProgressPreference = "SilentlyContinue"
+
+. (Join-Path $PSScriptRoot "web-public-origins.ps1")
 
 $ExpectedSubscriptionId = "2ac8ed24-166b-4325-89dc-829d64391ce9"
 $ForbiddenSubscriptionId = "bbcaf423-9a71-43bc-9fc7-821ef012cd01"
@@ -20,7 +28,7 @@ $ExpectedTenantId = "1dda8889-b5fc-43eb-857b-b1549e4b82c3"
 $ExpectedAuthority = "https://atomsstaging91ce9.ciamlogin.com/"
 $ExpectedWebClientId = "3be3b7af-17db-4a00-8448-04ba55fa76f0"
 $ExpectedApiScope = "api://4299c3fb-7ce1-4d23-bd49-26c554b08dac/access_as_user"
-$ExpectedPreviewBaseDomain = "preview.proudpond-7f6fcfdd.canadacentral.azurecontainerapps.io"
+$PreviewGatewayName = "atoms-staging-preview-gateway"
 
 $StateDirectory = Join-Path $env:USERPROFILE ".atoms"
 $AppsStateFile = Join-Path $StateDirectory "entra-staging-apps.json"
@@ -207,34 +215,62 @@ try {
         throw "Could not resolve staging Container Apps ingress FQDNs."
     }
 
-    $controlApiOrigin = "https://$controlApiFqdn"
+    # NEXT_PUBLIC_* values are baked into the image and feed the CSP, so they must be the
+    # origins browsers use (custom domains), not the raw Container Apps host names.
+    $customDomains = @($controlApi.properties.configuration.ingress.customDomains | ForEach-Object { [string]$_.name })
+    $resolvedApiOrigin = Resolve-ControlApiOrigin -Explicit $ControlApiOrigin -CustomDomains $customDomains -AllowRaw:$AllowRawContainerAppsOrigins
+
+    $gatewayPreviewDomain = ""
+    if ([string]::IsNullOrWhiteSpace($PreviewBaseDomain)) {
+        $gatewayPreviewDomain = Invoke-AzCapture -Arguments @(
+            "containerapp", "show",
+            "--subscription", $ExpectedSubscriptionId,
+            "--resource-group", $ExpectedResourceGroup,
+            "--name", $PreviewGatewayName,
+            "--query", "properties.template.containers[0].env[?name=='PREVIEW_BASE_DOMAIN'].value | [0]",
+            "--output", "tsv",
+            "--only-show-errors"
+        )
+    }
+    $resolvedPreviewDomain = Resolve-PreviewBaseDomain -Explicit $PreviewBaseDomain -GatewayConfigured $gatewayPreviewDomain -AllowRaw:$AllowRawContainerAppsOrigins
+
+    $publicApiOrigin = $resolvedApiOrigin.Value
+    $publicPreviewDomain = $resolvedPreviewDomain.Value
 
     Write-Ok "Web origin: https://$webFqdn"
-    Write-Ok "Control API origin: $controlApiOrigin"
+    Write-Ok "Control API origin baked into the image: $publicApiOrigin (from $($resolvedApiOrigin.Source))"
+    Write-Ok "Preview base domain baked into the image: $publicPreviewDomain (from $($resolvedPreviewDomain.Source))"
 
     Write-Step "Build and push the Web image with verified Entra build arguments"
 
+    $previousImageUpdate = Get-AcrImageUpdateTime -Az $az -Subscription $ExpectedSubscriptionId -Registry $AcrName -Image "web:$imageTag"
+
     Push-Location $repositoryRootResolved
     try {
+        # --no-logs: streaming the build log crashes az on Windows (charmap UnicodeEncodeError)
+        # whenever the output is not a console. The image is awaited below instead.
         & $az acr build `
             --subscription $ExpectedSubscriptionId `
             --resource-group $ExpectedResourceGroup `
             --registry $AcrName `
             --image "web:$imageTag" `
             --file "apps/web/Dockerfile" `
-            --build-arg "NEXT_PUBLIC_CONTROL_API_URL=$controlApiOrigin" `
+            --build-arg "NEXT_PUBLIC_CONTROL_API_URL=$publicApiOrigin" `
             --build-arg "NEXT_PUBLIC_ENTRA_CLIENT_ID=$ExpectedWebClientId" `
             --build-arg "NEXT_PUBLIC_ENTRA_AUTHORITY=$ExpectedAuthority" `
             --build-arg "NEXT_PUBLIC_ENTRA_TENANT_ID=$ExpectedTenantId" `
             --build-arg "NEXT_PUBLIC_ENTRA_API_SCOPE=$ExpectedApiScope" `
-            --build-arg "NEXT_PUBLIC_STORAGE_ORIGIN=$controlApiOrigin" `
-            --build-arg "NEXT_PUBLIC_PREVIEW_BASE_DOMAIN=$ExpectedPreviewBaseDomain" `
+            --build-arg "NEXT_PUBLIC_STORAGE_ORIGIN=$publicApiOrigin" `
+            --build-arg "NEXT_PUBLIC_PREVIEW_BASE_DOMAIN=$publicPreviewDomain" `
+            --no-logs `
             --only-show-errors `
             .
 
         if ($LASTEXITCODE -ne 0) {
             throw "ACR Web build failed. The existing staging Web revision has not been changed."
         }
+
+        $null = Wait-AcrImage -Az $az -Subscription $ExpectedSubscriptionId -Registry $AcrName -Image "web:$imageTag" -PreviousUpdate $previousImageUpdate
     }
     finally {
         Pop-Location

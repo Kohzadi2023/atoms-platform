@@ -208,6 +208,7 @@ export function buildRunGraph(options: BuildRunGraphOptions) {
           prompt: state.prompt,
           upstreamOutputs,
           currentFiles,
+          projectType,
           ...(referenceAttachments === undefined ||
           referenceAttachments.length === 0
             ? {}

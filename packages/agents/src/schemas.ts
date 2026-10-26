@@ -4,6 +4,7 @@ import {
   ProjectFilePathSchema,
   RunAgentNameSchema,
   SeoPackageSchema,
+  type ProjectType,
 } from "@atoms/contracts";
 import { z } from "zod";
 
@@ -516,6 +517,12 @@ export interface AgentExecutionRequest<
   readonly currentFiles: readonly AgentProjectFile[];
   /** Clean, immutable reference inputs. The orchestrator sends them to research/product agents. */
   readonly referenceAttachments?: readonly AgentReferenceAttachment[];
+  /**
+   * The project's type, from the project and not from the model. CLIENT_PORTAL makes the
+   * client-portal conventions in the instructions (routes, test ids, fixture sign-in seed)
+   * unconditional instead of leaving "is this a portal?" to the model's reading of the prompt.
+   */
+  readonly projectType?: ProjectType;
 }
 
 export interface AgentRuntime {

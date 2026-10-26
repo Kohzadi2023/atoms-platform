@@ -778,6 +778,26 @@ test("a CLIENT_PORTAL project runs only the agents it needs, even on a plan that
   ]);
 });
 
+test("every agent that runs is told the project's type, so a CLIENT_PORTAL's conventions are not left to the prompt", async () => {
+  for (const projectType of ["CLIENT_PORTAL", "GENERAL"] as const) {
+    const repository = new MemoryRepository();
+    repository.workspacePlan = "MAX";
+    repository.projectType = projectType;
+    const agents = new ScriptedAgentRuntime(outputs());
+
+    // How the run ends does not matter here: a GENERAL run stops at the content-approval gate,
+    // a CLIENT_PORTAL run (no content agents) completes. Only what each agent was sent does.
+    await processor(repository, agents).process(startJob(), { attempt: 1, maxAttempts: 3 });
+
+    assert.ok(agents.requests.length > 0);
+    assert.deepEqual(
+      [...new Set(agents.requests.map((request) => request.projectType))],
+      [projectType],
+      `${projectType}: every request carries the project's own type`,
+    );
+  }
+});
+
 test("a CLIENT_PORTAL project on FREE gives the project-type reason, not the plan reason", async () => {
   const repository = new MemoryRepository();
   repository.workspacePlan = "FREE";

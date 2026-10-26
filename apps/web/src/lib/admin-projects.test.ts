@@ -4,6 +4,7 @@ import test from "node:test";
 import type { AdminProjectLatestRun } from "@atoms/contracts";
 
 import {
+  classifyAdminProjectsFailure,
   describeListCoverage,
   describeRunStatus,
   formatAdminTimestamp,
@@ -62,7 +63,7 @@ test("says when the list is truncated by the server limit", () => {
   assert.equal(describeListCoverage(100, 250), "Showing the newest 100 of 250 projects");
 });
 
-test("the admin page only reads, and treats 403/404 as 'not allowed' rather than a failure", async () => {
+test("the admin page only reads, and tells 'not allowed' apart from a server without the route", async () => {
   const { readFile } = await import("node:fs/promises");
   const { resolve } = await import("node:path");
   const page = await readFile(
@@ -76,8 +77,10 @@ test("the admin page only reads, and treats 403/404 as 'not allowed' rather than
     page,
     /\.(createProject|createRun|runAction|putProjectFile|archive\w*|delete\w*)\s*\(/u,
   );
-  assert.match(page, /caught\.status === 403 \|\| caught\.status === 404/u);
+  assert.match(page, /classifyAdminProjectsFailure\(caught\.status, caught\.code\)/u);
+  assert.doesNotMatch(page, /caught\.status === 403 \|\| caught\.status === 404/u);
   assert.match(page, /Only workspace owners and admins can see this page/u);
+  assert.match(page, /the Control API is older than this page/u);
 });
 
 test("the workspace shell links to the admin page only inside the admin-only card", async () => {
@@ -92,4 +95,22 @@ test("the workspace shell links to the admin page only inside the admin-only car
   assert.match(card, /status === "idle" \|\| status === "unavailable"\) return null/u);
   assert.ok(card.indexOf('href="/admin"') > card.indexOf('return null'));
   assert.equal(shell.split('href="/admin"').length - 1, 1);
+});
+
+test("only the API's own access decisions are shown as 'not allowed'", () => {
+  assert.equal(classifyAdminProjectsFailure(403, "INSUFFICIENT_WORKSPACE_ROLE"), "forbidden");
+  assert.equal(classifyAdminProjectsFailure(404, "WORKSPACE_ACCESS_DENIED"), "forbidden");
+});
+
+test("a 404 from a server without the route is a deployment problem, not a permission one", () => {
+  // Fastify's body for an unknown route is {"error":"Not Found",...}; the client turns it into REQUEST_FAILED.
+  assert.equal(classifyAdminProjectsFailure(404, "REQUEST_FAILED"), "unavailable");
+  assert.equal(classifyAdminProjectsFailure(404, "PROJECT_NOT_FOUND"), "unavailable");
+});
+
+test("other failures, including a 403 that is not the role check, are errors", () => {
+  assert.equal(classifyAdminProjectsFailure(403, "REQUEST_FAILED"), "error");
+  assert.equal(classifyAdminProjectsFailure(401, "AUTHENTICATION_REQUIRED"), "error");
+  assert.equal(classifyAdminProjectsFailure(500, "REQUEST_FAILED"), "error");
+  assert.equal(classifyAdminProjectsFailure(409, "WORKSPACE_ACCESS_DENIED"), "error");
 });

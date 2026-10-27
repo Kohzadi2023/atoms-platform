@@ -41,3 +41,19 @@ export function describeListCoverage(shown: number, total: number): string {
   if (shown >= total) return `${String(total)} project${total === 1 ? "" : "s"}`;
   return `Showing the newest ${String(shown)} of ${String(total)} projects`;
 }
+
+export type AdminProjectsFailure = "forbidden" | "unavailable" | "error";
+
+/**
+ * How the admin page presents a failed request. Only the Control API's own access
+ * decisions mean "you may not see this": 403 INSUFFICIENT_WORKSPACE_ROLE (a member, not an
+ * owner/admin) and 404 WORKSPACE_ACCESS_DENIED (not your workspace). Any other 404 is
+ * Fastify's answer for a route the server does not have, i.e. a Control API older than
+ * this page, which is a deployment problem and must not be shown as a permission problem.
+ */
+export function classifyAdminProjectsFailure(status: number, code: string): AdminProjectsFailure {
+  if (status === 403 && code === "INSUFFICIENT_WORKSPACE_ROLE") return "forbidden";
+  if (status === 404 && code === "WORKSPACE_ACCESS_DENIED") return "forbidden";
+  if (status === 404) return "unavailable";
+  return "error";
+}

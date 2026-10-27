@@ -105,7 +105,9 @@ foreach ($name in @("entra-web-cutover.ps1", "entra-web-create-or-cutover.ps1"))
     Check (@($errors).Count -eq 0) "$name parses"
     Check ($text.Contains("web-public-origins.ps1")) "$name loads the shared helper"
     Check ($text.Contains("Resolve-ControlApiOrigin") -and $text.Contains("Resolve-PreviewBaseDomain")) "$name resolves both public origins"
-    Check ($text.Contains("--no-logs") -and $text.Contains("Wait-AcrImage")) "$name builds without streaming logs and waits for the image"
+    # The argument line itself, not the comment that explains it.
+    Check ($text -match '(?m)^\s+--no-logs `\r?$') "$name passes --no-logs to az acr build (a mention in a comment is not enough)"
+    Check ($text.Contains("Wait-AcrImage")) "$name waits for the image"
     Check ($text -notmatch "preview\.proudpond") "$name no longer hard-codes the raw preview domain"
     Check ($text -notmatch "(?m)^\s*Clear-Host\s*$") "$name no longer calls Clear-Host unguarded"
     Check ($text.Contains("NEXT_PUBLIC_STORAGE_ORIGIN=") -and $text.Contains("NEXT_PUBLIC_CONTROL_API_URL=") -and $text.Contains("NEXT_PUBLIC_PREVIEW_BASE_DOMAIN=")) "$name still passes the three public origins"

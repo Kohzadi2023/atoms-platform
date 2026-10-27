@@ -5,6 +5,7 @@ import { AlertTriangle, ArrowLeft, LoaderCircle, LogOut, RefreshCw, ShieldAlert 
 import { useCallback, useEffect, useMemo, useState } from "react";
 
 import {
+  classifyAdminProjectsFailure,
   describeListCoverage,
   describeRunStatus,
   formatAdminTimestamp,
@@ -29,6 +30,7 @@ type LoadState =
   | { readonly kind: "loading" }
   | { readonly kind: "loaded"; readonly data: WorkspaceAdminProjectsResponse }
   | { readonly kind: "forbidden" }
+  | { readonly kind: "unavailable" }
   | { readonly kind: "error"; readonly message: string };
 
 export function AdminProjectsPage() {
@@ -94,11 +96,18 @@ function AdminProjectsSurface({ session }: { readonly session: AuthenticatedSess
       })
       .catch((caught: unknown) => {
         if (!active) return;
-        // 403: signed in but not an owner/admin. 404: the workspace is not theirs.
-        // Neither is an app failure, so neither is shown as an error.
-        if (caught instanceof ControlApiError && (caught.status === 403 || caught.status === 404)) {
-          setState({ kind: "forbidden" });
-          return;
+        // Only the API's own access decisions mean "not allowed". A 404 for a route the
+        // server does not have is a deployment mismatch and is reported as such.
+        if (caught instanceof ControlApiError) {
+          const failure = classifyAdminProjectsFailure(caught.status, caught.code);
+          if (failure === "forbidden") {
+            setState({ kind: "forbidden" });
+            return;
+          }
+          if (failure === "unavailable") {
+            setState({ kind: "unavailable" });
+            return;
+          }
         }
         setState({ kind: "error", message: describeError(caught) });
       });
@@ -179,6 +188,12 @@ function AdminProjectsSurface({ session }: { readonly session: AuthenticatedSess
             <ShieldAlert size={18} aria-hidden="true" className="mt-0.5 shrink-0" />
             <p>Only workspace owners and admins can see this page. Ask an owner or admin of this workspace for access.</p>
           </div>
+        ) : null}
+        {state.kind === "unavailable" ? (
+          <Notice
+            tone="error"
+            text="The server does not offer the project list yet: the Control API is older than this page. This is a deployment problem, not a permission problem. Update the Control API first, then refresh."
+          />
         ) : null}
         {state.kind === "error" ? <Notice tone="error" text={`Could not load projects: ${state.message}`} /> : null}
         {state.kind === "loaded" ? <ProjectsTable data={state.data} /> : null}

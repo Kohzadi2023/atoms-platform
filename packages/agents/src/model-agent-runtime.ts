@@ -45,6 +45,10 @@ export class ModelBackedAgentRuntime implements AgentRuntime {
           userPrompt: request.prompt,
           upstreamOutputs: request.upstreamOutputs,
           currentFiles: request.currentFiles,
+          // Sent only for a typed project, so the input of every GENERAL run is unchanged.
+          ...(request.projectType === undefined || request.projectType === "GENERAL"
+            ? {}
+            : { projectType: request.projectType }),
           ...(correctionIssues === undefined
             ? {}
             : {

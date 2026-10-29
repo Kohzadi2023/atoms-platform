@@ -1,3 +1,4 @@
+#Requires -Version 7.0
 [CmdletBinding()]
 param(
     # Public origins baked into the Web image. By default they are read from Azure: the

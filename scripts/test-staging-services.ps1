@@ -87,6 +87,7 @@ $text = Get-Content -LiteralPath $path -Raw
 $tokens = $null; $errors = $null
 [void][Management.Automation.Language.Parser]::ParseFile($path, [ref]$tokens, [ref]$errors)
 Check (@($errors).Count -eq 0) "deploy-backend-image.ps1 parses"
+Check ($text.StartsWith("#Requires -Version 7.0")) "deploy-backend-image.ps1 refuses Windows PowerShell 5.1 up front"
 Check ($text -match "(?s)\[Parameter\(Mandatory\)\]\s*\[ValidatePattern\(`"\^\[0-9a-fA-F\]\{40\}\$`"\)\]\s*\[string\]\`$ExpectedSourceSha") "The source SHA is mandatory and must be 40 hex characters"
 Check ($text -match "(?s)\[Parameter\(Mandatory\)\]\s*\[ValidateSet\(`"control-api`", `"orchestrator-worker`"\)\]") "Only the two backend services can be named"
 Check ($text.Contains("2ac8ed24-166b-4325-89dc-829d64391ce9") -and $text.Contains("bbcaf423-9a71-43bc-9fc7-821ef012cd01")) "The staging subscription is locked and the legacy one refused"

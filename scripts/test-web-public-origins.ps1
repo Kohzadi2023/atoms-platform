@@ -103,6 +103,7 @@ foreach ($name in @("entra-web-cutover.ps1", "entra-web-create-or-cutover.ps1"))
     $tokens = $null; $errors = $null
     [void][Management.Automation.Language.Parser]::ParseFile($path, [ref]$tokens, [ref]$errors)
     Check (@($errors).Count -eq 0) "$name parses"
+    Check ($text.StartsWith("#Requires -Version 7.0")) "$name refuses Windows PowerShell 5.1 up front"
     Check ($text.Contains("web-public-origins.ps1")) "$name loads the shared helper"
     Check ($text.Contains("Resolve-ControlApiOrigin") -and $text.Contains("Resolve-PreviewBaseDomain")) "$name resolves both public origins"
     # The argument line itself, not the comment that explains it.

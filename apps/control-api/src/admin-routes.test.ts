@@ -28,6 +28,7 @@ const COUNTS: WorkspaceAdminOverviewCounts = {
   admins: 1,
   projects: 2,
   activeRuns: 1,
+  pausedRuns: 0,
 };
 
 const PROJECTS_PAGE: WorkspaceAdminProjectsPage = {

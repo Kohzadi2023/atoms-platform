@@ -17,6 +17,7 @@ const counts = {
   admins: 1,
   projects: 3,
   activeRuns: 2,
+  pausedRuns: 1,
 } as const;
 
 function membership(role: WorkspaceMembershipRecord["role"]): WorkspaceMembershipRecord {

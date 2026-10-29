@@ -29,7 +29,7 @@ test("getWorkspaceAdminOverviewCounts scopes every aggregate to one workspace", 
     agentRun: {
       count: async (args: unknown) => {
         calls.push({ delegate: "agentRun", args });
-        return 3;
+        return (args as { where?: { status?: unknown } }).where?.status === "PAUSED" ? 4 : 3;
       },
     },
   } as unknown as PrismaClient;
@@ -42,6 +42,7 @@ test("getWorkspaceAdminOverviewCounts scopes every aggregate to one workspace", 
     admins: 2,
     projects: 5,
     activeRuns: 3,
+    pausedRuns: 4,
   });
 
   assert.deepEqual(calls, [
@@ -63,9 +64,13 @@ test("getWorkspaceAdminOverviewCounts scopes every aggregate to one workspace", 
       args: {
         where: {
           workspaceId,
-          status: { in: ["PENDING", "RUNNING", "PAUSED"] },
+          status: { in: ["PENDING", "RUNNING"] },
         },
       },
+    },
+    {
+      delegate: "agentRun",
+      args: { where: { workspaceId, status: "PAUSED" } },
     },
   ]);
 });

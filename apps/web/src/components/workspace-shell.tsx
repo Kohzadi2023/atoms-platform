@@ -1940,11 +1940,12 @@ function AdminOverviewCard({
       >
         View all projects →
       </a>
-      <div className="mt-2 grid grid-cols-2 gap-2 sm:grid-cols-4">
+      <div className="mt-2 grid grid-cols-2 gap-2 sm:grid-cols-5">
         <MetricCard icon={Users} label="Members" value={String(overview.counts.members)} />
         <MetricCard icon={ShieldCheck} label="Owners + admins" value={String(overview.counts.owners + overview.counts.admins)} />
         <MetricCard icon={FolderTree} label="Projects" value={String(overview.counts.projects)} />
         <MetricCard icon={Activity} label="Active runs" value={String(overview.counts.activeRuns)} />
+        <MetricCard icon={Pause} label="Paused runs" value={String(overview.counts.pausedRuns)} />
       </div>
     </div>
   );

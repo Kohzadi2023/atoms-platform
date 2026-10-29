@@ -69,17 +69,24 @@ criterion evidence are never produced. Needs a Playwright and Chromium
 acceptance template for the sandbox. Has a cost and template-build component.
 
 ### 5. Event replay on restored runs
-After a page reload the run graph stays IDLE and Events shows 0 until new events
-arrive. The SSE header root cause was fixed (PR #143), the replay of past events
-was not.
+**Appears fixed (checked 2026-10-28).** After a page reload on a completed run
+(customer-operations-portal41) the graph showed every task status and Events
+showed 61 after "Restored the durable run and replaying ordered events…". The
+older note said the graph stayed IDLE with 0 events. Close this item after one
+more reload of a run that is still in progress.
 
 ### 6. Admin overview: "Active runs"
-The overview shows `Active runs: 1` when it should not. Counting bug, not yet
-investigated.
+**Not a counting bug (checked 2026-10-28).** The count is `PENDING`, `RUNNING`
+or `PAUSED` runs, and it was correct: one run, `868ab8ba` of
+`customer-operations-portal4`, has been `PAUSED` since 2026-09-26. The real gap
+is that nothing ends an abandoned paused run. Cancel it from its project page,
+and consider an automatic expiry for paused runs, or showing paused runs
+separately from running ones.
 
 ### 7. Wildcard certificate renewal
-The wildcard certificate expires **2026-12-18**. Renew before then.
-`scripts/check-preview-cert-expiry.mjs` already checks the expiry date.
+Done: the wildcard certificate renews itself (set up 2026-10-20), so there is no
+manual renewal date any more. `scripts/check-preview-cert-expiry.mjs` still
+checks the expiry date and is the alarm if that automation ever stops.
 
 ### 8. Staging blockers #14 and #22
 Referenced in project notes as blockers for staging. The details were not

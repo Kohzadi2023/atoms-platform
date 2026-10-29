@@ -24,12 +24,14 @@ test("WorkspaceAdminOverviewResponseSchema accepts a workspace-scoped administra
       admins: 1,
       projects: 4,
       activeRuns: 2,
+      pausedRuns: 1,
     },
   });
 
   assert.equal(parsed.workspace.id, WORKSPACE_ID);
   assert.equal(parsed.role, "ADMIN");
   assert.equal(parsed.counts.activeRuns, 2);
+  assert.equal(parsed.counts.pausedRuns, 1);
 });
 
 test("WorkspaceAdminOverviewResponseSchema rejects negative counters", () => {
@@ -47,9 +49,19 @@ test("WorkspaceAdminOverviewResponseSchema rejects negative counters", () => {
         admins: 0,
         projects: 0,
         activeRuns: 0,
+        pausedRuns: 0,
       },
     }),
   );
+});
+
+test("WorkspaceAdminOverviewResponseSchema defaults pausedRuns to 0 for an API that predates it", () => {
+  const parsed = WorkspaceAdminOverviewResponseSchema.parse({
+    workspace: { id: WORKSPACE_ID, name: "Atoms Staging", slug: "atoms-staging" },
+    role: "OWNER",
+    counts: { members: 1, owners: 1, admins: 0, projects: 0, activeRuns: 0 },
+  });
+  assert.equal(parsed.counts.pausedRuns, 0);
 });
 
 const PROJECT_ID = "22222222-2222-4222-8222-222222222222";

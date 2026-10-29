@@ -5,7 +5,7 @@ export async function getWorkspaceAdminOverviewCounts(
   prisma: PrismaClient,
   workspaceId: string,
 ): Promise<WorkspaceAdminOverviewCounts> {
-  const [members, owners, admins, projects, activeRuns] = await Promise.all([
+  const [members, owners, admins, projects, activeRuns, pausedRuns] = await Promise.all([
     prisma.membership.count({ where: { workspaceId } }),
     prisma.membership.count({ where: { workspaceId, role: "OWNER" } }),
     prisma.membership.count({ where: { workspaceId, role: "ADMIN" } }),
@@ -13,9 +13,10 @@ export async function getWorkspaceAdminOverviewCounts(
     prisma.agentRun.count({
       where: {
         workspaceId,
-        status: { in: ["PENDING", "RUNNING", "PAUSED"] },
+        status: { in: ["PENDING", "RUNNING"] },
       },
     }),
+    prisma.agentRun.count({ where: { workspaceId, status: "PAUSED" } }),
   ]);
 
   return {
@@ -24,5 +25,6 @@ export async function getWorkspaceAdminOverviewCounts(
     admins,
     projects,
     activeRuns,
+    pausedRuns,
   };
 }

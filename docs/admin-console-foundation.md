@@ -145,7 +145,8 @@ interface WorkspaceAdminOverview {
   counts: {
     members: number;
     projects: number;
-    activeRuns: number;
+    activeRuns: number; // pending or running
+    pausedRuns: number; // waiting for a decision
   };
   operations: {
     failedRuns: number;

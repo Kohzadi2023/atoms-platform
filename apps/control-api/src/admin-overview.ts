@@ -21,6 +21,7 @@ export function buildWorkspaceAdminOverview(
       admins: counts.admins,
       projects: counts.projects,
       activeRuns: counts.activeRuns,
+      pausedRuns: counts.pausedRuns,
     },
   };
 }

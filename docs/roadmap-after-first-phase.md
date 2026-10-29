@@ -79,9 +79,10 @@ more reload of a run that is still in progress.
 **Not a counting bug (checked 2026-10-28).** The count is `PENDING`, `RUNNING`
 or `PAUSED` runs, and it was correct: one run, `868ab8ba` of
 `customer-operations-portal4`, has been `PAUSED` since 2026-09-26. The real gap
-is that nothing ends an abandoned paused run. Cancel it from its project page,
-and consider an automatic expiry for paused runs, or showing paused runs
-separately from running ones.
+is that nothing ends an abandoned paused run. The overview now counts paused
+runs separately ("Paused runs"), so "Active runs" means pending or running
+only. Still open: cancel `868ab8ba` from its project page, and consider an
+automatic expiry for paused runs.
 
 ### 7. Wildcard certificate renewal
 Done: the wildcard certificate renews itself (set up 2026-10-20), so there is no

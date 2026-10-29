@@ -15,7 +15,10 @@ export const WorkspaceAdminOverviewCountsSchema = z
     owners: z.number().int().nonnegative(),
     admins: z.number().int().nonnegative(),
     projects: z.number().int().nonnegative(),
+    /** Runs that are pending or running. Paused runs are counted in `pausedRuns`. */
     activeRuns: z.number().int().nonnegative(),
+    /** Runs waiting for a decision. One can sit here for weeks if nobody answers. */
+    pausedRuns: z.number().int().nonnegative().default(0),
   })
   .strict();
 

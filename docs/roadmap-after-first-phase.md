@@ -63,10 +63,39 @@ Design reference for evidence-backed analysis and for pre-launch audience
 simulation: see "Reference: MiroFish" below.
 
 ### 4. Release assessment: `release.blocked`
-Runs finish, but the observe-only assessor reports `release.blocked` (28 issues)
-because ACCESSIBILITY, E2E, PERFORMANCE, REGRESSION and SECURITY checks and
-criterion evidence are never produced. Needs a Playwright and Chromium
-acceptance template for the sandbox. Has a cost and template-build component.
+Runs finish, but the observe-only assessor reports `release.blocked` (28 issues).
+**Checked in code 2026-10-29; the picture is different from the first note.**
+
+What already exists and is switched off on staging (the worker has
+`E2B_TEMPLATE=atoms-base-validation-db`, no `ACCEPTANCE_CHECK`, no
+`PREVIEW_BROWSER_VIABILITY`):
+- The G3 pipeline: `acceptance-script.ts` (closed scenario vocabulary), the
+  CLIENT_PORTAL manifest in `apps/orchestrator-worker/src/acceptance-manifest.ts`,
+  the runner step in `project-validation-runner.ts`, and
+  `evidenceFromAcceptanceRun` in `@atoms/quality`. It is evidence-only and never
+  blocks a run (G3 is P1 and "Open" in `docs/adr/production-execution-gate.md`).
+- `scripts/build-viability-template.mjs` builds the Playwright + Chromium E2B
+  template on top of the current one (dry run without `--build`).
+
+What is still missing, in order:
+1. **Turn G3 on (needs the user's E2B key and terminal).** Build the template
+   (`E2B_API_KEY=... node scripts/build-viability-template.mjs --base atoms-base-validation-db --build`),
+   then set `E2B_TEMPLATE` to the new name, `PREVIEW_BROWSER_VIABILITY=required`
+   and `ACCEPTANCE_CHECK=required` on the worker. Cost: one template build plus a
+   Chromium start per run; measure it on one run before leaving it on.
+2. **Criterion mapping.** ACCEPTANCE evidence only counts for a criterion an
+   operator tied to a scenario name (`resolveCriterionIdsByScenario`). The manifest
+   covers 2 of the 5 reference journeys (sign-in, signed-out is kept off the
+   dashboard); tenant isolation, staff sharing and client approval need a known
+   deliverable id in the fixture seed contract first.
+3. **Five check kinds with no producer at all:** ACCESSIBILITY, E2E, PERFORMANCE,
+   REGRESSION, SECURITY. `evidenceFromValidationStep` only maps LINT, TYPECHECK,
+   TEST and BUILD. Each needs a decision on what counts as evidence (for example
+   SECURITY = `pnpm audit` in the sandbox, ACCESSIBILITY = axe in the Playwright
+   step) before any code. Do not mark them passed from nothing, and do not shrink
+   the standard policy to make the report READY.
+
+Until 1 to 3 are done the honest label stays "Validated Preview".
 
 ### 5. Event replay on restored runs
 **Appears fixed (checked 2026-10-28).** After a page reload on a completed run
